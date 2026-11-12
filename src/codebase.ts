@@ -8,6 +8,9 @@
 //
 // Every change goes through `submit`, a transaction of one or more changes
 // that is accepted as a whole (6.3, 6.4) or leaves the database untouched.
+// After each transaction the export (`export/<module>.alang`, canonical text
+// for Git and review) of the affected modules is rewritten; `importAll`
+// rebuilds the database from it.
 
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -148,7 +151,7 @@ interface Planned {
 // A version to store.
 interface Row {
   readonly name: string;
-  readonly op: "add" | "replace";
+  readonly op: Operation;
   readonly hash: string;
   readonly kind: "fn" | "type";
   readonly text: string;
@@ -212,8 +215,8 @@ export class Codebase {
     private readonly clock: () => Date,
   ) {}
 
-  // Opens (or creates) the codebase in `dir`: `dir/alang.db`, with generated
-  // TypeScript in `dir/out/`.
+  // Opens (or creates) the codebase in `dir`: `dir/alang.db`, the export in
+  // `dir/export/`, generated TypeScript in `dir/out/`.
   static async open(dir: string, options: OpenOptions = {}): Promise<Codebase> {
     await Deno.mkdir(dir, { recursive: true });
     const db = new DatabaseSync(join(dir, "alang.db"));
@@ -559,6 +562,10 @@ export class Codebase {
       const row = rows.find((r) => r.name === p.name);
       return row ? [{ name: p.name, hash: row.hash, operation: p.op }] : [];
     });
+
+    // 7. The export of the affected modules (Storage). The database has
+    // committed; if writing fails, `exportAll` brings the files back in line.
+    await this.exportModules(written.map((w) => moduleName(w.name)));
     return { ok: true, written, unchanged };
   }
 
@@ -721,21 +728,205 @@ export class Codebase {
   }
 
   // Stores a version unless it exists. Equal hashes must mean equal texts.
-  private store(row: Row): void {
+  // With `refresh`, the derived columns of an existing version are computed
+  // again (import).
+  private store(row: Row, refresh = false): void {
     const existing = this.db.prepare("SELECT text FROM definitions WHERE hash = ?").get(row.hash) as
       | { text: string }
       | undefined;
+    if (existing && existing.text !== row.text) throw new Error(`Hash collision on ${row.hash}.`);
+    if (existing && !refresh) return;
+    if (existing && this.derivedMatches(row)) return;
     if (existing) {
-      if (existing.text !== row.text) throw new Error(`Hash collision on ${row.hash}.`);
-      return;
+      this.db.prepare("UPDATE definitions SET signature = ? WHERE hash = ?").run(row.signature, row.hash);
+      this.db.prepare("DELETE FROM refs WHERE from_hash = ?").run(row.hash);
+    } else {
+      this.db.prepare("INSERT INTO definitions (hash, kind, text, signature) VALUES (?, ?, ?, ?)").run(
+        row.hash,
+        row.kind,
+        row.text,
+        row.signature,
+      );
     }
-    this.db.prepare("INSERT INTO definitions (hash, kind, text, signature) VALUES (?, ?, ?, ?)").run(
-      row.hash,
-      row.kind,
-      row.text,
-      row.signature,
-    );
     const ref = this.db.prepare("INSERT OR IGNORE INTO refs (from_hash, to_name) VALUES (?, ?)");
     for (const to of row.refs) ref.run(row.hash, to);
   }
+
+  // Whether the stored derived columns of `row`'s version equal `row`'s.
+  private derivedMatches(row: Row): boolean {
+    const stored = this.db.prepare("SELECT signature FROM definitions WHERE hash = ?").get(row.hash) as {
+      signature: string;
+    };
+    const refs = (this.db.prepare("SELECT to_name FROM refs WHERE from_hash = ? ORDER BY rowid").all(row.hash) as {
+      to_name: string;
+    }[]).map((r) => r.to_name);
+    return stored.signature === row.signature && refs.length === row.refs.length &&
+      refs.every((r, i) => r === row.refs[i]);
+  }
+
+  // ---- export and import (Storage) ----
+
+  private get exportDir(): string {
+    return join(this.dir, "export");
+  }
+
+  // Canonical texts of the current definitions of exactly `module`, by name.
+  private moduleTexts(module: string): string[] {
+    const rows = this.db.prepare(
+      "SELECT n.name, d.text FROM names n JOIN definitions d ON d.hash = n.hash WHERE n.name GLOB ? ORDER BY n.name",
+    ).all(`${module}.*`) as { name: string; text: string }[];
+    return rows.filter((r) => r.name.lastIndexOf(".") === module.length).map((r) => r.text);
+  }
+
+  // Rewrites the export files of `modules` from the current names: one file
+  // per module, `export/<module>.alang`, its definitions sorted by name. A
+  // module without definitions loses its file.
+  private async exportModules(modules: Iterable<string>): Promise<string[]> {
+    await Deno.mkdir(this.exportDir, { recursive: true });
+    const files: string[] = [];
+    for (const module of new Set(modules)) {
+      const path = join(this.exportDir, `${module}.alang`);
+      const texts = this.moduleTexts(module);
+      if (texts.length === 0) {
+        await Deno.remove(path).catch((e) => {
+          if (!(e instanceof Deno.errors.NotFound)) throw e;
+        });
+        continue;
+      }
+      // Written next to the file and renamed, so a reader never sees half a file.
+      await Deno.writeTextFile(`${path}.tmp`, texts.join("\n\n") + "\n");
+      await Deno.rename(`${path}.tmp`, path);
+      files.push(path);
+    }
+    return files;
+  }
+
+  // Writes the whole export and deletes the files of modules that no longer
+  // exist. Returns the paths written.
+  exportAll(): Promise<string[]> {
+    const run = this.queue.then(async () => {
+      const modules = new Set(
+        (this.db.prepare("SELECT name FROM names").all() as { name: string }[]).map((r) => moduleName(r.name)),
+      );
+      for (const file of await exportFiles(this.exportDir)) modules.add(file.slice(0, -".alang".length));
+      return await this.exportModules([...modules].sort());
+    });
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  // Rebuilds the current names from the export (`export/*.alang`, or the
+  // files in `from`): the export is the source of truth (Storage). The whole
+  // program is accepted first; then names whose version differs get it, with
+  // history operation `import`, and names missing from the export are
+  // removed. The derived columns of every imported version are computed
+  // again. The export itself is not written.
+  importAll(from: string = this.exportDir): Promise<SubmitResult> {
+    const run = this.queue.then(() => this.importFrom(from));
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  private async importFrom(from: string): Promise<SubmitResult> {
+    const defs: Definition[] = [];
+    const diagnostics: Diagnostic[] = [];
+    for (const file of await exportFiles(from)) {
+      const module = file.slice(0, -".alang".length);
+      let found: Definition[];
+      try {
+        found = parseProgram(await Deno.readTextFile(join(from, file)));
+      } catch (e) {
+        if (!(e instanceof AlangError)) throw e;
+        diagnostics.push(...e.diagnostics);
+        continue;
+      }
+      for (const def of found) {
+        const name = pathText(def.path);
+        if (moduleName(name) === module) {
+          defs.push(def);
+          continue;
+        }
+        diagnostics.push(diagnostic({
+          code: "E0512",
+          definition: name,
+          at: `${def.kind} ${name}`,
+          message: `\`${name}\` belongs to module \`${moduleName(name)}\`, so to the file ` +
+            `\`${moduleName(name)}.alang\`, not \`${file}\`.`,
+        }));
+      }
+    }
+    if (diagnostics.length > 0) return rejected(diagnostics);
+
+    defs.sort((a, b) => (pathText(a.path) < pathText(b.path) ? -1 : 1));
+    let accepted: Accepted;
+    try {
+      accepted = await acceptDefinitions(defs, this.acceptPath);
+    } catch (e) {
+      if (e instanceof AlangError) return rejected(e.diagnostics);
+      throw e;
+    }
+    const rows = defs.map((def): Row => {
+      const text = printDefinition(def);
+      return {
+        name: pathText(def.path),
+        op: "import",
+        hash: hashText(text),
+        kind: def.kind,
+        text,
+        signature: printSignature(def),
+        refs: dependencies(def, accepted.built.info),
+      };
+    });
+
+    const changedAt = this.clock().toISOString();
+    const written: Written[] = [];
+    const unchanged: string[] = [];
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const before = this.names();
+      const history = this.db.prepare(
+        "INSERT INTO history (name, hash, changed_at, operation, other_name) VALUES (?, ?, ?, 'import', NULL)",
+      );
+      for (const row of rows) {
+        this.store(row, true);
+        if (before.get(row.name) === row.hash) {
+          unchanged.push(row.name);
+          continue;
+        }
+        this.db.prepare("INSERT OR REPLACE INTO names (name, hash) VALUES (?, ?)").run(row.name, row.hash);
+        history.run(row.name, row.hash, changedAt);
+        written.push({ name: row.name, hash: row.hash, operation: "import" });
+      }
+      const imported = new Set(rows.map((r) => r.name));
+      for (const name of before.keys()) {
+        if (imported.has(name)) continue;
+        this.db.prepare("DELETE FROM names WHERE name = ?").run(name);
+        history.run(name, null, changedAt);
+        written.push({ name, hash: null, operation: "import" });
+      }
+      this.db.exec("COMMIT");
+    } catch (e) {
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      throw e;
+    }
+    return { ok: true, written, unchanged };
+  }
+}
+
+// The module of a full name: everything before the last segment.
+function moduleName(full: string): string {
+  return full.slice(0, full.lastIndexOf("."));
+}
+
+// Names of the `.alang` files directly in `dir`, sorted; none if it does not exist.
+async function exportFiles(dir: string): Promise<string[]> {
+  const files: string[] = [];
+  try {
+    for await (const entry of Deno.readDir(dir)) {
+      if (entry.isFile && entry.name.endsWith(".alang")) files.push(entry.name);
+    }
+  } catch (e) {
+    if (!(e instanceof Deno.errors.NotFound)) throw e;
+  }
+  return files.sort();
 }

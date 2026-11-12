@@ -27,12 +27,13 @@ is the user's call.
   (references by full name). Decisions are in `decisions.md`, section Database.
 - Step 2 done: the queries `signature`, `context`, `list`, `searchText`, `searchType` (patterns in `src/search.ts`),
   `history`.
-- Next: step 3, export and import.
+- Step 3 done: the export after each transaction, `exportAll`, `importAll`.
+- Next: step 4, `rename`.
 
 **After the database:** the MCP server around its queries and operations (its own phase). `extern fn` and `const`
 are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (113 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (121 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -142,6 +143,7 @@ report the first one (rename) prominently, since it departs from the wording of 
   - E0509 invalid new name
   - E0510 rename changes what a reference denotes
   - E0511 malformed type pattern in `search(type)` (added in step 2)
+  - E0512 definition in the wrong export file (added in step 3)
   - `at` quotes the operation, e.g. `replace(net.port.parse, <hash>)`.
 
 **Queries.**
@@ -208,6 +210,12 @@ Stop after the database. The MCP server is its own phase.
   definitions and their dependents (see "Examples as a regression net").
 - **Queries parse on demand.** `list`, `search` and `context` parse stored texts to read `doc` lines and case lists.
   A `doc` column, or a cache of parsed definitions per hash (texts never change), would remove that.
+- **The export can lag behind the database.** It is written after the commit; if that write fails, the database is
+  ahead until `exportAll` runs. Writing the files first and committing after would invert the risk. With the export
+  as source of truth, a failed write should probably be loud (it throws now) and the CLI should offer `export`.
+- **Import trusts file names for modules only.** A hand-edited export may hold non-canonical text; import accepts it
+  and stores the canonical form, so the next export rewrites the file. A check mode ("is the export canonical?") would
+  suit CI.
 - **`search(type)` cannot express function types**, since alang has none (open question). A std parameter like
   `with: (T) -> U` only matches `_`.
 - **`refs` rows depend on the text alone** once cases are stored by their own name, which is what makes reusing a
