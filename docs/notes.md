@@ -7,10 +7,10 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
 
 Read this first when picking up the work in a new session. Update it when a phase ends.
 
-**Branches.** Work happens on the local branch `database`, branched from `examples` (local, phase 4 committed),
-which sits on `effects` (local), which sits on `type-checker` (pushed to `origin/type-checker`). `main`
-(= `origin/main`) has only the first slice, so do not start from `main`. Nothing is merged yet; merging and pushing
-is the user's call.
+**Branches.** Work happens on the local branch `mcp`, branched from `database` (also on `origin/database`), which
+sits on `examples` (local, phase 4 committed), which sits on `effects` (local), which sits on `type-checker` (pushed
+to `origin/type-checker`). `main` (= `origin/main`) has only the first slice, so do not start from `main`. Nothing is
+merged yet; merging and pushing is the user's call.
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -26,11 +26,15 @@ is the user's call.
 6. Fixes from the database phase, on `database`: the checker enforces 1.2 for the own module (E0226); database and
    export stay in step when Git changes the files (`sync`, table `export_files`, E0513, `export --force`); `rename`
    takes an optional text, so a rename and an edit share one transaction.
+7. The MCP server, on branch `mcp`: `src/mcp.ts` (`alang mcp [--dir <dir>]`), the queries and operations of section 6
+   as tools over stdio, hand-written protocol for both MCP eras (`initialize` and the stateless 2026-07-28).
+   Decisions in `decisions.md`, section MCP server; registration in the README.
 
-**Next:** the MCP server around the queries and operations of `Codebase` (its own phase, see CLAUDE.md). `extern fn`
-and `const` are still unparsed and need their form decided.
+**Next:** use the MCP server from Claude Code on a real alang project and record what goes wrong (CLAUDE.md: the
+language gets tested on its actual user). Not yet checked against an official MCP client (see "From the MCP
+server"). `extern fn` and `const` are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (156 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (163 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -62,6 +66,8 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   report as E0513. To confirm: every `alang db` command, a plain query included, can now change the database (a
   deleted export file removes its module's definitions). Above all, references stay names, so `rename` rewrites
   callers instead of changing only a pointer (departs from 6.1); see "Database phase: open points".
+- MCP server: everything in `decisions.md`, section MCP server; above all, no `import`/`export` tools, JSON results
+  identical to `alang db`, and a hand-written protocol instead of the SDK.
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
 
@@ -100,6 +106,29 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **`refs` rows depend on the text alone** once cases are stored by their own name, which is what makes reusing a
   version (revert, remove then add) safe without recomputing anything.
 
+## From the MCP server (2026-11-12)
+
+- **Not yet run against an official client.** The tests drive the server with my own reading of the protocol, in
+  process and over stdio. A pass with the official TypeScript SDK client (or Claude Code itself) is still open; it
+  was not run here because downloading the SDK was not permitted in the session.
+- **MCP changed shape in 2026-07-28.** The `initialize` handshake is gone; each request names its version in
+  `_meta`, and `server/discover` replaces the handshake. The server serves both eras, so it works with clients from
+  before and after. When the old era is dropped by clients, `initialize` and the legacy result shapes can go.
+- **Texts arrive JSON-escaped.** The model reads a definition as a JSON string with `\n` and indentation spaces inside
+  it, and writes one the same way as a tool argument. Results are kept identical to `alang db` for now; if the model
+  stumbles over indentation, a result form with the canonical text as its own text block would be the fix.
+- **The spec is not reachable through the server.** A model that only has the MCP server (no repository) learns the
+  syntax from `context` results and diagnostics alone. The spec, or a short syntax card, could be an MCP resource.
+- **The module cache grows per submit.** Each acceptance imports a freshly written module that is never unloaded
+  (see "From mandatory examples"). In a long-running server that is one module per submit; a worker or subprocess
+  per acceptance would release them.
+- **No time limit on examples.** A submit with an exponential example blocks the server, and with it every later
+  tool call (calls run one at a time). The same subprocess would bring a timeout.
+- **The hash is the only state the model keeps.** A rejected change returns `current`, an accepted one `written` with
+  the new hashes, so a model can chain changes without re-reading. Whether it does so in practice is worth watching.
+- **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
+  model not to run. A model with a shell may still run them; the diagnostic could carry a hint that it is for the user.
+
 ## From the export sync (2026-11-12)
 
 - **Deleting an export file deletes a module.** With the export as source of truth, a file removed by a pull, or by
@@ -107,7 +136,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   read as "not written yet". A typo in `--dir` is therefore harmless, but `rm export/net.port.alang` is not.
 - **The MCP server must sync before queries.** `Codebase` queries are synchronous and read the database as it is; the
   command line calls `sync()` first. A long-running server has to do the same per request, or its answers go stale
-  after a pull (the guard would still catch the stale hash at submit, one round trip later).
+  after a pull (the guard would still catch the stale hash at submit, one round trip later). Done: `mcp.ts` syncs
+  before every query.
 - **Every operation reads every export file.** Fine for the prototype, like accepting the whole program per submit.
   A large codebase could compare file modification times first and hash only the files that changed.
 - **A pull during a submit is caught, with one window left.** After acceptance the submit compares the export again
@@ -132,7 +162,7 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   table of section 6 no longer describes `rename` fully. If the spec is revised for "References stay names", this is
   a good moment to document the optional text as well.
 - **An MCP tool for rename** should expose the text as an optional argument; an LLM that wants to rename and edit will
-  otherwise submit two transactions, and the second needs the hash the first returned.
+  otherwise submit two transactions, and the second needs the hash the first returned. Done: `rename` has `text`.
 
 ## Spec observations
 
@@ -149,7 +179,6 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 
 - Nesting depth limit (4.8).
 - Static proof of conditions (5.2) and prefix checkability (1.6) — separate projects.
-- MCP server around the database (section 6, CLAUDE.md).
 
 ## Ideas
 

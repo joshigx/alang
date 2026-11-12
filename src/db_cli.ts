@@ -1,5 +1,5 @@
 // `alang db`: the queries and operations of section 6 on the command line,
-// with JSON output. A thin layer over `Codebase`; the MCP server will be
+// with JSON output. A thin layer over `Codebase`; the MCP server (mcp.ts) is
 // another.
 //
 //   alang db [--dir <dir>] <command> ...       (default dir: the current one)
@@ -29,7 +29,7 @@
 // brought in step with the export (`Codebase.sync`); if that fails, the query
 // answers from the database and the diagnostics go to stderr.
 
-import { type Change, Codebase, type ExportResult, type SubmitResult } from "./codebase.ts";
+import { Codebase, type ExportResult, parseChanges, type SubmitResult } from "./codebase.ts";
 
 export const DB_USAGE = "usage: alang db [--dir <dir>] <definition|signature|context|callers|list|search|" +
   "search-type|history|add|replace|remove|rename|submit|export|import> ...";
@@ -45,27 +45,6 @@ function print(value: unknown): void {
 function result(r: SubmitResult | ExportResult): number {
   print(r);
   return r.ok ? 0 : 1;
-}
-
-// Parses and checks the changes of a `submit` file; throws on a malformed one.
-function changesOf(json: unknown): Change[] {
-  if (!Array.isArray(json)) throw new Error("submit: the file holds a JSON array of changes.");
-  const fields: Record<string, string[]> = {
-    add: ["text"],
-    replace: ["name", "hash", "text"],
-    remove: ["name", "hash"],
-    rename: ["name", "hash", "to"],
-  };
-  return json.map((c, i) => {
-    const needed = fields[c?.op];
-    const optional = c?.op === "rename" && c.text !== undefined ? ["text"] : [];
-    if (!needed || ![...needed, ...optional].every((f) => typeof c[f] === "string")) {
-      throw new Error(
-        `submit: change ${i} is not one of ${JSON.stringify(fields)} with string fields (a rename may add "text").`,
-      );
-    }
-    return c as Change;
-  });
 }
 
 const QUERIES = new Set(["definition", "signature", "context", "callers", "list", "search", "search-type", "history"]);
@@ -160,7 +139,7 @@ export async function dbMain(args: string[]): Promise<number> {
           }]),
         );
       case "submit":
-        return result(await cb.submit(changesOf(JSON.parse(await readText(a)))));
+        return result(await cb.submit(parseChanges(JSON.parse(await readText(a)))));
       case "export":
         return result(await cb.exportAll({ force: a === "--force" }));
       case "import":

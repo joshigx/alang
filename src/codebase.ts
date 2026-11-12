@@ -46,6 +46,33 @@ export type Change =
     readonly text?: string;
   };
 
+// The string fields of each change; a rename may also have "text".
+const CHANGE_FIELDS: Record<Change["op"], readonly string[]> = {
+  add: ["text"],
+  replace: ["name", "hash", "text"],
+  remove: ["name", "hash"],
+  rename: ["name", "hash", "to"],
+};
+
+// The changes of a transaction as JSON (`alang db submit`, the MCP tool
+// `submit`): an array of objects such as `{"op": "add", "text": ...}`. Throws
+// an Error naming the first malformed change.
+export function parseChanges(json: unknown): Change[] {
+  if (!Array.isArray(json)) throw new Error("submit takes a JSON array of changes.");
+  return json.map((c, i) => {
+    const op = c?.op as Change["op"];
+    const needed = Object.hasOwn(CHANGE_FIELDS, op) ? CHANGE_FIELDS[op] : null;
+    const fields = needed && (op === "rename" && c.text !== undefined ? [...needed, "text"] : needed);
+    if (!fields || !fields.every((f) => typeof c[f] === "string")) {
+      throw new Error(
+        `submit: change ${i} is not one of ${JSON.stringify(CHANGE_FIELDS)} with string fields ` +
+          '(a rename may add "text").',
+      );
+    }
+    return Object.fromEntries([["op", op], ...fields.map((f) => [f, c[f]])]) as Change;
+  });
+}
+
 // A definition as a query returns it.
 export interface Version {
   readonly name: string;

@@ -1,0 +1,352 @@
+// The MCP server: the protocol in both eras, the tools on the path of a
+// change, sync before queries, and the stdio transport end to end.
+
+import { join } from "node:path";
+import { assert_, assertEquals } from "./assert.ts";
+import { done, fresh, LOAD_PORT, PARSE, PARSE_ERROR, PARSE_REORDERED, PORT, withPort } from "./db_helpers.ts";
+import type { Codebase } from "../src/codebase.ts";
+import { LEGACY_VERSIONS, McpServer, MODERN_VERSIONS, type Response, TOOLS } from "../src/mcp.ts";
+
+let ids = 0;
+
+async function request(server: McpServer, method: string, params?: unknown): Promise<Response> {
+  const id = ++ids;
+  const response = await server.handle({ jsonrpc: "2.0", id, method, params });
+  assert_(response !== null, `no response to ${method}`);
+  assertEquals(response.id, id);
+  return response;
+}
+
+async function result(server: McpServer, method: string, params?: unknown): Promise<Record<string, unknown>> {
+  const r = await request(server, method, params);
+  assert_(r.error === undefined, JSON.stringify(r.error));
+  return r.result as Record<string, unknown>;
+}
+
+const modern = (params: Record<string, unknown> = {}) => ({
+  ...params,
+  _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} },
+});
+
+interface Called {
+  readonly isError: boolean;
+  // The first content block, parsed.
+  readonly json: Record<string, unknown>;
+  // Every content block, parsed.
+  readonly blocks: Record<string, unknown>[];
+}
+
+async function call(server: McpServer, name: string, args: unknown): Promise<Called> {
+  const r = await result(server, "tools/call", { name, arguments: args }) as {
+    content: { type: string; text: string }[];
+    isError: boolean;
+  };
+  assert_(r.content.every((c) => c.type === "text"));
+  const blocks = r.content.map((c) => JSON.parse(c.text));
+  return { isError: r.isError, json: blocks[0], blocks };
+}
+
+const codesOf = (c: Called) => (c.json.diagnostics as { code: string }[]).map((d) => d.code);
+
+Deno.test("mcp: the initialize handshake and the stateless era", async () => {
+  const cb = await fresh();
+  const server = new McpServer(cb);
+
+  // Legacy: the server answers with the version asked for, if it has it.
+  const init = await result(server, "initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "test", version: "1" },
+  });
+  assertEquals(init.protocolVersion, "2025-06-18");
+  assertEquals(init.capabilities, { tools: {} });
+  assertEquals((init.serverInfo as { name: string }).name, "alang");
+  assert_((init.instructions as string).includes("context(name)"));
+  assertEquals((await result(server, "initialize", { protocolVersion: "2099-01-01" })).protocolVersion, "2025-11-25");
+  assertEquals(await server.handle({ jsonrpc: "2.0", method: "notifications/initialized" }), null);
+  assertEquals(await result(server, "ping"), {});
+  const legacyTools = await result(server, "tools/list", {});
+  assertEquals(Object.keys(legacyTools), ["tools"]);
+
+  // Modern: discover, then requests with their version in `_meta`.
+  const discovered = await result(server, "server/discover", modern());
+  assertEquals(discovered.resultType, "complete");
+  assertEquals(discovered.supportedVersions, MODERN_VERSIONS);
+  assertEquals(discovered.capabilities, { tools: {} });
+  assertEquals(discovered.instructions, init.instructions);
+  const tools = await result(server, "tools/list", modern());
+  assertEquals([tools.resultType, tools.cacheScope, typeof tools.ttlMs], ["complete", "public", "number"]);
+  assertEquals(tools.tools, legacyTools.tools);
+  assertEquals((await result(server, "ping", modern())).resultType, "complete");
+  const unsupported = await request(server, "tools/list", {
+    _meta: { "io.modelcontextprotocol/protocolVersion": "2025-11-25" },
+  });
+  assertEquals(unsupported.error, {
+    code: -32022,
+    message: "Unsupported protocol version",
+    data: { supported: MODERN_VERSIONS, requested: "2025-11-25" },
+  });
+  assert_(!LEGACY_VERSIONS.some((v) => MODERN_VERSIONS.includes(v)));
+
+  // Every tool, in a fixed order, with a closed schema.
+  const listed = legacyTools.tools as { name: string; inputSchema: Record<string, unknown> }[];
+  assertEquals(listed.map((t) => t.name), [
+    "context",
+    "definition",
+    "signature",
+    "callers",
+    "list",
+    "search",
+    "search_type",
+    "history",
+    "add",
+    "replace",
+    "remove",
+    "rename",
+    "submit",
+  ]);
+  for (const t of listed) {
+    assertEquals(t.inputSchema.type, "object");
+    assertEquals(t.inputSchema.additionalProperties, false);
+    assert_(/^[a-z_]+$/.test(t.name));
+  }
+  assertEquals(listed.find((t) => t.name === "rename")!.inputSchema.required, ["name", "hash", "to"]);
+  assertEquals(listed.find((t) => t.name === "list")!.inputSchema.required, []);
+
+  // Protocol errors.
+  assertEquals((await request(server, "resources/list")).error?.code, -32601);
+  assertEquals((await request(server, "tools/call", { name: "nope", arguments: {} })).error?.code, -32602);
+  assertEquals((await server.handle({ jsonrpc: "2.0", id: 1, method: "ping", params: [] }))?.error?.code, -32602);
+  assertEquals((await server.handle({ id: 1, method: "ping" }))?.error?.code, -32600);
+  assertEquals((await server.handle([{ jsonrpc: "2.0", id: 1, method: "ping" }]))?.error?.code, -32600);
+  assertEquals((await server.handle({ jsonrpc: "2.0", id: null, method: "ping" }))?.error?.code, -32600);
+  // A response from the client: nothing to answer.
+  assertEquals(await server.handle({ jsonrpc: "2.0", id: 7, result: {} }), null);
+  await done(cb);
+});
+
+Deno.test("mcp: the path of a change through context and replace", async () => {
+  const cb = await fresh();
+  const server = new McpServer(cb);
+  const added = await call(server, "submit", {
+    changes: [PORT, PARSE_ERROR, PARSE].map((text) => ({ op: "add", text })),
+  });
+  assertEquals(added.isError, false);
+  assertEquals((added.json.written as unknown[]).length, 3);
+  assertEquals((await call(server, "add", { text: LOAD_PORT })).isError, true); // needs config.LoadError
+
+  // Read (the spec's step 1), then replace with the hash (step 2).
+  const context = await call(server, "context", { name: "net.port.parse" });
+  assertEquals(context.isError, false);
+  assertEquals(context.json.text, PARSE);
+  assertEquals((context.json.uses as { name: string }[]).map((u) => u.name).slice(0, 2), [
+    "net.port.Port",
+    "net.port.ParseError",
+  ]);
+  const hash = context.json.hash as string;
+  const replaced = await call(server, "replace", { name: "net.port.parse", hash, text: PARSE_REORDERED });
+  assertEquals(replaced.isError, false);
+  const written = replaced.json.written as { name: string; hash: string }[];
+  assertEquals(written.map((w) => w.name), ["net.port.parse"]);
+  assertEquals((await call(server, "definition", { name: "net.port.parse" })).json.hash, written[0].hash);
+
+  // The old hash is stale: rejected, with the current version to retry on.
+  const stale = await call(server, "replace", { name: "net.port.parse", hash, text: PARSE });
+  assertEquals(stale.isError, true);
+  assertEquals(codesOf(stale), ["E0501"]);
+  assertEquals(stale.json.current, [{ name: "net.port.parse", hash: written[0].hash, text: PARSE_REORDERED }]);
+
+  // An unknown name is a result too, with a closest-name fix.
+  const unknown = await call(server, "signature", { name: "net.port.pars" });
+  assertEquals(unknown.isError, true);
+  assertEquals(codesOf(unknown), ["E0502"]);
+
+  // An interface change with a caller outside the transaction (E0506), then
+  // both in one submit.
+  const caller = `fn app.port
+  doc: "The default port."
+  in: none
+  out: Result<net.port.Port, net.port.ParseError>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    port() == Ok(net.port.Port(value: 8080))
+  body:
+    return net.port.parse(text: "8080")
+end fn app.port`;
+  const callerHash = ((await call(server, "add", { text: caller })).json.written as { hash: string }[])[0].hash;
+  const renamedParam = PARSE_REORDERED.replaceAll("text: ", "source: ")
+    .replace("std.int.parse(source: text)", "std.int.parse(text: source)");
+  const alone = await call(server, "replace", { name: "net.port.parse", hash: written[0].hash, text: renamedParam });
+  assertEquals(codesOf(alone), ["E0506"]);
+  assert_((alone.json.diagnostics as { message: string }[])[0].message.includes("app.port"));
+  const together = await call(server, "submit", {
+    changes: [
+      { op: "replace", name: "net.port.parse", hash: written[0].hash, text: renamedParam },
+      { op: "replace", name: "app.port", hash: callerHash, text: caller.replace("parse(text:", "parse(source:") },
+    ],
+  });
+  assertEquals(together.isError, false, JSON.stringify(together.json));
+  assertEquals((await call(server, "callers", { name: "net.port.parse" })).json.callers, ["app.port"]);
+
+  // Rename with a text, the other queries.
+  const before = (await call(server, "definition", { name: "app.port" })).json.hash;
+  const renamed = await call(server, "rename", {
+    name: "app.port",
+    hash: before,
+    to: "app.default_port",
+    text: caller.replaceAll("app.port", "app.default_port").replace("port() ==", "default_port() ==")
+      .replace("parse(text:", "parse(source:").replace("The default port.", "The port used without a config."),
+  });
+  assertEquals(renamed.isError, false, JSON.stringify(renamed.json));
+  assertEquals((await call(server, "list", {})).json.submodules, ["app", "net"]);
+  assertEquals(
+    ((await call(server, "list", { module: "app" })).json.definitions as { name: string }[]).map((d) => d.name),
+    ["app.default_port"],
+  );
+  const newHash = (renamed.json.written as { name: string; hash: string }[])
+    .find((w) => w.name === "app.default_port")!.hash;
+  assertEquals((await call(server, "search", { text: "without a config" })).json as unknown, [
+    { name: "app.default_port", hash: newHash, kind: "fn", doc: "The port used without a config." },
+  ]);
+  const byType = (await call(server, "search_type", { pattern: "-> Result<Port, _>" })).json as unknown as {
+    name: string;
+  }[];
+  assertEquals(byType.map((h) => h.name), ["app.default_port"]);
+  assertEquals(
+    ((await call(server, "history", { name: "app.default_port" })).json.entries as { operation: string }[])
+      .map((e) => e.operation),
+    ["add", "replace", "rename"],
+  );
+  const removed = await call(server, "remove", { name: "app.default_port", hash: newHash });
+  assertEquals(removed.isError, false);
+  await done(cb);
+});
+
+Deno.test("mcp: arguments that do not fit are tool errors the model can read", async () => {
+  const cb = await fresh();
+  const server = new McpServer(cb);
+  const errorOf = async (name: string, args: unknown) => {
+    const c = await call(server, name, args);
+    assertEquals(c.isError, true);
+    return c.json.error as string;
+  };
+  // A misnamed argument would otherwise silently list the top level.
+  assertEquals(await errorOf("list", { name: "net" }), "`list` has no argument `name`; its arguments are `module`.");
+  assertEquals(await errorOf("replace", { name: "a.b", hash: "x" }), "`replace` needs the argument `text`.");
+  assertEquals(await errorOf("definition", { name: 3 }), "The argument `name` of `definition` is a string.");
+  assertEquals(await errorOf("definition", "a.b"), "The arguments of `definition` are an object.");
+  assert_((await errorOf("submit", { changes: [{ op: "replace", name: "a.b" }] })).startsWith("submit: change 0"));
+  assertEquals(await errorOf("submit", { changes: "add" }), "submit takes a JSON array of changes.");
+  // Missing arguments count as none.
+  assertEquals((await result(server, "tools/call", { name: "list" })).isError, false);
+  await done(cb);
+});
+
+Deno.test("mcp: every query sees the export as it is now", async () => {
+  const cb = await withPort();
+  const server = new McpServer(cb);
+  const file = join(cb.dir, "export", "net.port.alang");
+
+  // As after a pull while the server runs.
+  await Deno.writeTextFile(file, `${PARSE_ERROR}\n\n${PORT}\n\n${PARSE_REORDERED}\n`);
+  assertEquals((await call(server, "definition", { name: "net.port.parse" })).json.text, PARSE_REORDERED);
+
+  // A file that does not parse: the answer comes from the database, and a
+  // second block says why.
+  await Deno.writeTextFile(file, "<<<<<<< HEAD\n");
+  const stale = await call(server, "definition", { name: "net.port.parse" });
+  assertEquals([stale.isError, stale.json.text], [false, PARSE_REORDERED]);
+  assertEquals(stale.blocks.length, 2);
+  assert_((stale.blocks[1].warning as string).includes("from the database"));
+  assert_(JSON.stringify(stale.blocks[1].diagnostics).includes("net.port.alang"));
+  // A submit refuses to work on it.
+  const refused = await call(server, "add", { text: PORT.replaceAll("net.port.Port", "net.port.Other") });
+  assertEquals(refused.isError, true);
+  await Deno.writeTextFile(file, `${PARSE_ERROR}\n\n${PORT}\n\n${PARSE_REORDERED}\n`);
+  await done(cb);
+});
+
+Deno.test("mcp: calls sent together are answered in the order sent", async () => {
+  const cb = await fresh();
+  const server = new McpServer(cb);
+  const [added, listed] = await Promise.all([
+    call(server, "submit", { changes: [PORT, PARSE_ERROR, PARSE].map((text) => ({ op: "add", text })) }),
+    call(server, "list", { module: "net.port" }),
+  ]);
+  assertEquals(added.isError, false);
+  assertEquals((listed.json.definitions as unknown[]).length, 3);
+  await done(cb);
+});
+
+// ---- stdio ----
+
+const CLI = new URL("../src/cli.ts", import.meta.url).pathname;
+
+async function withProcess(cb: Codebase, lines: string[]): Promise<{ code: number; out: string[]; err: string }> {
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "--allow-read", "--allow-write", CLI, "mcp", "--dir", cb.dir],
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const writer = child.stdin.getWriter();
+  const encoder = new TextEncoder();
+  for (const line of lines) await writer.write(encoder.encode(line));
+  await writer.close();
+  const out = await child.output();
+  const stdout = new TextDecoder().decode(out.stdout);
+  return {
+    code: out.code,
+    out: stdout.split("\n").filter((l) => l !== ""),
+    err: new TextDecoder().decode(out.stderr),
+  };
+}
+
+Deno.test("mcp: over stdio, one message per line", async () => {
+  const cb = await withPort();
+  cb.close(); // The server process opens it.
+  const msg = (id: number, method: string, params: unknown) => JSON.stringify({ jsonrpc: "2.0", id, method, params });
+  const call2 = msg(2, "tools/call", { name: "context", arguments: { name: "net.port.parse" } });
+  const { code, out, err } = await withProcess(cb, [
+    msg(1, "initialize", { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "t", version: "1" } }) +
+    "\n",
+    '{"jsonrpc":"2.0","method":"notifications/initialized"}\n',
+    "not json\n",
+    // One message in two writes, the second with a Windows line end.
+    call2.slice(0, 40),
+    call2.slice(40) + "\r\n",
+    "\n",
+    msg(3, "tools/call", { name: "replace", arguments: { name: "net.port.parse", hash: "0000", text: PARSE } }),
+  ]);
+  assertEquals(code, 0, err);
+  // Every line on stdout is a message.
+  const messages = out.map((l) => JSON.parse(l) as Response);
+  const byId = new Map(messages.map((m) => [m.id, m]));
+  assertEquals(messages.length, 4);
+  assertEquals(byId.get(null)?.error?.code, -32700);
+  assertEquals((byId.get(1)?.result as { protocolVersion: string }).protocolVersion, "2025-11-25");
+  const context = byId.get(2)?.result as { content: { text: string }[]; isError: boolean };
+  assertEquals([context.isError, JSON.parse(context.content[0].text).text], [false, PARSE]);
+  const stale = byId.get(3)?.result as { content: { text: string }[]; isError: boolean };
+  assertEquals([stale.isError, JSON.parse(stale.content[0].text).diagnostics[0].code], [true, "E0501"]);
+
+  // Usage errors.
+  const usage = await new Deno.Command(Deno.execPath(), {
+    args: ["run", "--allow-read", "--allow-write", CLI, "mcp", "--port", "1"],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals([usage.code, usage.stdout.length], [2, 0]);
+  await Deno.remove(cb.dir, { recursive: true });
+});
+
+// The tool table and its list stay in step.
+Deno.test("mcp: each tool has a title, a description and described arguments", () => {
+  for (const t of TOOLS) {
+    assert_(t.title !== "" && t.description.endsWith("."), t.name);
+    for (const [key, p] of Object.entries(t.params)) assert_(p.description.endsWith("."), `${t.name}.${key}`);
+  }
+});
