@@ -48,7 +48,9 @@ is done; see "From the MCP server". Claude Code connected and used every kind of
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
-and need their form decided.
+and need their form decided. From the HTTP server task (2026-11-12, it worked): std definitions cannot be read
+through `context`/`definition`/`signature`/`list`, so the model read `src/std.ts`; every MCP session leaves an
+`accept-<pid>-1.ts` (no SIGTERM handling). Both in "From the MCP server" and "From db run".
 
 **Checks before every commit:** `deno task test` (189 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
@@ -230,6 +232,23 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
   model not to run. A model with a shell may still run them; the diagnostic could carry a hint that it is for the user.
+- **Playground, task "HTTP server"** ("a simple http server on localhost that shows hello world in the browser").
+  Accepted in two `add` calls: a pure `web.respond` with two examples (`/` and `/favicon.ico`) and `web.main`, which
+  serves it on `localhost:8080` and prints the `Err` case. The model ran it, checked it with curl (200,
+  `Hello, world`) and stopped it (see "From db run"); its report named what it had not tried (a browser, the error
+  path). Two harmless flaws: the handler is a lambda that only calls `respond` (`handler: fn(request: ...) =>
+  respond(request: request)`) where `handler: respond` would do, perhaps because the signature reads
+  `(std.http.Request) -> std.http.Response with effects`; and `Listening on` is printed before `serve` knows the port
+  is free (see "From async output and std.http").
+- **std cannot be read through the tools.** `search "http"` listed the `std.http` types with their docs, and
+  `search_type` found `serve` on the third try (a pattern matches the parameter count exactly, so
+  `_ -> Result<Unit, ServeError>` missed it). But the fields of `Request` and `Response` were out of reach:
+  `context`, `definition`, `signature` and `list std.http` answer E0502 ("There is no definition
+  `std.http.Request`") for a name `search` has just returned. The spec does not describe `std.http` either, so the
+  model grepped the repository and read `src/std.ts`; a model with only the server would have had to guess the fields
+  from diagnostics. Not built: answer these queries for std names too. std types already exist as alang text (in
+  `src/std.ts`); std functions do not, since they are in effect `extern fn`, whose form is undecided, but `signature`
+  can give the line `search_type` prints, and `list std.http` can list the module.
 
 ## From db run (2026-11-12)
 
@@ -261,6 +280,19 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **The playground now knows `db run`.** Its `CLAUDE.md` names `alang db run` (the user installed `alang`). Watch in
   the next round whether the model runs a program after writing a `main`, and whether it reads the JSON on stderr
   when a run is refused.
+- **It does run them.** After writing the HTTP server, the model started `db run web.main` in the background on its
+  own, but through `deno run ... src/cli.ts`: it told the user `alang` was not on its PATH without having checked (it
+  was, in `~/.deno/bin`, where its `deno` came from). A refused run has not happened yet. It stopped the server by
+  finding the program's own process (`out/web.main.run.ts`) and sending it SIGINT; `serve` returned `Ok` and both
+  processes ended with 0. SIGINT sent to the `alang` process alone would have done nothing, since `alang run` ignores
+  it while the program runs (Ctrl-C in a terminal reaches both, and the program should get it once); SIGTERM is
+  passed on. A model that signals the PID it started (`kill -INT $!`) would see the server keep running. The tool
+  cannot tell a terminal's SIGINT from one sent to it alone; passing on SIGTERM if the program is still running a
+  moment after a SIGINT would cover both, or the playground's `CLAUDE.md` could say to stop a program with SIGTERM.
+- **Every MCP session leaves an acceptance file.** The fourth `out/accept-<pid>-1.ts` is from the server of the HTTP
+  task (written at its last `add`, no server process left afterwards). So it is not an occasional crash: the client
+  ends the server in a way that skips `close()`, most likely SIGTERM, which Deno answers by exiting at once. A
+  SIGTERM listener in `mcpMain` that closes the codebase would fix it.
 
 ## From async output and std.http (2026-11-12)
 
