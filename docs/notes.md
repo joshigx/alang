@@ -155,6 +155,13 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   the old name, `follow` for `parse`, a hashless `rename` for the old name), and the model explained correctly why
   `parse_or_default` did not change. The export diff looks larger than the change, since a renamed definition moves
   to its new sorted place in the module file; a reviewer reading `git diff` sees a deletion and an insertion.
+- **Playground, task "greet and main".** Accepted in one transaction: `std.string.concat` found (not `+`),
+  `examples: none` for the effectful function, short names inside the module, and it offered (did not do) the split
+  into a pure `greeting` with examples and a thin `greet`, as the spec advises. Then it wanted to run the program and
+  could not: the server has no way to run code, and `alang` is not on the PATH. Deeper gap: `alang run` takes one
+  file, so a `main` that uses several modules cannot be run from the database at all. Options: `alang db run`
+  (assemble the program from the database, run `main` with the permissions of its effects), and later an MCP `run`
+  tool, which would be the first tool with real effects.
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
