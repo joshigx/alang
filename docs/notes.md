@@ -151,6 +151,10 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   `compare`), which would have made the body one line. Not exercised, but close: contracts are compared as printed,
   so dropping a `requires`, a pure loosening, would have pulled every caller into the transaction (E0506) had there
   been any. A proof of implication (5.2) would let loosened `requires` and tightened `ensures` pass.
+- **Playground, task "rename a type".** `ParseError` to `PortError` in one call; history as designed (`rename` with
+  the old name, `follow` for `parse`, a hashless `rename` for the old name), and the model explained correctly why
+  `parse_or_default` did not change. The export diff looks larger than the change, since a renamed definition moves
+  to its new sorted place in the module file; a reviewer reading `git diff` sees a deletion and an insertion.
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
