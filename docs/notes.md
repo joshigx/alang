@@ -7,7 +7,7 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
 
 Read this first when picking up the work in a new session. Update it when a phase ends.
 
-**Branches.** Work happens on the local branch `mcp`, branched from `database` at `f5dde7e`, which
+**Branches.** Work happens on the local branch `async`, branched from `mcp` at `2837853`; `mcp` was branched from `database` at `f5dde7e`, which
 sits on `examples` (local, phase 4 committed), which sits on `effects` (local), which sits on `type-checker` (pushed
 to `origin/type-checker`). `main` (= `origin/main`) has only the first slice, so do not start from `main`. Nothing is
 merged yet; merging and pushing is the user's call.
@@ -34,15 +34,24 @@ merged yet; merging and pushing is the user's call.
    written in full and not reported (the old fix broke it). Decisions in `decisions.md`, Database, Own-module names.
 9. `alang db run [<main>]` (`Codebase.run`): the program the database holds, synced, accepted and started like
    `alang run`; the full name chooses among several `main` functions. Decisions in `decisions.md`, Database, Run.
+10. Async output, on branch `async`: a function with effects is `async` in the TypeScript and every call to one is
+    awaited (the checker marks the calls in `CheckInfo.effectful`); pure code stays synchronous. alang itself stays
+    sequential. Decision in `decisions.md`, Semantics and runtime, "Effects in TS".
+11. `std.http.serve`, on `async`: records `Request`, `Response`, `Header`, variant `ServeError`; one request at a
+    time; ends on SIGINT/SIGTERM with `Ok(Unit)`; the handler may have effects (the one exception to E0232, marked
+    `effects: "caller"` on the std function type). Runs on Deno and Node.js. `alang run` waits for the program on
+    Ctrl-C. Example in `examples/server.alang`. Decisions in `decisions.md`, HTTP server.
 
-**Next:** a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
+**Next:** phase 3 of the HTTP work, an HTTP client (`std.http.fetch` or similar, on fetch), was postponed by the
+user (2026-11-12); async output makes it possible now. Earlier: a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
 is done; see "From the MCP server". Claude Code connected and used every kind of tool, so the protocol works with a
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (171 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (189 tests; the task now allows `net`, for the server tests),
+`deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -84,6 +93,11 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   sync can change the database.
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
+- Async output and `std.http` (the user asked for async and a server, 2026-11-12; the details are mine): every
+  function with effects becomes async, not only those that wait; the handler exception to E0232; requests one at a
+  time; `host` as a parameter; the record fields (`content`, since `body` is reserved; method and query as plain
+  strings); the `where` of `Response`; `Err` for a port in use but a trap for a bad header; a trap in a handler ends
+  the whole server; `alang run` ignoring SIGINT while the program runs. Everything in `decisions.md`, HTTP server.
 
 ## Database phase: open points (2026-11-12)
 
@@ -247,6 +261,42 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **The playground now knows `db run`.** Its `CLAUDE.md` names `alang db run` (the user installed `alang`). Watch in
   the next round whether the model runs a program after writing a `main`, and whether it reads the JSON on stderr
   when a run is refused.
+
+## From async output and std.http (2026-11-12)
+
+- **Deep recursion with effects no longer overflows.** Every `await` unwinds the JavaScript stack, so a function
+  with effects that recurses 200,000 times runs to the end; before async output it crashed with a stack overflow.
+  The price is memory: each pending call waits for the next. Pure recursion still overflows (see "From mandatory
+  examples"); self tail calls turned into loops would fix both.
+- **A trap ends the whole server.** That is the language's rule (5.3), but a server faces untrusted input: an
+  `Int` overflow on a number from a query, or a header value echoed with a line break, ends the program for every
+  client. Validating input is the programmer's job, as everywhere in alang; a per-request trap boundary (500, keep
+  serving) would be a language decision, since it makes traps catchable in one place.
+- **Routing is by exact path only.** std has no `starts_with`, `split` or query parsing, so `/users/42` cannot be
+  taken apart, and `query` is one raw string. The next std functions a server wants: `std.string.split`,
+  `std.string.starts_with`, and a query reader returning `List<std.http.Header>`-like pairs (or a `Map`, once maps
+  have functions).
+- **Handler examples are long.** A `Request` needs all five fields, headers as `std.list.empty<std.http.Header>()`;
+  one example line of `examples/server.alang` is ~200 characters. List literals (open question) would shorten it;
+  so would a pure helper in the user's module. It is still the strongest part of the design: the server's logic is
+  tested at acceptance, before any request.
+- **Content is text only.** No binary bodies (images, files); the runtime decodes UTF-8. Bytes would need a byte
+  type, which alang does not have.
+- **The program cannot see that it listens.** `serve` prints nothing and returns only at the end, so a program
+  that announces its address prints before knowing the port is free, and port 0 (any free port) is useless. A
+  callback or a `serve` variant reporting the bound address would fix it; tests pick a free port beforehand.
+- **`net` is all or nothing.** `--allow-net` grants every host and port. A capability (recorded alternative)
+  could grant exactly `127.0.0.1:8080`.
+- **The handler exception is std-only.** A user function cannot take a function with effects, since user code has
+  no function types. If function types arrive, the `with effects` mark needs a surface form.
+- **Adding an effect to a handler** is an interface change, and `main` passes the handler by name, so it is a
+  caller: the change pulls `main` into the transaction (E0506), where it must declare the effect. Consistent with
+  calls, not tested separately.
+- **The Node.js path is tested end to end** (requests, SIGTERM, a port in use); the in-process tests (one at a
+  time, traps, headers) run on Deno only. `EACCES` is mapped on both hosts but not run, since it needs a port
+  below 1024 without root.
+- **One handler at a time is slow** for a handler that waits (a file read, later an outgoing request). Concurrency
+  would be a language feature with its own rules; the queue is where it would start.
 
 ## From the export sync (2026-11-12)
 
