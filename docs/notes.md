@@ -140,6 +140,11 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   canonical text, not the text sent, the tool could apply this unambiguous fix itself instead of rejecting. Rejecting
   keeps the model aware of the one form within a session; normalizing saves a round trip each time. Count how often it
   recurs before deciding.
+- **Playground, task "rename a parameter".** Renaming `text` of `net.port.parse` to `source` went through as one
+  transaction with its caller (4 calls); the diff is exactly the change, and it kept `std.int.parse(text: source)`,
+  where `text` is std's parameter. Not yet known whether E0506 was hit or the callers were read in advance. A
+  parameter rename is as mechanical as a definition rename, yet the model has to send every caller's full text; a
+  tool operation for it (rewriting callers like `rename` does) would scale where twenty callers would not.
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
