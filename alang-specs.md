@@ -507,7 +507,7 @@ These forms are common in other languages but do not exist in alang. Write the f
   - A case without a value is matched bare: `case None then`.
   - A case with a value always takes a sub-pattern, either a name or a nested case: `case Some(n) then`, `case Err(OutOfRange(n)) then`, `case Err(std.fs.NotFound) then`.
   - A `match` on `Int` or `String` can never be exhaustive (E0213); use `if`.
-  - A name after specific nested cases (`case Err(std.fs.NotFound) then`, then `case Err(other) then`) is accepted today, but it acts as a catch-all for the remaining cases, against 3.3: a new case of `std.fs.ReadError` would not be reported there. List every case instead.
+  - A name may not stand for the remaining cases. After `case Err(std.fs.NotFound) then`, a `case Err(other) then` would be a catch-all, so a case added to `std.fs.ReadError` later would go unreported; it is rejected (E0227). Write a case for each. A name with no specific case beside it (`case Err(e) then` alone) binds the whole value, as usual.
   - A branch may hold `let` statements before its value.
 - **`for` (3.4).** `for name: Type in list do ... end for`. As a statement, its body has type `Unit`. As a value, it is the list of the body's values; this is how effects per element are collected.
 - **Where `if`, `match` and `for` stand.** As a statement, as the value of a `let`, or after `return`. Not yet inside another expression (E0303).
@@ -727,7 +727,7 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | --- | --- |
 | E0001 to E0006 | Characters, names, numbers, strings, foreign forms |
 | E0101 to E0199 | Syntax and section order |
-| E0201 to E0226 | Names, types, calls, patterns, examples' form |
+| E0201 to E0227 | Names, types, calls, patterns, examples' form |
 | E0230 to E0233 | Effects |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0403 | Missing, failing and trapping examples |

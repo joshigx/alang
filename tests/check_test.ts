@@ -424,6 +424,45 @@ Deno.test("check: match is exhaustive, without unreachable cases (3.3)", () => {
   );
 });
 
+Deno.test("check: a name after a specific case is a catch-all, and rejected (3.3)", () => {
+  const port = specBlock("type net.port.Port") + "\n\n";
+  const describe = (cases: string[]) =>
+    port + [
+      "fn net.port.describe",
+      '  doc: "D."',
+      "  in:",
+      "    text: String",
+      "  out: String",
+      "  effects: none",
+      "  requires: none",
+      "  ensures: none",
+      "  examples: none",
+      "  body:",
+      "    let s: String = match parse(text: text)",
+      ...cases.flatMap((c) => [`      case ${c} then`, '        "x"']),
+      "    end match",
+      "    return s",
+      "end fn net.port.describe",
+    ].join("\n");
+  // `e` would stand for OutOfRange, and for any case added to ParseError later.
+  const d = one(describe(["Ok(p)", "Err(NotANumber)", "Err(e)"]), "E0227");
+  assertEquals([d.at, d.expected], ["case Err(e) then", "case Err(OutOfRange(name)) then"]);
+  // The name first: the specific case is unreachable, one diagnostic.
+  one(describe(["Ok(p)", "Err(e)", "Err(NotANumber)"]), "E0214");
+  // A name with no specific case beside it binds the whole value, as always.
+  clean(describe(["Ok(p)", "Err(e)"]));
+  clean(describe(["Ok(p)", "Err(NotANumber)", "Err(OutOfRange(n))"]));
+  // Nested, and for the built-in cases too: 3.3 has no catch-all at all.
+  const nested = one(
+    fn(
+      "let o: Option<Result<Int, String>> = None\nlet n: Int = match o\n  case Some(Ok(v)) then\n    v\n" +
+        "  case Some(other) then\n    0\n  case None then\n    0\nend match\nreturn n",
+    ),
+    "E0227",
+  );
+  assertEquals(nested.expected, "case Some(Err(name)) then");
+});
+
 Deno.test("check: case patterns fit the subject type", () => {
   const opt = "let o: Option<Int> = Some(1)\n";
   one(

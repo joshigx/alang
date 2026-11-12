@@ -314,7 +314,11 @@ fn app.main
         std.string.concat(left: "port ", right: std.text.show(value: port.value))
       case Err(config.FileUnreadable(std.fs.NotFound)) then
         "no port.txt"
-      case Err(config.FileUnreadable(reason)) then
+      case Err(config.FileUnreadable(std.fs.PermissionDenied)) then
+        "port.txt is unreadable"
+      case Err(config.FileUnreadable(std.fs.IsADirectory)) then
+        "port.txt is unreadable"
+      case Err(config.FileUnreadable(std.fs.Other(reason))) then
         "port.txt is unreadable"
       case Err(config.InvalidPort(reason)) then
         "port.txt holds no valid port"

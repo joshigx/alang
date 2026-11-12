@@ -57,8 +57,7 @@ is done; see "From the MCP server". Claude Code connected and used every kind of
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
-and need their form decided. Open from the spec's blind test: whether a name after specific nested cases
-(`case Err(std.fs.NotFound)`, then `case Err(other)`) stays allowed; see "From the spec reference".
+and need their form decided.
 
 **Checks before every commit:** `deno task test` (195 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
@@ -105,7 +104,7 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
 - Section 7 of the spec states these decisions as rules, since a model writing alang needs them; it is the
   implementation's reference, not a settled design. Also mine: std readable through the queries but left out of
-  `list("")`, and the MCP server's instructions naming the spec's path.
+  `list("")`. The MCP server's instructions naming the spec's path were kept by the user (2026-11-12).
 - Async output and `std.http` (the user asked for async and a server, 2026-11-12; the details are mine): every
   function with effects becomes async, not only those that wait; the handler exception to E0232; requests one at a
   time; `host` as a parameter; the record fields (`content`, since `body` is reserved; method and query as plain
@@ -396,8 +395,9 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   accepted: exhaustiveness is met, and no earlier case covers `Err(other)` entirely. But `other` stands for every
   remaining case of `std.fs.ReadError`, so a case added later is not reported there, which is what 3.3 forbids a
   catch-all for. The blind agent read 3.3 strictly and listed every case. Options: reject a name in a position
-  where an earlier case of the same `match` named a specific case (list them all), or accept it as now. The user's
-  call; section 7.4 says it is accepted and advises listing every case.
+  where an earlier case of the same `match` named a specific case (list them all), or accept it as now. Decided
+  (the user, 2026-11-12): rejected, E0227, with the cases to write as `expected`. The blind programs and every
+  example program still check.
 - **Examples that cannot fail.** Not knowing how `show` prints `std.fs.IsADirectory`, the agent wrote
   `error_line(problem: std.fs.IsADirectory) == std.text.show(value: std.fs.IsADirectory)`: the expected side computes
   what the body computes, so the example passes whatever `show` does. Section 7.7 now gives the text; such examples

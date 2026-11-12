@@ -1224,6 +1224,7 @@ class DefChecker {
       if (t.k !== "never") allNever = false;
       if (!mode.discard && result === null && !isBottom(t)) result = t;
     }
+    if (sound) this.catchAlls(patterns.map((p) => ({ p, arm: p })), subject);
     if (sound) {
       const missing = this.missing(patterns, subject);
       if (missing === "_") {
@@ -1357,6 +1358,45 @@ class DefChecker {
     return null;
   }
 
+  // A name where an earlier case of the same `match` names a specific case
+  // at that position (`case Err(std.fs.NotFound)`, then `case Err(other)`)
+  // stands for the remaining cases: a catch-all, which 3.3 rules out, since
+  // a case added to the type later would not be reported there (E0227). A
+  // name before the specific case makes that case unreachable instead (E0214),
+  // so each order gets one diagnostic. `items` are the patterns at one
+  // position, in the order of their arms.
+  private catchAlls(items: readonly { p: Pattern; arm: Pattern }[], t: Type): void {
+    const cases = this.casesOf(t);
+    if (!cases) return;
+    items.forEach((item, k) => {
+      if (item.p.kind !== "bind") return;
+      const specific = items.slice(0, k).flatMap((i) => (i.p.kind === "case" ? [i.p] : []));
+      if (specific.length === 0) return;
+      const rest = cases.flatMap((c) => {
+        const group = specific.filter((q) => q.path[q.path.length - 1] === c.name);
+        if (group.length === 0) return [c.payload ? `${c.written}(name)` : c.written];
+        if (!c.payload) return [];
+        const m = this.missing(group.flatMap((q) => (q.sub ? [q.sub] : [])), c.payload);
+        return m === null ? [] : [`${c.written}(${m})`];
+      });
+      const target = item.p;
+      this.report(
+        "E0227",
+        `case ${printPattern(item.arm)} then`,
+        `\`${target.name}\` stands for the remaining cases of \`${this.show(t)}\`: a catch-all, so a case added ` +
+          "later would not be reported here (3.3). Write a case for each.",
+        { expected: rest.map((r) => `case ${printPattern(item.arm, target, r)} then`).join(", ") },
+      );
+    });
+    for (const c of cases) {
+      if (!c.payload) continue;
+      const sub = items.flatMap((i) =>
+        i.p.kind === "case" && i.p.path[i.p.path.length - 1] === c.name && i.p.sub ? [{ p: i.p.sub, arm: i.arm }] : []
+      );
+      this.catchAlls(sub, c.payload);
+    }
+  }
+
   // Whether every value matching `p` already matches one of `earlier`.
   private subsumed(earlier: readonly Pattern[], p: Pattern, t: Type): boolean {
     if (earlier.some((q) => q.kind === "bind")) return true;
@@ -1389,14 +1429,16 @@ function moduleOfName(full: string): string {
   return full.slice(0, full.lastIndexOf("."));
 }
 
-function printPattern(p: Pattern): string {
+// The text of a pattern, with `target` (a node inside it) written as `as`.
+function printPattern(p: Pattern, target?: Pattern, as?: string): string {
+  if (p === target) return as!;
   switch (p.kind) {
     case "bind":
       return p.name;
     case "literal":
       return printExpr(p.value as Literal, "");
     case "case":
-      return pathText(p.path) + (p.sub ? `(${printPattern(p.sub)})` : "");
+      return pathText(p.path) + (p.sub ? `(${printPattern(p.sub, target, as)})` : "");
   }
 }
 
