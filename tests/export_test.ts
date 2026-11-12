@@ -67,6 +67,22 @@ function forget(cb: Codebase): void {
   db.close();
 }
 
+// The port codebase, reopened so that a pull writes `file` once, at `stage`
+// of the next submit.
+async function pullDuring(stage: "accepted" | "committed", file: string, content: string): Promise<Codebase> {
+  const base = await withPort();
+  base.close();
+  let pulled = false;
+  return await Codebase.open(base.dir, {
+    clock: CLOCK,
+    during: async (at) => {
+      if (at !== stage || pulled) return;
+      pulled = true;
+      await Deno.writeTextFile(join(base.dir, "export", file), content);
+    },
+  });
+}
+
 async function imported(cb: Codebase, from?: string): Promise<Extract<SubmitResult, { ok: true }>> {
   const r = await cb.importAll(from);
   if (!r.ok) throw new Error(JSON.stringify(r.diagnostics, null, 2));
@@ -361,5 +377,46 @@ Deno.test("sync: an imported file that is not canonical is rewritten", async () 
   assert_(r.ok);
   assertEquals([r.exported, r.imported], [["net.port"], []]);
   assertEquals(await files(cb), canonical);
+  await done(cb);
+});
+
+Deno.test("sync: a pull while a submit is accepted starts the submit over", async () => {
+  // A new definition in the module the pull changed goes in on top of it.
+  const pulled = `${PARSE_ERROR}\n\n${PORT}\n\n${PARSE_REORDERED}\n`;
+  let cb = await pullDuring("accepted", "net.port.alang", pulled);
+  const zero = fn("net.port.zero", { out: "Int", examples: ["zero() == 0"], body: "return 0" });
+  await ok(cb, [add(zero)]);
+  assertEquals((await files(cb))["net.port.alang"], `${PARSE_ERROR}\n\n${PORT}\n\n${PARSE_REORDERED}\n\n${zero}\n`);
+  assertEquals(cb.history("net.port.parse").entries.map((e) => e.operation), ["add", "import"]);
+  await done(cb);
+
+  // A change to what the pull changed is stale after it (6.7).
+  cb = await pullDuring("accepted", "net.port.alang", pulled);
+  const parse = PARSE.replace("Reads a TCP port number", "Reads a port number");
+  const r = await fails(cb, [{
+    op: "replace",
+    name: "net.port.parse",
+    hash: hashOf(cb, "net.port.parse"),
+    text: parse,
+  }]);
+  assertEquals(codes(r.diagnostics), ["E0501"]);
+  assertEquals(r.current[0].text, PARSE_REORDERED);
+  assertEquals((await files(cb))["net.port.alang"], pulled);
+  await done(cb);
+});
+
+Deno.test("sync: a pull right after the commit is not overwritten", async () => {
+  const port = PORT.replace("A valid TCP port number.", "A TCP port number from 1 to 65535.");
+  const pulled = `${PARSE_ERROR}\n\n${port}\n\n${PARSE}\n`;
+  const cb = await pullDuring("committed", "net.port.alang", pulled);
+  await ok(cb, [{ op: "replace", name: "net.port.parse", hash: hashOf(cb, "net.port.parse"), text: PARSE_REORDERED }]);
+  assertEquals((await files(cb))["net.port.alang"], pulled);
+  // Both sides changed: the next operation says so, and import resolves it.
+  const r = await cb.sync();
+  assert_(!r.ok);
+  assertEquals(codes(r.diagnostics), ["E0513"]);
+  await imported(cb);
+  assertEquals([cb.definition("net.port.Port").text, cb.definition("net.port.parse").text], [port, PARSE]);
+  assertEquals(cb.history("net.port.parse").entries.map((e) => e.operation), ["add", "replace", "import"]);
   await done(cb);
 });

@@ -228,6 +228,9 @@ function signatureTypes(def: Definition): TypeTree[] {
 export interface OpenOptions {
   // Source of `history.changed_at`; tests pass a fixed clock.
   readonly clock?: () => Date;
+  // Called during a submit once the program is accepted and once it is
+  // committed; tests change export files there, as a pull would.
+  readonly during?: (stage: "accepted" | "committed") => Promise<void> | void;
 }
 
 const RETRIES = 3;
@@ -265,6 +268,7 @@ export class Codebase {
     readonly dir: string,
     private readonly db: DatabaseSync,
     private readonly clock: () => Date,
+    private readonly during: OpenOptions["during"],
   ) {
     this.acceptPath = join(dir, "out", `accept-${Deno.pid}-${++opened}.ts`);
   }
@@ -276,7 +280,7 @@ export class Codebase {
     const db = new DatabaseSync(join(dir, "alang.db"));
     db.exec("PRAGMA foreign_keys = ON");
     db.exec(SCHEMA);
-    return new Codebase(dir, db, options.clock ?? (() => new Date()));
+    return new Codebase(dir, db, options.clock ?? (() => new Date()), options.during);
   }
 
   close(): void {
@@ -618,6 +622,15 @@ export class Codebase {
     }
     for (const r of rewritten.values()) if (!r.renamed && !members.has(r.from)) rows.push(row(r.name, "follow", r.def));
 
+    // A file Git changed during acceptance (a pull) is not in the accepted
+    // program, and the export written below would drop it. Start over: the
+    // sync at the start imports it, and the guards report what it changed.
+    await this.during?.("accepted");
+    const drift = await this.compareExport();
+    if (drift.ahead.length + drift.changed.length + drift.conflicts.length > 0) {
+      return await this.again(changes, attempt);
+    }
+
     // 6. One SQLite transaction. Another process may have written since the
     // snapshot; then the accepted program is not what would be stored, so
     // start over (its guards then report what changed).
@@ -627,8 +640,7 @@ export class Codebase {
       const now = this.names();
       if (now.size !== current.size || [...current].some(([name, c]) => now.get(name) !== c.hash)) {
         this.db.exec("ROLLBACK");
-        if (attempt >= RETRIES) throw new Error("The codebase keeps changing during acceptance.");
-        return await this.apply(changes, attempt + 1);
+        return await this.again(changes, attempt);
       }
       const history = this.db.prepare(
         "INSERT INTO history (name, hash, changed_at, operation, other_name) VALUES (?, ?, ?, ?, ?)",
@@ -670,9 +682,19 @@ export class Codebase {
     ];
 
     // 7. The export of the affected modules (Storage). The database has
-    // committed; if writing fails, `exportAll` brings the files back in line.
+    // committed; if writing fails, the next sync writes the files. A file
+    // that changed since the check above is left alone; the next sync
+    // reports it (E0513), since both sides changed.
+    await this.during?.("committed");
     await this.exportModules(written.map((w) => moduleName(w.name)));
     return { ok: true, written, unchanged };
+  }
+
+  // Starts a submit over because the codebase or its export changed while it
+  // was accepted.
+  private again(changes: readonly Change[], attempt: number): Promise<SubmitResult> {
+    if (attempt >= RETRIES) throw new Error("The codebase keeps changing during acceptance.");
+    return this.apply(changes, attempt + 1);
   }
 
   // Checks one change on its own; pushes its diagnostics and returns null if
@@ -1063,13 +1085,27 @@ export class Codebase {
 
   // Rewrites the export files of `modules` from the current names: one file
   // per module, `export/<module>.alang`, its definitions sorted by name. A
-  // module without definitions loses its file.
-  private async exportModules(modules: Iterable<string>): Promise<string[]> {
+  // module without definitions loses its file. Unless `force`, a file that
+  // changed since the codebase last wrote or read it is not overwritten but
+  // skipped: someone else changed it, so both sides changed.
+  private async exportModules(
+    modules: Iterable<string>,
+    force = false,
+  ): Promise<{ files: string[]; skipped: string[] }> {
     await Deno.mkdir(this.exportDir, { recursive: true });
+    const recorded = this.recordedFiles();
     const files: string[] = [];
+    const skipped: string[] = [];
     for (const module of new Set(modules)) {
       const path = join(this.exportDir, `${module}.alang`);
       const content = this.moduleFile(module);
+      if (!force) {
+        const now = await fileHash(path);
+        if (now !== (content === null ? null : hashText(content)) && now !== (recorded.get(module) ?? null)) {
+          skipped.push(module);
+          continue;
+        }
+      }
       if (content === null) {
         await Deno.remove(path).catch((e) => {
           if (!(e instanceof Deno.errors.NotFound)) throw e;
@@ -1083,7 +1119,7 @@ export class Codebase {
       this.recordFile(module, content);
       files.push(path);
     }
-    return files;
+    return { files, skipped };
   }
 
   // Writes the whole export and deletes the files of modules that no longer
@@ -1098,7 +1134,8 @@ export class Codebase {
       }
       const modules = new Set([...this.currentModules(), ...this.recordedFiles().keys()]);
       for (const file of await exportFiles(this.exportDir)) modules.add(file.slice(0, -".alang".length));
-      return { ok: true, files: await this.exportModules([...modules].sort()) };
+      const { files, skipped } = await this.exportModules([...modules].sort(), options.force);
+      return skipped.length > 0 ? { ok: false, diagnostics: bothChanged(skipped) } : { ok: true, files };
     });
     this.queue = run.catch(() => {});
     return run;
@@ -1126,41 +1163,31 @@ export class Codebase {
 
   private async syncNow(): Promise<SyncResult> {
     const first = await this.compareExport();
-    if (first.conflicts.length > 0) {
-      return {
-        ok: false,
-        diagnostics: first.conflicts.map((module) =>
-          diagnostic({
-            code: "E0513",
-            at: `export/${module}.alang`,
-            message: `\`export/${module}.alang\` and the database have both changed since the file was last ` +
-              "written or read. Run `alang db import` to take the files (the database's versions stay in its " +
-              "history), or `alang db export --force` to overwrite the files with the database.",
-          })
-        ),
-      };
-    }
-    // Written before the import, which reads every file.
-    await this.exportModules(first.ahead);
+    if (first.conflicts.length > 0) return { ok: false, diagnostics: bothChanged(first.conflicts) };
+    // Written before the import, which reads every file. A file that
+    // changed in between is skipped, and both sides have changed.
+    const ahead = await this.exportModules(first.ahead);
+    if (ahead.skipped.length > 0) return { ok: false, diagnostics: bothChanged(ahead.skipped) };
     if (first.changed.length === 0) return { ok: true, exported: first.ahead, imported: [] };
     const imported = await this.importFrom(this.exportDir);
     if (!imported.ok) return { ok: false, diagnostics: imported.diagnostics };
     // Files that are not canonical (order, layout) are rewritten now, so
     // that the sync ends with every file as the database would write it.
     const after = await this.compareExport();
-    await this.exportModules(after.ahead);
+    const rewritten = await this.exportModules(after.ahead);
+    if (rewritten.skipped.length > 0) return { ok: false, diagnostics: bothChanged(rewritten.skipped) };
     return { ok: true, exported: [...new Set([...first.ahead, ...after.ahead])].sort(), imported: imported.written };
   }
 
   // Sorts the modules of database, export and records by which side
-  // changed (see `sync`); records the modules found in step.
+  // changed (see `sync`); records the modules found in step. Without an
+  // export directory the records describe nothing: it was never written.
   private async compareExport(): Promise<{ ahead: string[]; changed: string[]; conflicts: string[] }> {
-    let written = true;
     try {
       await Deno.stat(this.exportDir);
     } catch (e) {
       if (!(e instanceof Deno.errors.NotFound)) throw e;
-      written = false;
+      this.db.exec("DELETE FROM export_files");
     }
     const files = new Map<string, string>();
     for (const file of await exportFiles(this.exportDir)) {
@@ -1178,7 +1205,7 @@ export class Codebase {
       const r = recorded.get(module) ?? null;
       if (f === d) {
         if (r !== f) this.recordFile(module, content);
-      } else if (!written || f === r) ahead.push(module);
+      } else if (f === r) ahead.push(module);
       else if (d === r) changed.push(module);
       else conflicts.push(module);
     }
@@ -1290,6 +1317,29 @@ export class Codebase {
       for (const [module, content] of contents) this.recordFile(module, content);
     }
     return { ok: true, written, unchanged };
+  }
+}
+
+// E0513 for each module whose file and database both changed.
+function bothChanged(modules: readonly string[]): Diagnostic[] {
+  return modules.map((module) =>
+    diagnostic({
+      code: "E0513",
+      at: `export/${module}.alang`,
+      message: `\`export/${module}.alang\` and the database have both changed since the file was last ` +
+        "written or read. Run `alang db import` to take the files (the database's versions stay in its " +
+        "history), or `alang db export --force` to overwrite the files with the database.",
+    })
+  );
+}
+
+// The hash of a file's content; null if there is no file.
+async function fileHash(path: string): Promise<string | null> {
+  try {
+    return hashText(await Deno.readTextFile(path));
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) return null;
+    throw e;
   }
 }
 

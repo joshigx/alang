@@ -30,7 +30,7 @@ is the user's call.
 **Next:** the MCP server around the queries and operations of `Codebase` (its own phase, see CLAUDE.md). `extern fn`
 and `const` are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (154 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (156 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -58,9 +58,9 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   export and an optional text on `rename`; the details within them are still open for review: a conflict is
   refused (E0513) rather than resolved; a missing export directory is written, never read as every file deleted;
   library queries read the database as is while `alang db` syncs first; a submit's sync import stays when the submit
-  is rejected. Two consequences to confirm: every `alang db` command, a plain query included, can now change the
-  database (a deleted export file removes its module's definitions); and a pull that lands while a submit is being
-  accepted is still overwritten by that submit's export write (see "From the export sync"). Above all, references stay names, so `rename` rewrites
+  is rejected; a pull during a submit restarts it, and one right after its commit is left for the next operation to
+  report as E0513. To confirm: every `alang db` command, a plain query included, can now change the database (a
+  deleted export file removes its module's definitions). Above all, references stay names, so `rename` rewrites
   callers instead of changing only a pointer (departs from 6.1); see "Database phase: open points".
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
@@ -110,10 +110,14 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   after a pull (the guard would still catch the stale hash at submit, one round trip later).
 - **Every operation reads every export file.** Fine for the prototype, like accepting the whole program per submit.
   A large codebase could compare file modification times first and hash only the files that changed.
-- **A pull during a submit can still be lost.** The submit syncs at its start; a file Git changes while the program is
-  being accepted is overwritten by the export write after the commit. Checking each file against its record just
-  before writing it, and leaving a changed one for the next sync (which then reports E0513), would close this. Another
-  process's import in that window is covered: the submit compares every name with its snapshot before committing.
+- **A pull during a submit is caught, with one window left.** After acceptance the submit compares the export again
+  and starts over if a file changed; each write first checks that its file still holds what the codebase last wrote
+  or read. Between that check and the rename of the new file there is no lock, since files have no compare-and-swap;
+  a pull landing in those microseconds is overwritten. A lock file honoured by Git hooks would be the only full fix.
+- **A pull right after a commit ends as E0513**, at the next operation, although the submit reported success. The
+  result could say which files it left alone; it does not yet, since the next operation explains it.
+- **`OpenOptions.during`** is a hook for tests (stages `accepted` and `committed`), the only way to put a pull inside
+  a submit deterministically.
 - **A rejected submit can still change the database**, through the import of its sync. That is deliberate (the files
   are the truth), but it means "a rejected transaction changes nothing" holds only for an export in step.
 - **E0513 has no automatic fix.** Which side should win is the user's call; an LLM caller should report it rather than
