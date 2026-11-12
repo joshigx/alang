@@ -5,10 +5,11 @@
 import { assertEquals } from "./assert.ts";
 import { type CheckOptions, checkProgram } from "../src/check.ts";
 import type { Diagnostic } from "../src/diagnostic.ts";
+import { pathText } from "../src/ast.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
 import { shortenOwnNames } from "../src/refs.ts";
-import { STD } from "../src/std.ts";
+import { STD, STD_TYPES } from "../src/std.ts";
 import { build } from "../src/toolchain.ts";
 import * as runtime from "../src/runtime.ts";
 import { list, STRING } from "../src/types.ts";
@@ -157,7 +158,10 @@ Deno.test("check: the 5.5 diagnostic example is reproduced field for field", () 
 
 Deno.test("check: std signatures and runtime exports match", () => {
   const exported = Object.keys(runtime).filter((k) => k.startsWith("std$")).sort();
-  assertEquals(STD.map((s) => s.name.replaceAll(".", "$")).sort(), exported);
+  // Functions, and the checking constructor of every record type; variant
+  // types are TypeScript types only.
+  const records = STD_TYPES.filter((d) => d.kind === "type" && d.shape.kind === "record").map((d) => pathText(d.path));
+  assertEquals([...STD.map((s) => s.name), ...records].map((n) => n.replaceAll(".", "$")).sort(), exported);
 });
 
 // ---- types and conversions ----
@@ -598,6 +602,55 @@ Deno.test("effects: lambdas and function values are pure (2.4)", () => {
   );
   one(
     fn(xs + "let ys: List<Unit> = std.list.map(list: xs, with: shout)\nreturn 0", { effects: "console", extra: SHOUT }),
+    "E0232",
+  );
+});
+
+// A handler for std.http.serve; `effects` and the body are filled in per test.
+const handler = (effects: string, body: string): string =>
+  [
+    "fn m.handle",
+    '  doc: "Answers a request."',
+    "  in:",
+    "    request: std.http.Request",
+    "  out: std.http.Response",
+    `  effects: ${effects}`,
+    "  requires: none",
+    "  ensures: none",
+    effects === "none"
+      ? '  examples:\n    handle(request: std.http.Request(method: "GET", path: "/", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: "/")'
+      : "  examples: none",
+    "  body:",
+    ...body.split("\n").map((l) => `    ${l}`),
+    "end fn m.handle",
+  ].join("\n");
+const RESPOND =
+  "return std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: request.path)";
+const SERVE =
+  'let r: Result<Unit, std.http.ServeError> = std.http.serve(host: "localhost", port: 8080, handler: handle)';
+
+Deno.test("effects: the handler of std.http.serve may have effects; the caller declares them (2.1)", () => {
+  const loud = handler("console", "std.console.print_line(text: request.path)\n" + RESPOND);
+  clean(fn(SERVE + "\nreturn 0", { effects: "net, console", extra: loud }));
+  // A pure handler, by name or as a lambda.
+  clean(fn(SERVE + "\nreturn 0", { effects: "net", extra: handler("none", RESPOND) }));
+  clean(fn(
+    SERVE.replace(
+      "handler: handle",
+      'handler: fn(request: std.http.Request): std.http.Response => std.http.Response(status: 204, headers: std.list.empty<std.http.Header>(), content: "")',
+    ) + "\nreturn 0",
+    { effects: "net" },
+  ));
+  // Passing the handler counts like calling it: its effects are missing here.
+  const d = one(fn(SERVE + "\nreturn 0", { effects: "net", extra: loud }), "E0230");
+  assertEquals(d.fix, { replace: "effects: net", with: "effects: net, console" });
+  // Only this parameter takes a function with effects; elsewhere function values stay pure.
+  const xs = "let xs: List<std.http.Request> = std.list.empty<std.http.Request>()\n";
+  one(
+    fn(xs + "let ys: List<std.http.Response> = std.list.map(list: xs, with: handle)\nreturn 0", {
+      effects: "console",
+      extra: loud,
+    }),
     "E0232",
   );
 });

@@ -33,6 +33,43 @@ export const STD_TYPES_SOURCE = `type std.fs.ReadError
     Other: String
   where: none
 end type std.fs.ReadError
+
+type std.http.Header
+  doc: "One header of a request or response."
+  record:
+    name: String
+    value: String
+  where: none
+end type std.http.Header
+
+type std.http.Request
+  doc: "A request as the server received it: method in capitals, path and query as sent (query without the question mark), header names in lowercase and sorted, content (the body) as UTF-8 text."
+  record:
+    method: String
+    path: String
+    query: String
+    headers: List<Header>
+    content: String
+  where: none
+end type std.http.Request
+
+type std.http.Response
+  doc: "The answer to a request. Statuses 204, 205 and 304 carry no content. Without a content-type header, content is sent as text/plain in UTF-8."
+  record:
+    status: Int
+    headers: List<Header>
+    content: String
+  where: 200 <= status and status <= 599 and (content == "" or (status != 204 and status != 205 and status != 304))
+end type std.http.Response
+
+type std.http.ServeError
+  doc: "Why the server could not start listening."
+  variant:
+    AddressInUse
+    PermissionDenied
+    Other: String
+  where: none
+end type std.http.ServeError
 `;
 
 export const STD_TYPES: readonly Definition[] = parseProgram(STD_TYPES_SOURCE);
@@ -71,6 +108,18 @@ export const STD: readonly Signature[] = [
     [["path", STRING]],
     result(STRING, con("std.fs.ReadError")),
     ["fs.read"],
+  ),
+
+  sig(
+    "std.http.serve",
+    "Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them.",
+    [],
+    [["host", STRING], ["port", INT], [
+      "handler",
+      fnType([con("std.http.Request")], con("std.http.Response"), "caller"),
+    ]],
+    result(UNIT, con("std.http.ServeError")),
+    ["net"],
   ),
 
   sig("std.int.parse", "Reads a decimal integer; `None` if the text is not one.", [], [["text", STRING]], option(INT)),

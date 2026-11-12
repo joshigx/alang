@@ -118,6 +118,39 @@ Deno.test("queries: context covers every reference of every definition (6.5)", a
   await done(cb);
 });
 
+Deno.test("queries: context of a server shows std.http as text, serve's handler with its effects", async () => {
+  const cb = await fresh();
+  const empty = "std.list.empty<std.http.Header>()";
+  await ok(cb, [
+    add(fn("web.handle", {
+      params: ["request: std.http.Request"],
+      out: "std.http.Response",
+      effects: "console",
+      body:
+        `std.console.print_line(text: request.path)\nreturn std.http.Response(status: 200, headers: ${empty}, content: "")`,
+    })),
+    add(fn("web.main", {
+      out: "Unit",
+      effects: "net, console",
+      body:
+        'let served: Unit = std.http.serve(host: "localhost", port: 8080, handler: handle) else return Unit\nreturn Unit',
+    })),
+  ]);
+  const handle = new Map(cb.context("web.handle").uses.map((u) => [u.name, u.text]));
+  for (const name of ["std.http.Request", "std.http.Response", "std.http.Header"]) {
+    assertEquals(handle.get(name), printDefinition(STD_TYPES.find((d) => pathText(d.path) === name)!));
+  }
+  const main = new Map(cb.context("web.main").uses.map((u) => [u.name, u.text]));
+  assertEquals(
+    main.get("std.http.serve")?.split(", doc:")[0],
+    "fn std.http.serve(host: String, port: Int, handler: (std.http.Request) -> std.http.Response with effects): Result<Unit, std.http.ServeError>, effects: net",
+  );
+  // Passing the handler is a reference: it has a caller, and context lists it.
+  assertEquals(cb.callers("web.handle").callers, ["web.main"]);
+  assert_(main.has("web.handle"));
+  await done(cb);
+});
+
 Deno.test("queries: list gives a module's definitions and submodules", async () => {
   const cb = await withPort();
   const l = cb.list("net.port");

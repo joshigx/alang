@@ -629,7 +629,7 @@ class DefChecker {
       case "bool":
         return BOOL;
       case "name":
-        return this.name_(e, scope);
+        return this.name_(e, scope, expected);
       case "field":
         return this.field(this.expr(e.target, scope, null), e.field, e);
       case "call":
@@ -650,7 +650,7 @@ class DefChecker {
     }
   }
 
-  private name_(e: Extract<Expr, { kind: "name" }>, scope: Scope): Type {
+  private name_(e: Extract<Expr, { kind: "name" }>, scope: Scope, expected: Type | null): Type {
     const head = e.path[0];
     const local = scope.lookup(head);
     if (local !== undefined) {
@@ -673,7 +673,12 @@ class DefChecker {
         );
         return ERROR;
       }
-      if (fn.effects.length > 0) {
+      if (fn.effects.length > 0 && expected?.k === "fn" && expected.effects === "caller") {
+        // A parameter that takes a function with effects (`std.http.serve`):
+        // passing it counts like calling it, so the caller declares its
+        // effects (2.1). Inside a lambda or a condition this is still an error.
+        this.effectsOfCall(fn, pathText(e.path), pathText(e.path));
+      } else if (fn.effects.length > 0) {
         this.report(
           "E0232",
           pathText(e.path),

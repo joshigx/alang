@@ -1,0 +1,64 @@
+fn server.route
+  doc: "Answers / with a greeting and POST /echo with the request's content; anything else is not found."
+  in:
+    request: std.http.Request
+  out: std.http.Response
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    route(request: std.http.Request(method: "GET", path: "/", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: "Hello from alang")
+    route(request: std.http.Request(method: "POST", path: "/echo", query: "", headers: std.list.empty<std.http.Header>(), content: "hi")) == std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: "hi")
+    route(request: std.http.Request(method: "GET", path: "/echo", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 405, headers: std.list.append(list: std.list.empty<std.http.Header>(), item: std.http.Header(name: "allow", value: "POST")), content: "")
+    route(request: std.http.Request(method: "GET", path: "/nope", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 404, headers: std.list.empty<std.http.Header>(), content: "Not found")
+  body:
+    let no_headers: List<std.http.Header> = std.list.empty<std.http.Header>()
+    if request.path == "/" then
+      return std.http.Response(status: 200, headers: no_headers, content: "Hello from alang")
+    end if
+    if request.path == "/echo" then
+      if request.method == "POST" then
+        return std.http.Response(status: 200, headers: no_headers, content: request.content)
+      end if
+      let allow: List<std.http.Header> = std.list.append(list: no_headers, item: std.http.Header(name: "allow", value: "POST"))
+      return std.http.Response(status: 405, headers: allow, content: "")
+    end if
+    return std.http.Response(status: 404, headers: no_headers, content: "Not found")
+end fn server.route
+
+fn server.handle
+  doc: "Answers a request through route and prints one line about it."
+  in:
+    request: std.http.Request
+  out: std.http.Response
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let response: std.http.Response = route(request: request)
+    let line: String = std.string.concat(left: std.string.concat(left: request.method, right: " "), right: request.path)
+    std.console.print_line(text: std.string.concat(left: std.string.concat(left: line, right: " -> "), right: std.text.show(value: response.status)))
+    return response
+end fn server.handle
+
+fn server.main
+  doc: "Serves on http://localhost:8080 until Ctrl-C."
+  in: none
+  out: Unit
+  effects: net, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    std.console.print_line(text: "Serving on http://localhost:8080; Ctrl-C stops.")
+    let served: Result<Unit, std.http.ServeError> = std.http.serve(host: "localhost", port: 8080, handler: handle)
+    let text: String = match served
+      case Ok(done) then
+        "Stopped."
+      case Err(reason) then
+        std.string.concat(left: "Cannot serve: ", right: std.text.show(value: reason))
+    end match
+    std.console.print_line(text: text)
+    return Unit
+end fn server.main

@@ -6,6 +6,8 @@
 import { assert_, assertEquals } from "./assert.ts";
 import { AlangError, type Diagnostic } from "../src/diagnostic.ts";
 import { showValue } from "../src/examples.ts";
+import { parseProgram } from "../src/parser.ts";
+import { printProgram } from "../src/printer.ts";
 import { accept, build, testExamples } from "../src/toolchain.ts";
 import { con, FLOAT, INT, list, option, ORDER, STRING, UNIT } from "../src/types.ts";
 
@@ -327,4 +329,15 @@ Deno.test("accept: check, ts, build and run refuse a program whose example fails
   assertEquals(await cli("check", file, "-o", `${OUT}failing.ts`), { code: 0, stdout: "ok", stderr: "" });
   const run = await cli("run", file, "-o", `${OUT}failing.ts`);
   assertEquals([run.code, run.stdout], [0, "Hello, world"], run.stderr);
+});
+
+Deno.test("accept: every file in examples/ is canonical and accepted", async () => {
+  const dir = new URL("../examples/", import.meta.url);
+  const names = [...Deno.readDirSync(dir)].map((e) => e.name).filter((n) => n.endsWith(".alang")).sort();
+  assert_(names.includes("server.alang"), names.join(", "));
+  for (const name of names) {
+    const source = await Deno.readTextFile(new URL(name, dir));
+    assertEquals(printProgram(parseProgram(source)), source, name);
+    assertEquals(await diagnostics(source), [], name);
+  }
 });

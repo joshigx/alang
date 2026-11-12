@@ -5,7 +5,11 @@
 export type Type =
   // Nominal types: builtins (`Int`, `List`, ...) and user types by full name.
   | { readonly k: "con"; readonly name: string; readonly args: readonly Type[] }
-  | { readonly k: "fn"; readonly params: readonly Type[]; readonly out: Type }
+  // `effects: "caller"` marks a parameter of a std function that takes a
+  // function with effects (the handler of `std.http.serve`); the call then
+  // counts the passed function's effects as its own. Every other function
+  // type is pure (2.4). Equality ignores the mark: a value's type never has it.
+  | { readonly k: "fn"; readonly params: readonly Type[]; readonly out: Type; readonly effects?: "caller" }
   // Type parameter of a std signature, e.g. `T` in `std.list.map`.
   | { readonly k: "var"; readonly name: string }
   // Type of a block that always returns; fits every expected type.
@@ -15,7 +19,8 @@ export type Type =
   | { readonly k: "error" };
 
 export const con = (name: string, ...args: Type[]): Type => ({ k: "con", name, args });
-export const fnType = (params: Type[], out: Type): Type => ({ k: "fn", params, out });
+export const fnType = (params: Type[], out: Type, effects?: "caller"): Type =>
+  effects ? { k: "fn", params, out, effects } : { k: "fn", params, out };
 export const tvar = (name: string): Type => ({ k: "var", name });
 
 export const INT = con("Int");
@@ -125,8 +130,10 @@ export function showType(t: Type, module?: string): string {
         : t.name;
       return t.args.length === 0 ? name : `${name}<${t.args.map((a) => showType(a, module)).join(", ")}>`;
     }
-    case "fn":
-      return `(${t.params.map((p) => showType(p, module)).join(", ")}) -> ${showType(t.out, module)}`;
+    case "fn": {
+      const shown = `(${t.params.map((p) => showType(p, module)).join(", ")}) -> ${showType(t.out, module)}`;
+      return t.effects === "caller" ? `${shown} with effects` : shown;
+    }
     case "var":
       return t.name;
     case "never":
@@ -145,7 +152,7 @@ export function substitute(t: Type, s: Subst): Type {
     case "con":
       return t.args.length === 0 ? t : con(t.name, ...t.args.map((a) => substitute(a, s)));
     case "fn":
-      return fnType(t.params.map((p) => substitute(p, s)), substitute(t.out, s));
+      return fnType(t.params.map((p) => substitute(p, s)), substitute(t.out, s), t.effects);
     default:
       return t;
   }

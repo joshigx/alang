@@ -214,9 +214,9 @@ export function std$console$print_line(text: string): Unit {
   return Unit;
 }
 
-// Decimal digits with an optional leading minus, inside the Int range.
-// The one place where the runtime touches the host. Deno and Node.js (and
-// Bun) are detected by their globals; the error codes are shared.
+// Files are one of the two places where the runtime touches the host; the
+// network (std.http) is the other. Deno and Node.js (and Bun) are detected by
+// their globals; the error codes are shared.
 type Host = {
   Deno?: { readTextFileSync(path: string): string };
   process?: { getBuiltinModule(name: string): { readFileSync(path: string, encoding: "utf8"): string } };
@@ -253,6 +253,347 @@ export function std$fs$read_text(path: string): Result<string, std$fs$ReadError>
     }
     return Err<std$fs$ReadError>({ tag: "Other", value: String(err.message ?? e) });
   }
+}
+
+// ---- std.http ----
+
+export type std$http$Header = { readonly name: string; readonly value: string };
+export function std$http$Header($fields: std$http$Header): std$http$Header {
+  return $fields;
+}
+
+export type std$http$Request = {
+  readonly method: string;
+  readonly path: string;
+  readonly query: string;
+  readonly headers: readonly std$http$Header[];
+  readonly content: string;
+};
+export function std$http$Request($fields: std$http$Request): std$http$Request {
+  return $fields;
+}
+
+export type std$http$Response = {
+  readonly status: number;
+  readonly headers: readonly std$http$Header[];
+  readonly content: string;
+};
+
+// The `where` of std.http.Response in std.ts, as printed (a test compares them).
+const RESPONSE_WHERE =
+  '200 <= status and status <= 599 and (content == "" or (status != 204 and status != 205 and status != 304))';
+
+function noContent(status: number): boolean {
+  return status === 204 || status === 205 || status === 304;
+}
+
+export function std$http$Response($fields: std$http$Response): std$http$Response {
+  const { status, content } = $fields;
+  if (!(200 <= status && status <= 599 && (content === "" || !noContent(status)))) {
+    trap("where", "std.http.Response", RESPONSE_WHERE, `Invariant of std.http.Response violated: ${RESPONSE_WHERE}`);
+  }
+  return $fields;
+}
+
+export type std$http$ServeError =
+  | { readonly tag: "AddressInUse" }
+  | { readonly tag: "PermissionDenied" }
+  | { readonly tag: "Other"; readonly value: string };
+
+// A function value with effects is async (see emit.ts), a pure one is not.
+type Handler = (request: std$http$Request) => std$http$Response | Promise<std$http$Response>;
+
+// What the host sees of a running server: `close` stops accepting requests,
+// `closed` settles once the requests in progress are answered.
+interface Listener {
+  close(): void;
+  readonly closed: Promise<void>;
+}
+
+// The alang response for a request; null if the handler trapped (the host
+// answers 500 then). `fail` ends the server with an error of the host's own.
+interface Answering {
+  answer(request: std$http$Request): Promise<std$http$Response | null>;
+  fail(error: unknown): void;
+}
+
+type Listen = (host: string, port: number, a: Answering) => Promise<Listener | std$http$ServeError>;
+
+// Headers as the host sends them. Both hosts reject names that are not HTTP
+// tokens and values with line breaks or characters above U+00FF; checking
+// here gives one trap on every host instead of two different exceptions. A
+// response without content-type gets the same one on every host.
+function hostHeaders(response: std$http$Response): [string, string][] {
+  const headers: [string, string][] = [];
+  for (const { name, value } of response.headers) {
+    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) || !/^[\t\x20-\x7e\x80-\xff]*$/.test(value)) {
+      trap(
+        "http",
+        "std.http.serve",
+        `${name}: ${value}`,
+        "A response header has a name that is not an HTTP token, or a value with a line break or a character above U+00FF.",
+      );
+    }
+    headers.push([name, value]);
+  }
+  if (!headers.some(([name]) => name.toLowerCase() === "content-type") && response.content !== "") {
+    headers.push(["content-type", "text/plain; charset=utf-8"]);
+  }
+  return headers;
+}
+
+function serveError(e: unknown): std$http$ServeError {
+  const err = e as { name?: string; code?: string; message?: string };
+  // Listening refused for lack of the permission: the program does more
+  // than its `main` declares (2.5).
+  if (err.name === "NotCapable") {
+    return trap("effect", "std.http.serve", String(err.message), "Serving needs the effect `net` on `main`.");
+  }
+  if (err.code === "EADDRINUSE" || err.name === "AddrInUse") return { tag: "AddressInUse" };
+  if (err.code === "EACCES" || err.name === "PermissionDenied") return { tag: "PermissionDenied" };
+  return { tag: "Other", value: String(err.message ?? e) };
+}
+
+// ---- std.http on Deno ----
+
+type DenoServer = { shutdown(): Promise<void>; readonly finished: Promise<void> };
+type DenoHost = {
+  serve(
+    options: { hostname: string; port: number; onListen(): void; onError(error: unknown): Response },
+    handler: (request: Request) => Promise<Response>,
+  ): DenoServer;
+};
+
+const listenDeno = (deno: DenoHost): Listen => (host, port, a) => {
+  let server: DenoServer;
+  try {
+    server = deno.serve({
+      hostname: host,
+      port,
+      // The program decides what it prints.
+      onListen() {},
+      onError(error) {
+        a.fail(error);
+        return new Response(null, { status: 500 });
+      },
+    }, async (request) => {
+      const url = new URL(request.url);
+      let content: string;
+      try {
+        content = await request.text();
+      } catch {
+        // The client went away while sending; not the program's fault.
+        return new Response(null, { status: 400 });
+      }
+      const answer = await a.answer({
+        method: request.method,
+        path: url.pathname,
+        query: url.search.slice(1),
+        headers: [...request.headers].map(([name, value]) => ({ name, value })),
+        content,
+      });
+      if (answer === null) return new Response(null, { status: 500 });
+      try {
+        // Empty content is no body, so Deno adds no content-type of its own.
+        const content = answer.content === "" ? null : answer.content;
+        return new Response(content, { status: answer.status, headers: hostHeaders(answer) });
+      } catch (e) {
+        a.fail(e);
+        return new Response(null, { status: 500 });
+      }
+    });
+  } catch (e) {
+    return Promise.resolve(serveError(e));
+  }
+  let closing = false;
+  const close = () => {
+    if (closing) return;
+    closing = true;
+    void server.shutdown();
+  };
+  return Promise.resolve({ close, closed: server.finished });
+};
+
+// ---- std.http on Node.js ----
+
+type NodeRequest = AsyncIterable<Uint8Array> & {
+  readonly method?: string;
+  readonly url?: string;
+  readonly headersDistinct: Record<string, string[]>;
+};
+type NodeResponse = { writeHead(status: number, headers: string[]): void; end(content?: string): void };
+type NodeServer = {
+  listen(port: number, host: string, listening: () => void): void;
+  once(event: "error", listener: (error: unknown) => void): void;
+  off(event: "error", listener: (error: unknown) => void): void;
+  close(closed: () => void): void;
+  closeIdleConnections(): void;
+};
+type NodeHttp = { createServer(handler: (req: NodeRequest, res: NodeResponse) => void): NodeServer };
+
+const listenNode = (http: NodeHttp): Listen => (host, port, a) => {
+  let closing = false;
+  const server = http.createServer(async (req, res) => {
+    let content = "";
+    try {
+      const decoder = new TextDecoder();
+      for await (const chunk of req) content += decoder.decode(chunk, { stream: true });
+      content += decoder.decode();
+    } catch {
+      // The client went away while sending; not the program's fault.
+      res.writeHead(400, ["connection", "close"]);
+      res.end();
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      const headers = Object.entries(req.headersDistinct)
+        .map(([name, values]) => ({ name, value: values.join(", ") }))
+        .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+      const answer = await a.answer({
+        method: req.method ?? "GET",
+        path: url.pathname,
+        query: url.search.slice(1),
+        headers,
+        content,
+      });
+      if (answer === null) {
+        res.writeHead(500, ["connection", "close"]);
+        res.end();
+        return;
+      }
+      const flat = hostHeaders(answer).flat();
+      // Once closing, every answer ends its connection, so that close
+      // finishes although clients keep connections alive.
+      if (closing) flat.push("connection", "close");
+      res.writeHead(answer.status, flat);
+      res.end(answer.content === "" && noContent(answer.status) ? undefined : answer.content);
+    } catch (e) {
+      a.fail(e);
+      res.writeHead(500, ["connection", "close"]);
+      res.end();
+    }
+  });
+  return new Promise((resolve) => {
+    const refused = (error: unknown) => resolve(serveError(error));
+    server.once("error", refused);
+    try {
+      server.listen(port, host, () => {
+        server.off("error", refused);
+        let close: (() => void) | null = null;
+        const closed = new Promise<void>((done) => {
+          close = () => {
+            if (closing) return;
+            closing = true;
+            server.close(done);
+            server.closeIdleConnections();
+          };
+        });
+        resolve({ close: () => close!(), closed });
+      });
+    } catch (e) {
+      // An invalid port throws before listening.
+      resolve(serveError(e));
+    }
+  });
+};
+
+// ---- std.http.serve ----
+
+type Signals = {
+  Deno?: {
+    addSignalListener(signal: string, listener: () => void): void;
+    removeSignalListener(signal: string, listener: () => void): void;
+  };
+  process?: { on(signal: string, listener: () => void): void; off(signal: string, listener: () => void): void };
+};
+
+// Calls `stop` on SIGINT and SIGTERM until the returned function is called.
+// A signal the platform does not know (SIGTERM on Windows) is skipped.
+function onStopSignals(stop: () => void): () => void {
+  const host = globalThis as Signals;
+  const added: string[] = [];
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    try {
+      if (host.Deno) host.Deno.addSignalListener(signal, stop);
+      else host.process?.on(signal, stop);
+      added.push(signal);
+    } catch {
+      // Not supported here.
+    }
+  }
+  return () => {
+    for (const signal of added.splice(0)) {
+      if (host.Deno) host.Deno.removeSignalListener(signal, stop);
+      else host.process?.off(signal, stop);
+    }
+  };
+}
+
+type HttpHost = {
+  Deno?: DenoHost;
+  process?: { getBuiltinModule(name: "node:http"): NodeHttp };
+};
+
+// Requests are answered one at a time, in the order they arrive: alang has no
+// concurrency, so a handler never starts before the previous one returned.
+// A trap in the handler (or in sending its response) ends the server: the
+// request gets status 500, later ones are not handled, and the trap ends
+// the program from where `serve` was called. `stop` is for tests only, since
+// alang code cannot make an AbortSignal; programs end on SIGINT or SIGTERM.
+export async function std$http$serve(
+  host: string,
+  port: number,
+  handler: Handler,
+  stop?: AbortSignal,
+): Promise<Result<Unit, std$http$ServeError>> {
+  const h = globalThis as HttpHost;
+  const listen = h.Deno ? listenDeno(h.Deno) : h.process ? listenNode(h.process.getBuiltinModule("node:http")) : null;
+  if (listen === null) return trap("effect", "std.http.serve", host, "This runtime has no network.");
+
+  let failure: { error: unknown } | null = null;
+  let listener: Listener | null = null;
+  let queue: Promise<unknown> = Promise.resolve();
+  const fail = (error: unknown) => {
+    failure ??= { error };
+    listener?.close();
+  };
+  const answering: Answering = {
+    answer(request) {
+      const turn = queue.then(async () => {
+        if (failure !== null) return null;
+        try {
+          return await handler(request);
+        } catch (e) {
+          fail(e);
+          return null;
+        }
+      });
+      queue = turn;
+      return turn;
+    },
+    fail,
+  };
+
+  const listening = await listen(host, port, answering);
+  if (!("close" in listening)) return Err(listening);
+  listener = listening;
+  const close = () => listening.close();
+  // After the first signal the listeners go, so a second one ends the
+  // program at once if answering the requests in progress takes too long.
+  const removeSignals = onStopSignals(() => {
+    removeSignals();
+    close();
+  });
+  stop?.addEventListener("abort", close);
+  try {
+    await listening.closed;
+  } finally {
+    removeSignals();
+    stop?.removeEventListener("abort", close);
+  }
+  if (failure !== null) throw (failure as { error: unknown }).error;
+  return Ok(Unit);
 }
 
 export function std$int$parse(text: string): Option<number> {

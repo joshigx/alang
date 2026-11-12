@@ -202,12 +202,32 @@ export async function run(built: Built, options: RunOptions = {}): Promise<Deno.
   const entry = await writeEntry(built, options.main);
   const permissions = permissionsFor(options.effects ?? main.effects);
   const stdio = options.stdio ?? "inherit";
-  return await new Deno.Command(Deno.execPath(), {
+  const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "--no-prompt", ...permissions, entry],
     cwd: options.cwd,
     stdout: stdio,
     stderr: stdio,
-  }).output();
+  }).spawn();
+  // A Ctrl-C in the terminal reaches the program itself (same process
+  // group), which may end on its own terms: a server answers the requests
+  // in progress and returns from `std.http.serve`. The tool waits for that
+  // instead of ending first. A SIGTERM sent to the tool alone is passed on.
+  const waitForProgram = () => {};
+  const passOn = () => child.kill("SIGTERM");
+  const listening: [Deno.Signal, () => void][] = [];
+  for (const [signal, listener] of [["SIGINT", waitForProgram], ["SIGTERM", passOn]] as const) {
+    try {
+      Deno.addSignalListener(signal, listener);
+      listening.push([signal, listener]);
+    } catch {
+      // SIGTERM cannot be listened to on Windows.
+    }
+  }
+  try {
+    return await child.output();
+  } finally {
+    for (const [signal, listener] of listening) Deno.removeSignalListener(signal, listener);
+  }
 }
 
 export function defaultOutPath(sourcePath: string): string {

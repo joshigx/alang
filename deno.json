@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "deno test --allow-read --allow-write --allow-run --allow-env",
+    "test": "deno test --allow-read --allow-write --allow-run --allow-env --allow-net",
     "alang": "deno run --allow-read --allow-write --allow-run src/cli.ts"
   },
   "fmt": { "lineWidth": 120, "include": ["src/", "tests/"] },
