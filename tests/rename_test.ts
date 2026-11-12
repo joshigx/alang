@@ -439,6 +439,25 @@ Deno.test("rename: with text, a definition is renamed and changed in one transac
   await done(cb);
 });
 
+Deno.test("rename: with text, own-module names written in full are stored short", async () => {
+  // The text is the definition under its new name, so its own module is the
+  // new one; the shortened tree is the one stored, with its `refs` rows
+  // (checked by the invariants in `done`).
+  const cb = await withPort();
+  const long = READ
+    .replace('read(text: "8080")', 'net.port.read(text: "8080")')
+    .replace("Err(OutOfRange(n))", "Err(net.port.OutOfRange(n))")
+    .replace("Ok(Port(value: n))", "Ok(net.port.Port(value: n))");
+  const r = await ok(cb, [{ ...rename(cb, "net.port.parse", "net.port.read"), text: long }]);
+  assertEquals(r.fixed!.map((d) => [d.definition, d.fix!.replace]), [
+    ["net.port.read", "net.port.read"],
+    ["net.port.read", "net.port.OutOfRange"],
+    ["net.port.read", "net.port.Port"],
+  ]);
+  assertEquals(cb.definition("net.port.read").text, READ);
+  await done(cb);
+});
+
 Deno.test("rename: a text that changes the interface takes its callers into the transaction", async () => {
   const cb = await withPort();
   const source = PARSE

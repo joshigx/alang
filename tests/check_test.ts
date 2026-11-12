@@ -6,6 +6,8 @@ import { assertEquals } from "./assert.ts";
 import { type CheckOptions, checkProgram } from "../src/check.ts";
 import type { Diagnostic } from "../src/diagnostic.ts";
 import { parseProgram } from "../src/parser.ts";
+import { printProgram } from "../src/printer.ts";
+import { shortenOwnNames } from "../src/refs.ts";
 import { STD } from "../src/std.ts";
 import { build } from "../src/toolchain.ts";
 import * as runtime from "../src/runtime.ts";
@@ -49,6 +51,14 @@ function fn(
     "end fn m.f",
   ];
   return lines.join("\n") + (o.extra ? `\n\n${o.extra}` : "");
+}
+
+// The program with the places the checker reports as E0226 shortened, as
+// the codebase stores it (refs.ts), printed.
+function shortened(source: string): string {
+  const defs = parseProgram(source);
+  const { info } = checkProgram(defs);
+  return printProgram(defs.map((d) => shortenOwnNames(d, info)));
 }
 
 // Exactly one diagnostic, with the given code; returns it. A fix always
@@ -290,15 +300,27 @@ Deno.test("check: names of the own module are written short (1.2)", () => {
     assertEquals(d.at, at);
     const short = d.fix!.replace.slice("m.".length);
     assertEquals([d.fix, d.expected], [{ replace: d.fix!.replace, with: short }, short]);
-    clean(source.replace(d.at, d.at.replace(d.fix!.replace, d.fix!.with)));
+    const fixed = source.replace(d.at, d.at.replace(d.fix!.replace, d.fix!.with));
+    clean(fixed);
+    // The codebase applies the fix in the tree, at the same place.
+    assertEquals(shortened(source), printProgram(parseProgram(fixed)));
+  }
+  // In a type definition: a field and a case payload.
+  for (const shape of ["record:\n    from: m.Point\n    to: Point", "variant:\n    Wide: m.Point\n    Narrow: Point"]) {
+    const other = `type m.Line\n  doc: "A line."\n  ${shape}\n  where: none\nend type m.Line`;
+    const source = fn("return 0", { extra: `${POINT}\n\n${other}` });
+    assertEquals(one(source, "E0226").at, "m.Point");
+    assertEquals(shortened(source), printProgram(parseProgram(source.replace(": m.Point", ": Point"))));
   }
   // A local with the short name takes it, so where a function is passed as
   // a value the full name is then the only spelling, and no error.
   const captured =
     "let xs: List<Int> = std.list.empty<Int>()\nlet ys: List<Int> = std.list.map(list: xs, with: m.h)\n" +
     "return h";
-  clean(fn(captured, { params: ["h: Int"], extra: H }));
-  one(fn(captured.replace("with: m.h", "with: h"), { params: ["h: Int"], extra: H }), "E0204");
+  const capturedSource = fn(captured, { params: ["h: Int"], extra: H });
+  clean(capturedSource);
+  assertEquals(shortened(capturedSource), printProgram(parseProgram(capturedSource)));
+  one(capturedSource.replace("with: m.h", "with: h"), "E0204");
   // Each long name is one diagnostic, also nested in a type.
   const twice = check(fn("let p: Result<m.Point, m.Point> = Ok(Point(x: 1, y: 2))\nreturn 0", { extra: POINT }));
   assertEquals(twice.map((d) => d.code), ["E0226", "E0226"]);

@@ -40,7 +40,7 @@ later an MCP `run` tool); recording what triggered an `import` in `history`; a t
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (166 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (167 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
