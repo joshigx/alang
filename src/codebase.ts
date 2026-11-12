@@ -573,9 +573,10 @@ export class Codebase {
   // `main` in its own process with exactly the permissions of its effects.
   // `name` is the full name of the `main` to start, needed only if there are
   // several. The program's working directory is the caller's, not the
-  // codebase's. Throws an AlangError and runs nothing if the sync fails
-  // (E0513: the files contradict the database, so neither side is run), if
-  // there is no such `main`, or if the program is not accepted.
+  // codebase's. Throws an AlangError and runs nothing if the sync fails (an
+  // export file that does not parse or check, or E0513: the files contradict
+  // the database, so neither side is run), if there is no such `main`, or if
+  // the program is not accepted.
   async run(name?: string, options: Omit<RunOptions, "main"> = {}): Promise<Deno.CommandOutput> {
     const synced = await this.sync();
     if (!synced.ok) throw new AlangError(synced.diagnostics);

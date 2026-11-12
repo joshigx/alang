@@ -77,7 +77,8 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   deleted export file removes its module's definitions). Above all, references stay names, so `rename` rewrites
   callers instead of changing only a pointer (departs from 6.1); see "Database phase: open points".
 - Running from the database: everything in `decisions.md`, Database, Run; above all, a failed sync refuses the run
-  instead of falling back to the database, examples are re-run, and the program runs in the caller's directory.
+  instead of falling back to the database (also for an export file that does not parse), examples are re-run, the
+  program runs in the caller's directory, and the built files stay in `out/`.
 - MCP server: everything in `decisions.md`, section MCP server; above all, no `import`/`export` tools, JSON results
   identical to `alang db`, a hand-written protocol instead of the SDK, and queries marked read-only although their
   sync can change the database.
@@ -235,8 +236,9 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **Every run re-runs every example.** Fine for the playground; for a large codebase the same limit to changed
   definitions as for submits (see "Examples as a regression net") would apply, or a run could trust the database.
 - **Stale acceptance files.** The playground's `out/` holds three `accept-<pid>-1.ts` from MCP server processes that
-  ended without `close()` (killed with their client, so the `finally` never ran). Harmless, but they pile up; the
-  server could close on SIGTERM, or opening a codebase could remove the files of processes that no longer exist.
+  ended without `close()`. Not checked why; a guess is that the client killed the server instead of closing its
+  stdin, so the `finally` never ran. Harmless, but they pile up; the server could close on SIGTERM, or opening a
+  codebase could remove the files of processes that no longer exist.
 - **Running a file from anywhere.** `deno task alang run x.alang` resolves `x.alang` from the repository root, since
   `deno task` runs in its config's directory. `deno install --global ... -n alang src/cli.ts` gives an `alang`
   command that works from any directory and needs no reinstall after changes (README). `alang run` then writes

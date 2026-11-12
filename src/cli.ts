@@ -10,7 +10,8 @@
 //   alang run <file>             accept, then run main with exactly the Deno
 //                                permissions of its effects
 //   alang db ...                 queries and operations on a codebase database
-//                                (section 6); see db_cli.ts
+//                                (section 6), and running the program it
+//                                holds; see db_cli.ts
 //   alang mcp [--dir <dir>]      the same queries and operations as an MCP
 //                                server on stdio; see mcp.ts
 //

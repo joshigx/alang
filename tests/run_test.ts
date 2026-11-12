@@ -130,6 +130,12 @@ Deno.test("db run: runs what the export holds, and nothing when export and datab
   await Deno.writeTextFile(file, (await Deno.readTextFile(file)).replace('"Hello, "', '"Hi, "'));
   assertEquals(await dbRun(where), { code: 0, stdout: "Hi, world\n", stderr: "" });
 
+  // An edit that does not check is not run, nor is the database's version.
+  const good = await Deno.readTextFile(file);
+  await Deno.writeTextFile(file, good.replace('"Hi, "', "Hi"));
+  assertEquals(refused(await dbRun(where)).map((d) => d.definition), ["greet.hello"]);
+  await Deno.writeTextFile(file, good);
+
   // The file changes again while the database no longer matches what it
   // last wrote (as after a failed write): neither side is run.
   await Deno.writeTextFile(file, (await Deno.readTextFile(file)).replace('"Hi, "', '"Hey, "'));

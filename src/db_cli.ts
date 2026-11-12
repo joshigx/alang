@@ -34,9 +34,10 @@
 // answers from the database and the diagnostics go to stderr.
 //
 // `run` leaves stdout to the program and exits with its code (70 on a trap,
-// whose description goes to stderr). If the sync fails (E0513), there is no
-// such `main`, or the program is not accepted, it runs nothing and prints the
-// diagnostics on stderr, exiting with 1. The program runs in the current
+// whose description goes to stderr). If the sync fails (an export file that
+// does not parse or check, or E0513), there is no such `main`, or the program
+// is not accepted, it runs nothing and prints the diagnostics on stderr,
+// exiting with 1. The program runs in the current
 // directory, not in <dir>.
 
 import { Codebase, type ExportResult, parseChanges, type SubmitResult } from "./codebase.ts";
