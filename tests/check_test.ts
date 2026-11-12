@@ -1,0 +1,398 @@
+// Type checker: the spec programs check cleanly, the spec's diagnostic
+// example is reproduced exactly, and each rule has a negative test that
+// yields exactly one diagnostic (rule 5.6).
+
+import { assertEquals } from "./assert.ts";
+import { type CheckOptions, checkProgram } from "../src/check.ts";
+import type { Diagnostic } from "../src/diagnostic.ts";
+import { parseProgram } from "../src/parser.ts";
+import { STD } from "../src/std.ts";
+import * as runtime from "../src/runtime.ts";
+import { con, list, result, STRING } from "../src/types.ts";
+
+const spec = await Deno.readTextFile(new URL("../alang-specs.md", import.meta.url));
+const specBlock = (firstLine: string): string => {
+  const m = [...spec.matchAll(/^```\n([\s\S]*?)^```$/gm)].find((m) => m[1].startsWith(firstLine));
+  if (!m) throw new Error(`spec block not found: ${firstLine}`);
+  return m[1];
+};
+
+function check(source: string, options?: CheckOptions): Diagnostic[] {
+  return checkProgram(parseProgram(source), options).diagnostics;
+}
+
+// A function `m.f` around the given body, plus extra definitions.
+function fn(
+  body: string,
+  o: { params?: string[]; out?: string; extra?: string; requires?: string; ensures?: string; examples?: string[] } = {},
+): string {
+  const lines = [
+    "fn m.f",
+    '  doc: "Test."',
+    o.params ? ["  in:", ...o.params.map((p) => `    ${p}`)].join("\n") : "  in: none",
+    `  out: ${o.out ?? "Int"}`,
+    "  effects: none",
+    `  requires: ${o.requires ?? "none"}`,
+    `  ensures: ${o.ensures ?? "none"}`,
+    o.examples ? ["  examples:", ...o.examples.map((e) => `    ${e}`)].join("\n") : "  examples: none",
+    "  body:",
+    ...body.split("\n").map((l) => `    ${l}`),
+    "end fn m.f",
+  ];
+  return lines.join("\n") + (o.extra ? `\n\n${o.extra}` : "");
+}
+
+// Exactly one diagnostic, with the given code; returns it.
+function one(source: string, code: string): Diagnostic {
+  const ds = check(source);
+  assertEquals(ds.map((d) => d.code), [code], JSON.stringify(ds, null, 2));
+  return ds[0];
+}
+
+function clean(source: string, options?: CheckOptions): void {
+  const ds = check(source, options);
+  assertEquals(ds, [], JSON.stringify(ds, null, 2));
+}
+
+const POINT = 'type m.Point\n  doc: "A point."\n  record:\n    x: Int\n    y: Int\n  where: none\nend type m.Point';
+const SHAPE =
+  'type m.Shape\n  doc: "A shape."\n  variant:\n    Circle: Int\n    Square: Int\n    Dot\n  where: none\nend type m.Shape';
+const G = 'fn m.g\n  doc: "G."\n  in: none\n  out: Int\n  effects: none\n  requires: none\n  ensures: none\n' +
+  "  examples:\n    g() == 1\n  body:\n    return 1\nend fn m.g";
+
+// ---- spec ----
+
+Deno.test("check: spec programs are accepted", () => {
+  clean(specBlock("fn hello.main"));
+  clean(specBlock("type net.port.Port"));
+  clean(specBlock("fn math.clamp"));
+});
+
+// The declarations config.load_port relies on, which the spec leaves out.
+const LOAD_PORT_CONTEXT = {
+  std: [...STD, {
+    name: "std.fs.read_text",
+    doc: "Reads a file as text.",
+    typeParams: [],
+    params: [{ name: "path", type: STRING }],
+    out: result(STRING, con("std.fs.ReadError")),
+    effects: ["fs.read" as const],
+  }],
+  declarations: parseProgram(`
+type std.fs.ReadError
+  doc: "Why a file could not be read."
+  variant:
+    NotFound
+    PermissionDenied
+  where: none
+end type std.fs.ReadError
+
+type config.LoadError
+  doc: "Why the configuration could not be loaded."
+  variant:
+    FileUnreadable: std.fs.ReadError
+    InvalidPort: net.port.ParseError
+  where: none
+end type config.LoadError
+`).concat(parseProgram(specBlock("type net.port.Port"))),
+};
+
+Deno.test("check: config.load_port is accepted given its missing declarations", () => {
+  clean(specBlock("fn config.load_port"), LOAD_PORT_CONTEXT);
+  const ds = check(specBlock("fn config.load_port"));
+  assertEquals(ds.length > 0, true);
+});
+
+Deno.test("check: the spec's let fragments are accepted inside a function", () => {
+  const indent = (s: string) => s.split("\n").join("\n");
+  clean(
+    fn(indent(specBlock("let contents")) + "\nreturn contents", {
+      params: ["paths: List<String>"],
+      out: "List<Result<String, std.fs.ReadError>>",
+    }),
+    LOAD_PORT_CONTEXT,
+  );
+  clean(fn(specBlock("let lengths") + "\nreturn total", { params: ["names: List<String>"] }));
+});
+
+Deno.test("check: the 5.5 diagnostic example is reproduced field for field", () => {
+  const source = specBlock("type net.port.Port").replace("std.int.parse(text: text)", "std.int.parse(txt: text)");
+  assertEquals(check(source), [{
+    code: "E0207",
+    definition: "net.port.parse",
+    section: "body",
+    at: "std.int.parse(txt: text)",
+    message: "Unknown parameter name `txt`.",
+    expected: "text: String",
+    fix: { replace: "std.int.parse(txt: text)", with: "std.int.parse(text: text)" },
+  }]);
+});
+
+Deno.test("check: std signatures and runtime exports match", () => {
+  const exported = Object.keys(runtime).filter((k) => k.startsWith("std$")).sort();
+  assertEquals(STD.map((s) => s.name.replaceAll(".", "$")).sort(), exported);
+});
+
+// ---- types and conversions ----
+
+Deno.test("check: mismatches, without implicit conversion (2.6)", () => {
+  one(fn('let x: Int = "a"\nreturn x'), "E0204");
+  assertEquals(one(fn("let x: Float = 1\nreturn 0"), "E0204").fix, { replace: "1", with: "1.0" });
+  assertEquals(one(fn("let x: Int = 1\nlet y: Float = x\nreturn 0"), "E0204").fix, {
+    replace: "x",
+    with: "std.int.to_float(value: x)",
+  });
+  one(fn("return 1 + 2.0"), "E0204");
+  one(fn("return true"), "E0204");
+});
+
+Deno.test("check: operators", () => {
+  const concat = one(fn('return "a" + "b"', { out: "String" }), "E0211");
+  assertEquals(concat.fix?.with, 'std.string.concat(left: "a", right: "b")');
+  one(fn("return Point(x: 1, y: 2) < Point(x: 1, y: 3)", { out: "Bool", extra: POINT }), "E0211");
+  one(fn("return g == g", { out: "Bool", extra: G }), "E0222");
+  clean(fn("return Point(x: 1, y: 2) == Point(x: 1, y: 3)", { out: "Bool", extra: POINT }));
+  clean(fn('return "a" < "b" and 1.5 >= 1.0', { out: "Bool" }));
+  one(fn("return 1 and true", { out: "Bool" }), "E0204");
+});
+
+// ---- names, calls, arguments ----
+
+Deno.test("check: unknown names suggest the closest one", () => {
+  const d = one(fn('let n: Int = std.int.prase(text: "1") else return 0\nreturn n'), "E0201");
+  assertEquals(d.fix, { replace: "std.int.prase", with: "std.int.parse" });
+  assertEquals(one(fn("let count: Int = 1\nreturn cuont"), "E0203").fix, { replace: "cuont", with: "count" });
+  assertEquals(one(fn("return 1", { params: ["x: Strin"] }), "E0202").fix, { replace: "Strin", with: "String" });
+});
+
+Deno.test("check: one diagnostic per cause (5.6)", () => {
+  one(fn("return std.string.length(text: std.text.show(value: missing + 1)) + 2"), "E0203");
+  one(fn("let x: Int = missing\nlet y: Int = x + 1\nreturn y"), "E0203");
+});
+
+Deno.test("check: arguments are named, complete and in order (4.1)", () => {
+  one(
+    fn("let xs: List<Int> = std.list.empty<Int>()\nlet v: Int = std.list.get(list: xs) else return 0\nreturn v"),
+    "E0205",
+  );
+  const order = one(
+    fn(
+      "let xs: List<Int> = std.list.empty<Int>()\nlet v: Int = std.list.get(index: 0, list: xs) else return 0\nreturn v",
+    ),
+    "E0208",
+  );
+  assertEquals(order.fix?.with, "std.list.get(list: xs, index: 0)");
+  one(fn('return std.string.length(text: "a", text: "b")'), "E0206");
+  one(fn("return Point(x: 1, z: 2).x", { extra: POINT }), "E0207");
+  one(fn("return g(x: 1)", { extra: G }), "E0207");
+});
+
+Deno.test("check: explicit type arguments exactly when the arguments cannot determine them (1.4)", () => {
+  const d = one(fn("let xs: List<Int> = std.list.empty()\nreturn 0"), "E0209");
+  assertEquals(d.fix, { replace: "std.list.empty()", with: "std.list.empty<Int>()" });
+  const extra = one(fn("let xs: List<Int> = std.list.empty<Int>()\nreturn std.list.length<Int>(list: xs)"), "E0209");
+  assertEquals(extra.fix?.with, "std.list.length(list: xs)");
+  one(fn("return 0", { params: ["xs: List<Int, Int>"] }), "E0209");
+});
+
+Deno.test("check: types flow left to right (1.4)", () => {
+  const xs = "let xs: List<Int> = std.list.empty<Int>()\n";
+  one(fn(xs + "return None == std.list.get(list: xs, index: 0)", { out: "Bool" }), "E0210");
+  clean(fn(xs + "return std.list.get(list: xs, index: 0) == None", { out: "Bool" }));
+  clean(fn("let o: Option<Int> = Some(1)\nreturn o == Some(2)", { out: "Bool" }));
+});
+
+Deno.test("check: method calls (3.1, 5.7)", () => {
+  one(fn("let xs: List<Int> = std.list.empty<Int>()\nreturn xs.length()"), "E0220");
+});
+
+Deno.test("check: function references and lambdas", () => {
+  clean(fn(
+    "let xs: List<Int> = std.list.empty<Int>()\nlet s: List<Int> = std.list.sort(list: xs, by: std.int.compare)\nreturn 0",
+  ));
+  one(
+    fn(
+      "let xs: List<Int> = std.list.empty<Int>()\nlet s: List<Int> = std.list.map(list: xs, with: std.text.show)\nreturn 0",
+    ),
+    "E0210",
+  );
+  one(
+    fn(
+      "let xs: List<Int> = std.list.empty<Int>()\nlet ys: List<String> = std.list.map(list: xs, with: fn(x: Int): Int => x)\nreturn 0",
+    ),
+    "E0204",
+  );
+  one(
+    fn(
+      "let xs: List<Int> = std.list.empty<Int>()\nreturn std.list.fold(list: xs, initial: 0, with: fn(a: Int, b: Int): Int => if a > b then\n  return a\nelse\n  b\nend if)",
+    ),
+    "E0219",
+  );
+});
+
+// ---- records and variants ----
+
+Deno.test("check: fields", () => {
+  const d = one(fn("let p: Point = Point(x: 1, y: 2)\nreturn p.z", { extra: POINT }), "E0212");
+  assertEquals(d.expected, "x, y");
+  one(fn("let n: Int = 1\nreturn n.x"), "E0212");
+  clean(fn("let p: Point = Point(x: 1, y: 2)\nreturn p.x + Point(x: 3, y: 4).y", { extra: POINT }));
+});
+
+Deno.test("check: construction forms (4.2)", () => {
+  one(fn("let p: Point = Point(1)\nreturn 0", { extra: POINT }), "E0223");
+  one(fn("let s: Shape = Circle(r: 1)\nreturn 0", { extra: SHAPE }), "E0223");
+  one(fn("let s: Shape = Circle\nreturn 0", { extra: SHAPE }), "E0223");
+  one(fn("let s: Shape = Dot(1)\nreturn 0", { extra: SHAPE }), "E0223");
+  one(fn("let s: Shape = Shape\nreturn 0", { extra: SHAPE }), "E0223");
+  one(fn("let s: Shape = Triangle(1)\nreturn 0", { extra: SHAPE }), "E0203");
+});
+
+Deno.test("check: uniqueness of definitions, cases, fields and params", () => {
+  one(fn("return 1", { extra: G + "\n\n" + G }), "E0215");
+  one(
+    fn("return 1", {
+      extra: SHAPE + '\n\ntype m.Other\n  doc: "O."\n  variant:\n    Dot\n  where: none\nend type m.Other',
+    }),
+    "E0215",
+  );
+  one(
+    fn("return 1", {
+      extra: 'type m.Dot\n  doc: "D."\n  record:\n    v: Int\n  where: none\nend type m.Dot\n\n' + SHAPE,
+    }),
+    "E0215",
+  );
+  one(
+    fn("return 1", { extra: 'type m.P\n  doc: "P."\n  record:\n    v: Int\n    v: Int\n  where: none\nend type m.P' }),
+    "E0215",
+  );
+  one(fn("return a", { params: ["a: Int", "a: Int"] }), "E0215");
+});
+
+// ---- match ----
+
+Deno.test("check: match is exhaustive, without unreachable cases (3.3)", () => {
+  const opt = "let o: Option<Int> = Some(1)\n";
+  const d = one(fn(opt + "let n: Int = match o\n  case Some(v) then\n    v\nend match\nreturn n"), "E0213");
+  assertEquals(d.expected, "case None then");
+  clean(fn(opt + "let n: Int = match o\n  case Some(v) then\n    v\n  case None then\n    0\nend match\nreturn n"));
+
+  const nested = specBlock("type net.port.Port") + "\n\n" + [
+    "fn net.port.describe",
+    '  doc: "D."',
+    "  in:",
+    "    text: String",
+    "  out: String",
+    "  effects: none",
+    "  requires: none",
+    "  ensures: none",
+    "  examples: none",
+    "  body:",
+    "    let s: String = match parse(text: text)",
+    "      case Ok(port) then",
+    '        "port"',
+    "      case Err(NotANumber) then",
+    '        "nan"',
+    "    end match",
+    "    return s",
+    "end fn net.port.describe",
+  ].join("\n");
+  assertEquals(one(nested, "E0213").expected, "case Err(OutOfRange(_)) then");
+  clean(nested.replace('        "nan"\n', '        "nan"\n      case Err(OutOfRange(n)) then\n        "range"\n'));
+
+  one(fn("let n: Int = 1\nlet s: Int = match n\n  case 1 then\n    1\nend match\nreturn s"), "E0213");
+  clean(
+    fn(
+      "let b: Bool = true\nlet s: Int = match b\n  case true then\n    1\n  case false then\n    0\nend match\nreturn s",
+    ),
+  );
+  one(
+    fn(
+      opt +
+        "let n: Int = match o\n  case Some(v) then\n    v\n  case Some(w) then\n    w\n  case None then\n    0\nend match\nreturn n",
+    ),
+    "E0214",
+  );
+});
+
+Deno.test("check: case patterns fit the subject type", () => {
+  const opt = "let o: Option<Int> = Some(1)\n";
+  one(
+    fn(opt + "let n: Int = match o\n  case Ok(v) then\n    v\n  case None then\n    0\nend match\nreturn n"),
+    "E0214",
+  );
+  one(fn(opt + "let n: Int = match o\n  case Some then\n    1\n  case None then\n    0\nend match\nreturn n"), "E0214");
+  // Sibling arms may reuse a name; it is not shadowing.
+  clean(
+    fn(
+      "let s: Shape = Circle(1)\nlet n: Int = match s\n  case Circle(v) then\n    v\n  case Square(v) then\n    v\n  case Dot then\n    0\nend match\nreturn n",
+      {
+        extra: SHAPE,
+      },
+    ),
+  );
+});
+
+// ---- statements ----
+
+Deno.test("check: no shadowing (2.6)", () => {
+  one(fn("let x: Int = 1\nlet x: Int = 2\nreturn x"), "E0216");
+  one(fn("let a: Int = 1\nreturn a", { params: ["a: Int"] }), "E0216");
+});
+
+Deno.test("check: discarded values must be Unit", () => {
+  one(fn('std.int.parse(text: "1")\nreturn 0'), "E0217");
+  clean(fn('std.console.print_line(text: "hi")\nreturn 0'));
+});
+
+Deno.test("check: a body ends with return; nothing follows a return (3.4)", () => {
+  one(fn("if true then\n  return 1\nelse\n  return 2\nend if"), "E0218");
+  one(fn("return 1\nreturn 2"), "E0218");
+  one(fn("if true then\n  return 1\nelse\n  return 2\nend if\nreturn 3"), "E0218");
+});
+
+Deno.test("check: let ... else", () => {
+  one(fn("let x: Int = 5 else return 0\nreturn x"), "E0224");
+  one(fn('let x: String = std.int.parse(text: "1") else return 0\nreturn 0'), "E0204");
+  one(fn('let x: Int = std.int.parse(text: "1") else return "no"\nreturn x'), "E0204");
+  clean(fn("let x: Int = std.int.parse(text: t) else return 0\nreturn x", { params: ["t: String"] }));
+});
+
+Deno.test("check: if and for", () => {
+  one(fn('let x: Int = if true then\n  1\nelse\n  "a"\nend if\nreturn x'), "E0204");
+  one(fn("for x: Int in 5 do\n  std.console.print_line(text: std.text.show(value: x))\nend for\nreturn 0"), "E0204");
+  const d = one(
+    fn(
+      "let xs: List<String> = std.list.empty<String>()\nlet ys: List<Int> = for x: Int in xs do\n  1\nend for\nreturn 0",
+    ),
+    "E0204",
+  );
+  assertEquals(d.fix, { replace: "Int", with: "String" });
+  one(fn("if 1 then\n  return 1\nend if\nreturn 0"), "E0204");
+});
+
+// ---- contracts and examples ----
+
+Deno.test("check: contracts see the right names", () => {
+  clean(fn("return a", { params: ["a: Int"], requires: "a > 0", ensures: "result == a" }));
+  one(fn("return a", { params: ["a: Int"], requires: "result > 0" }), "E0203");
+  one(fn("return a", { params: ["a: Int"], requires: "a" }), "E0204");
+  one(
+    fn("return 1", {
+      extra: 'type m.V\n  doc: "V."\n  variant:\n    A\n  where: true\nend type m.V',
+    }),
+    "E0225",
+  );
+});
+
+Deno.test("check: examples call their own function and compare equal types", () => {
+  clean(fn("return a", { params: ["a: Int"], examples: ["f(a: 1) == 1"] }));
+  one(fn("return a", { params: ["a: Int"], examples: ['f(a: 1) == "1"'] }), "E0204");
+  one(fn("return a", { params: ["a: Int"], examples: ["g() == 1"], extra: G }), "E0221");
+});
+
+Deno.test("check: the std table can be given explicitly", () => {
+  const ds = check(fn('return std.string.length(text: "a")'), { std: [] });
+  assertEquals(ds.map((d) => d.code), ["E0201"]);
+  assertEquals(list(STRING).k, "con");
+});

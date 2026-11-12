@@ -18,10 +18,18 @@ export interface Diagnostic {
   readonly fix: Fix | null;
 }
 
+// One or more diagnostics; the checker reports all causes it finds (5.6).
 export class AlangError extends Error {
-  constructor(readonly diagnostic: Diagnostic) {
-    super(`${diagnostic.code}: ${diagnostic.message} at \`${diagnostic.at}\``);
+  readonly diagnostics: readonly Diagnostic[];
+  constructor(diagnostics: Diagnostic | readonly Diagnostic[]) {
+    const list = Array.isArray(diagnostics) ? diagnostics : [diagnostics as Diagnostic];
+    super(list.map((d) => `${d.code}: ${d.message} at \`${d.at}\``).join("\n"));
     this.name = "AlangError";
+    this.diagnostics = list;
+  }
+
+  get diagnostic(): Diagnostic {
+    return this.diagnostics[0];
   }
 }
 

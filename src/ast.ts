@@ -136,6 +136,8 @@ export const EFFECTS = [
   "console",
 ] as const;
 
+export type Effect = typeof EFFECTS[number];
+
 export function moduleOf(path: Path): Path {
   return path.slice(0, -1);
 }

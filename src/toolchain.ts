@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Definition, FnDef } from "./ast.ts";
 import { pathText } from "./ast.ts";
 import { AlangError, diagnostic } from "./diagnostic.ts";
+import { checkProgram } from "./check.ts";
 import { emitProgram } from "./emit.ts";
 import { parseProgram } from "./parser.ts";
 import type { Example, ExampleResult } from "./runtime.ts";
@@ -18,14 +19,23 @@ export interface Built {
   readonly outPath: string;
 }
 
-// Parses `source` and writes the generated TypeScript to `outPath`.
-export async function build(source: string, outPath: string): Promise<Built> {
+// Parses and checks `source`; throws an AlangError with all diagnostics if
+// the program is not accepted.
+export function compile(source: string, runtimeImport: string): { defs: Definition[]; ts: string } {
   const defs = parseProgram(source);
+  const { diagnostics, info } = checkProgram(defs);
+  if (diagnostics.length > 0) throw new AlangError(diagnostics);
+  return { defs, ts: emitProgram(defs, info, { runtimeImport }) };
+}
+
+// Compiles `source` and writes the generated TypeScript to `outPath`.
+export async function build(source: string, outPath: string): Promise<Built> {
   const absOut = resolve(outPath);
   let runtimeImport = relative(dirname(absOut), RUNTIME_PATH).replaceAll("\\", "/");
   if (!runtimeImport.startsWith(".")) runtimeImport = `./${runtimeImport}`;
   await Deno.mkdir(dirname(absOut), { recursive: true });
-  await Deno.writeTextFile(absOut, emitProgram(defs, { runtimeImport }));
+  const { defs, ts } = compile(source, runtimeImport);
+  await Deno.writeTextFile(absOut, ts);
   return { defs, outPath: absOut };
 }
 

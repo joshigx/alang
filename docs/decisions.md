@@ -37,22 +37,47 @@ numbers refer to the spec. Open points are listed at the end.
 | `let ... else`       | In the `else` branch `error` is the `Err` value; for `None` it is `Unit`.                                                                      |
 | `result`, `error`    | Bound by the language (in `ensures` and in `let ... else`), so they cannot name a parameter or binding (E0109). Fields may use them.          |
 | `std.int.parse`      | `String -> Option<Int>`: optional `-`, decimal digits, inside the `Int` range.                                                                 |
-| `Int` division       | Planned: `/` truncates toward zero, `%` has the sign of the dividend, division by zero traps. Not emitted until the type checker can tell `Int` from `Float`. |
+| `Int` division       | `/` truncates toward zero, `%` has the sign of the dividend (`-7 % 2 == -1`), division by zero traps.                                          |
+| `Float` arithmetic   | IEEE 754; a NaN result traps (`0.0 / 0.0`), infinities are ordinary values (`1.0 / 0.0`).                                                      |
 | String order         | By Unicode scalar values, not UTF-16 code units. `std.string.length` counts scalar values.                                                     |
 | Representation in TS | `Int`/`Float` → `number`, `Unit` → `null`, records → plain readonly objects with a checking constructor, variants → `{ tag, value? }`.        |
 | Names in TS          | Global paths joined with `$` (`net$port$parse`), so they never collide with locals. Locals that are TS reserved words get a `$` suffix.        |
 | Effects in TS        | Disappear; enforced later through Deno permissions on `main`.                                                                                  |
 
-## Temporary limits of the slice
+## Type checking
 
-These are not language decisions, only what the first implementation does not do yet.
+| Topic                   | Decision                                                                                                                                                                                                                                                    | Principle                                  |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Direction               | Types flow forward only. The left operand of `==` is typed first and the right one checked against it, so `parse(...) == Ok(...)` works and `None == x` does not (E0210).                                                                                 | 1.4                                        |
+| `Ok`, `Err`, `None`     | Take their type from the expected type only; without one they are an error (E0210). `Some(x)` can also take its type from `x`.                                                                                                                            | 1.4                                        |
+| Explicit type arguments | Written exactly when a type parameter of the function does not occur in any parameter type (`std.list.empty<Int>()`); never otherwise (`std.list.map(...)`, E0209). The rule depends on the signature only, so each call has one spelling.               | 1.4, 3                                     |
+| Generic calls           | Type parameters are bound from the arguments, left to right, without backtracking.                                                                                                                                                                         | 1.4                                        |
+| Arguments               | Every parameter is named, in declaration order, none omitted, none twice (E0205–E0208). Records are built the same way.                                                                                                                                  | 4.1, 2.6                                   |
+| Conversion              | None. `Int` never fits `Float`; the fix suggests `1.0` or `std.int.to_float(value: x)`.                                                                                                                                                                  | 2.6                                        |
+| `+` on `String`         | Not allowed; texts join with `std.string.concat`. `+` is numeric only, since one name denotes one function.                                                                                                                                              | 2.6                                        |
+| Order                   | `< <= > >=` only on `Int`, `Float`, `String`. `==` on every type without function values (E0222).                                                                                                                                                        | 3.9                                        |
+| Shadowing               | A binding may not reuse a name that is visible at that point (parameters, outer `let`s, enclosing pattern bindings, lambda parameters). Sibling branches may reuse a name, e.g. `case Circle(v)` and `case Square(v)`.                                     | 2.6                                        |
+| Locals vs functions     | A plain name resolves to a local first, then to a function of the module (`by: compare`). A path followed by `(` is always a call.                                                                                                                         | 1.2                                        |
+| Function values         | A function name can be passed as a value (`by: std.int.compare`) if it is not generic; a generic one needs a lambda (E0210).                                                                                                                              | 3                                          |
+| Discarded values        | An expression statement whose value is not used must have type `Unit` (E0217); dropping a `Result` silently is an error. A `for` used as a statement has type `Unit`; its body values must be `Unit` too.                                                 | 2.3, 5                                     |
+| Function end            | The last statement of a body is literally `return` (E0218). Statements after a `return`, or after an `if`/`match` whose branches all return, are unreachable (E0218).                                                                                     | 3.4                                        |
+| Blocks                  | A block's value is its last expression. A block that ends in `return` has the bottom type and fits any expected type. A value block that ends in `let` is an error.                                                                                      | 3.4                                        |
+| Lambdas                 | The body is one expression; `return` and `let ... else` inside it are errors (E0219). Lambdas may read enclosing bindings.                                                                                                                                | 2.4                                        |
+| `match`                 | Exhaustive over nested patterns (`Err(NotANumber)` + `Err(OutOfRange(n))`). A case covered by earlier cases is an error (E0214). A case with a value is always written with a sub-pattern, a case without one never. `match` on `Int`/`String` cannot be exhaustive. | 3.3                                        |
+| Examples                | The left side calls the function the example belongs to (E0221); both sides have the same type.                                                                                                                                                           | 5                                          |
+| Scopes of conditions    | `requires` sees the parameters, `ensures` the parameters and `result`, `where` the fields, examples nothing.                                                                                                                                              | 5                                          |
+| Uniqueness              | Definitions, parameters, fields, and case names per module are unique; a case may not share its name with a type of the module (E0215).                                                                                                                  | 1.2                                        |
+| Diagnostics             | All causes are reported, one diagnostic each. An expression that failed has an error type that fits everywhere, which suppresses follow-ups; a broken pattern suppresses the exhaustiveness check of its `match` (5.6). Unknown names get a "did you mean" fix within a small edit distance. | 5.5, 5.6                                   |
+| std signatures          | Kept in `src/std.ts` with function types and type variables, which the surface language cannot express yet. A test keeps them in sync with `runtime.ts`.                                                                                                  | —                                          |
 
-- No type checker. `+ - *` share one runtime operation for `Int` and `Float`: NaN traps, and an integral result outside
-  the `Int` range traps. `/` and `%` are rejected until types are known.
+## Temporary limits
+
+These are not language decisions, only what the implementation does not do yet.
+
 - `if`, `match` and `for` are compiled only as a statement, as the value of `let`, and after `return`.
-- `where` on a variant type is not emitted.
+- `where` on a variant type is rejected (E0225); it is open which name refers to the value.
 - `const` and `extern fn` are not parsed yet.
-- Call arguments are mapped by position, relying on rule 4.1 (declaration order); the checker will verify the order.
+- Effects, purity of lambdas and conditions, and mandatory examples are not checked yet.
 
 ## Open questions
 

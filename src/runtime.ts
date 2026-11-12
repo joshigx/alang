@@ -85,11 +85,11 @@ export function eq(a: unknown, b: unknown): boolean {
   );
 }
 
-// Strings order by Unicode scalar values, not by UTF-16 code units.
-function compare(a: number | string, b: number | string): number {
-  if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
-  const ia = String(a)[Symbol.iterator]();
-  const ib = String(b)[Symbol.iterator]();
+// Strings order by Unicode scalar values, not by UTF-16 code units. Int and
+// Float compare with the native operators in generated code.
+export function str_compare(a: string, b: string): number {
+  const ia = a[Symbol.iterator]();
+  const ib = b[Symbol.iterator]();
   for (;;) {
     const x = ia.next();
     const y = ib.next();
@@ -100,28 +100,52 @@ function compare(a: number | string, b: number | string): number {
   }
 }
 
-export const lt = (a: number | string, b: number | string): boolean => compare(a, b) < 0;
-export const le = (a: number | string, b: number | string): boolean => compare(a, b) <= 0;
-export const gt = (a: number | string, b: number | string): boolean => compare(a, b) > 0;
-export const ge = (a: number | string, b: number | string): boolean => compare(a, b) >= 0;
+export const str_lt = (a: string, b: string): boolean => str_compare(a, b) < 0;
+export const str_le = (a: string, b: string): boolean => str_compare(a, b) <= 0;
+export const str_gt = (a: string, b: string): boolean => str_compare(a, b) > 0;
+export const str_ge = (a: string, b: string): boolean => str_compare(a, b) >= 0;
 
-// ---- arithmetic ----
-// Without a type checker Int and Float share these operations: a NaN result
-// traps, and a result outside the Int range traps when both operands are
-// integers. Once types are known the emitter will pick separate Int and Float
-// operations.
+function toOrder(n: number): Order {
+  return n < 0 ? Less : n > 0 ? Greater : Equal;
+}
 
-function checked(op: string, a: number, b: number, r: number): number {
-  if (Number.isNaN(r)) trap("nan", null, `${a} ${op} ${b}`, "Float operation produced NaN.");
-  if (Number.isSafeInteger(a) && Number.isSafeInteger(b) && Number.isInteger(r) && !Number.isSafeInteger(r)) {
-    trap("overflow", null, `${a} ${op} ${b}`, "Int overflow.");
-  }
+// ---- Int ----
+// Integers from -(2^53 - 1) to 2^53 - 1; leaving the range traps.
+
+function int(op: string, a: number, b: number, r: number): number {
+  if (!Number.isSafeInteger(r)) trap("overflow", null, `${a} ${op} ${b}`, "Int overflow.");
   return r;
 }
 
-export const add = (a: number, b: number): number => checked("+", a, b, a + b);
-export const sub = (a: number, b: number): number => checked("-", a, b, a - b);
-export const mul = (a: number, b: number): number => checked("*", a, b, a * b);
+export const int_add = (a: number, b: number): number => int("+", a, b, a + b);
+export const int_sub = (a: number, b: number): number => int("-", a, b, a - b);
+export const int_mul = (a: number, b: number): number => int("*", a, b, a * b);
+
+// Rounds toward zero.
+export function int_div(a: number, b: number): number {
+  if (b === 0) trap("division", null, `${a} / ${b}`, "Int division by zero.");
+  return int("/", a, b, Math.trunc(a / b));
+}
+
+// Has the sign of the dividend: -7 % 2 == -1.
+export function int_rem(a: number, b: number): number {
+  if (b === 0) trap("division", null, `${a} % ${b}`, "Int remainder by zero.");
+  return int("%", a, b, a % b);
+}
+
+// ---- Float ----
+// IEEE 754 doubles without NaN: a NaN result traps. Infinities are values.
+
+function float(op: string, a: number, b: number, r: number): number {
+  if (Number.isNaN(r)) trap("nan", null, `${a} ${op} ${b}`, "Float operation produced NaN.");
+  return r;
+}
+
+export const float_add = (a: number, b: number): number => float("+", a, b, a + b);
+export const float_sub = (a: number, b: number): number => float("-", a, b, a - b);
+export const float_mul = (a: number, b: number): number => float("*", a, b, a * b);
+export const float_div = (a: number, b: number): number => float("/", a, b, a / b);
+export const float_rem = (a: number, b: number): number => float("%", a, b, a % b);
 
 // ---- examples ----
 
@@ -168,6 +192,16 @@ export function std$int$to_float(value: number): number {
   return value;
 }
 
+export function std$int$compare(left: number, right: number): Order {
+  return toOrder(left - right);
+}
+
+export function std$float$floor(value: number): number {
+  const r = Math.floor(value);
+  if (!Number.isSafeInteger(r)) trap("overflow", "std.float.floor", String(value), "Float outside the Int range.");
+  return r;
+}
+
 export function std$string$trim(text: string): string {
   return text.trim();
 }
@@ -179,8 +213,28 @@ export function std$string$length(text: string): number {
   return n;
 }
 
+export function std$string$concat(left: string, right: string): string {
+  return left + right;
+}
+
+export function std$string$join(parts: readonly string[], separator: string): string {
+  return parts.join(separator);
+}
+
+export function std$string$compare(left: string, right: string): Order {
+  return toOrder(str_compare(left, right));
+}
+
 export function std$list$empty<T>(): readonly T[] {
   return [];
+}
+
+export function std$list$append<T>(list: readonly T[], item: T): readonly T[] {
+  return [...list, item];
+}
+
+export function std$list$length<T>(list: readonly T[]): number {
+  return list.length;
 }
 
 export function std$list$get<T>(list: readonly T[], index: number): Option<T> {
@@ -199,6 +253,11 @@ export function std$list$fold<T, A>(list: readonly T[], initial: A, fn: (acc: A,
   let acc = initial;
   for (const x of list) acc = fn(acc, x);
   return acc;
+}
+
+export function std$list$sort<T>(list: readonly T[], by: (left: T, right: T) => Order): readonly T[] {
+  const order = { Less: -1, Equal: 0, Greater: 1 } as const;
+  return [...list].sort((a, b) => order[by(a, b).tag]);
 }
 
 // Text representation (rule 3.9). Records have no runtime type name yet, so

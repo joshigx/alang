@@ -4,8 +4,7 @@
 import { assert_, assertEquals, assertThrows } from "./assert.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import { Trap } from "../src/runtime.ts";
-import { build, type Built, testExamples } from "../src/toolchain.ts";
-import { emitProgram } from "../src/emit.ts";
+import { build, type Built, compile, testExamples } from "../src/toolchain.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
 
@@ -147,11 +146,109 @@ fn shapes.broken
 end fn shapes.broken
 `;
 
+const CALC = `
+fn calc.divide
+  doc: "Integer division, rounding toward zero."
+  in:
+    a: Int
+    b: Int
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    divide(a: 7, b: 2) == 3
+    divide(a: -7, b: 2) == -3
+  body:
+    return a / b
+end fn calc.divide
+
+fn calc.remainder
+  doc: "Remainder with the sign of the dividend."
+  in:
+    a: Int
+    b: Int
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    remainder(a: 7, b: 2) == 1
+    remainder(a: -7, b: 2) == -1
+  body:
+    return a % b
+end fn calc.remainder
+
+fn calc.ratio
+  doc: "Float division."
+  in:
+    a: Float
+    b: Float
+  out: Float
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    ratio(a: 1.0, b: 4.0) == 0.25
+  body:
+    return a / b
+end fn calc.ratio
+
+fn calc.mean
+  doc: "Mean of two integers as a Float."
+  in:
+    a: Int
+    b: Int
+  out: Float
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    mean(a: 1, b: 2) == 1.5
+  body:
+    return (std.int.to_float(value: a) + std.int.to_float(value: b)) / 2.0
+end fn calc.mean
+
+fn calc.first_word
+  doc: "The word that sorts first."
+  in:
+    a: String
+    b: String
+  out: String
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    first_word(a: "pear", b: "apple") == "apple"
+    first_word(a: "Zoo", b: "ant") == "Zoo"
+  body:
+    if a <= b then
+      return a
+    end if
+    return b
+end fn calc.first_word
+
+fn calc.sorted
+  doc: "The numbers in ascending order."
+  in:
+    numbers: List<Int>
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    sorted(numbers: std.list.append(list: std.list.append(list: std.list.empty<Int>(), item: 3), item: 1)) == std.list.append(list: std.list.append(list: std.list.empty<Int>(), item: 1), item: 3)
+  body:
+    return std.list.sort(list: numbers, by: std.int.compare)
+end fn calc.sorted
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
   clamp: specBlock("fn math.clamp"),
   blocks: BLOCKS,
+  calc: CALC,
 };
 
 const built: Record<string, Built> = {};
@@ -175,7 +272,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
   assert_(!bad.success, "deno check accepted an ill-typed file");
 });
 
-for (const name of ["hello", "port", "clamp"]) {
+for (const name of ["hello", "port", "clamp", "calc"]) {
   Deno.test(`emit: spec examples of ${name} pass`, async () => {
     const results = await testExamples(built[name]);
     assertEquals(results.filter((r) => !r.passed), []);
@@ -216,7 +313,18 @@ Deno.test("emit: match, if, for, let-else and lambdas", async () => {
   assertEquals(mod.shapes$total([3, -4, 5]), 8);
 });
 
-Deno.test("emit: the block test program is itself canonical", () => {
+Deno.test("emit: Int and Float arithmetic are separate", async () => {
+  const mod = await load("calc");
+  assertEquals(assertThrows(() => mod.calc$divide(1, 0), Trap).kind, "division");
+  assertEquals(assertThrows(() => mod.calc$remainder(1, 0), Trap).kind, "division");
+  assertEquals(mod.calc$ratio(1, 0), Infinity);
+  assertEquals(assertThrows(() => mod.calc$ratio(0, 0), Trap).kind, "nan");
+  // Large integral Floats are not Ints and do not overflow.
+  assertEquals(mod.calc$ratio(2 ** 60, 0.5), 2 ** 61);
+});
+
+Deno.test("emit: the test programs are themselves canonical", () => {
+  assertEquals(printProgram(parseProgram(CALC)), CALC.trimStart());
   assertEquals(printProgram(parseProgram(BLOCKS)), BLOCKS.trimStart());
 });
 
@@ -230,8 +338,8 @@ Deno.test("emit: method calls get a dedicated diagnostic (5.7)", () => {
     'std.console.print_line(text: "Hello, world")',
     'let greeting: String = "Hello"\n    greeting.print_line()',
   );
-  const d = assertThrows(() => emitProgram(parseProgram(source), { runtimeImport: "x" }), AlangError).diagnostic;
-  assertEquals(d.code, "E0302");
+  const d = assertThrows(() => compile(source, "x"), AlangError).diagnostic;
+  assertEquals(d.code, "E0220");
 });
 
 Deno.test("emit: output runs on Node.js without Deno", async () => {
