@@ -26,7 +26,13 @@ function printParam(p: Param): string {
   return `${p.name}: ${printTypeRef(p.type)}`;
 }
 
-function printFn(def: FnDef): string {
+// The signature of a definition: every section except `body` (section 6).
+// A type has no body, so its signature is its whole text.
+export function printSignature(def: Definition): string {
+  return def.kind === "fn" ? printFn(def, false) : printType(def);
+}
+
+function printFn(def: FnDef, body = true): string {
   const name = pathText(def.path);
   const inner = STEP + STEP;
   return [
@@ -38,8 +44,7 @@ function printFn(def: FnDef): string {
     ...section("requires", def.requires && printExpr(def.requires, inner)),
     ...section("ensures", def.ensures && printExpr(def.ensures, inner)),
     ...section("examples", def.examples.map((e) => printExpr(e, inner))),
-    `${STEP}body:`,
-    printStmts(def.body, inner),
+    ...(body ? [`${STEP}body:`, printStmts(def.body, inner)] : []),
     `end fn ${name}`,
   ].join("\n");
 }

@@ -2,7 +2,7 @@
 // and a ready-made fix where one is known.
 //
 // Code ranges: E00xx lexer, E01xx parser, E02xx checker, E03xx emitter and
-// toolchain, E04xx examples (5.1).
+// toolchain, E04xx examples (5.1), E05xx database operations (6).
 
 export interface Fix {
   readonly replace: string;

@@ -62,7 +62,11 @@ export interface Accepted {
 // diagnostic if a step fails. The static diagnostics come in one round;
 // examples run only once the program checks, since they need its code.
 export async function accept(source: string, outPath: string): Promise<Accepted> {
-  const defs = parseProgram(source);
+  return await acceptDefinitions(parseProgram(source), outPath);
+}
+
+// `accept` for definitions that are already parsed, e.g. from the database.
+export async function acceptDefinitions(defs: Definition[], outPath: string): Promise<Accepted> {
   const { diagnostics, info } = checkProgram(defs);
   const all = byDefinition(defs, [...diagnostics, ...missingExamples(defs)]);
   if (all.length > 0) throw new AlangError(all);
