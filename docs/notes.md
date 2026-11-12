@@ -145,6 +145,12 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   where `text` is std's parameter. Not yet known whether E0506 was hit or the callers were read in advance. A
   parameter rename is as mechanical as a definition rename, yet the model has to send every caller's full text; a
   tool operation for it (rewriting callers like `rename` does) would scale where twenty callers would not.
+- **Playground, task "clamp with swapped bounds".** Accepted, and the model rewrote the `ensures` for both orders
+  without being told, dropped the `requires`, and mirrored the three examples with swapped bounds. It swapped by
+  self-recursion: there is no reassignment, and std has no `std.int.min`/`max` (only `parse`, `to_float`,
+  `compare`), which would have made the body one line. Not exercised, but close: contracts are compared as printed,
+  so dropping a `requires`, a pure loosening, would have pulled every caller into the transaction (E0506) had there
+  been any. A proof of implication (5.2) would let loosened `requires` and tightened `ensures` pass.
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
