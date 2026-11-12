@@ -36,7 +36,15 @@ export type Change =
   | { readonly op: "add"; readonly text: string }
   | { readonly op: "replace"; readonly name: string; readonly hash: string; readonly text: string }
   | { readonly op: "remove"; readonly name: string; readonly hash: string }
-  | { readonly op: "rename"; readonly name: string; readonly hash: string; readonly to: string };
+  // With `text`, the definition is changed too: the text is its new version,
+  // under the new name.
+  | {
+    readonly op: "rename";
+    readonly name: string;
+    readonly hash: string;
+    readonly to: string;
+    readonly text?: string;
+  };
 
 // A definition as a query returns it.
 export interface Version {
@@ -165,7 +173,7 @@ interface Planned {
   readonly op: "add" | "replace" | "remove" | "rename";
   readonly name: string;
   readonly at: string;
-  // The submitted definition; null for a removal and a rename.
+  // The submitted definition; null for a removal and a rename without text.
   readonly def: Definition | null;
   // The hash the database must still hold for `name`; null for an add.
   readonly guard: string | null;
@@ -551,7 +559,7 @@ export class Codebase {
 
     // 2. The program after the transaction: renames first, with their
     // followers, then the other changes on top. A replace of a follower wins
-    // over the rewrite.
+    // over the rewrite, and so does the text of a rename.
     const renames = planned.filter((p) => p.op === "rename");
     const rewritten = renames.length > 0 ? this.rewriteForRenames(renames, current) : new Map<string, Rewritten>();
     const next = new Map([...current].map(([name, c]) => [name, c.def]));
@@ -560,7 +568,10 @@ export class Codebase {
       next.set(r.name, r.def);
     }
     for (const p of planned) {
-      if (p.op === "rename") continue;
+      if (p.op === "rename") {
+        if (p.def) next.set(p.to!, p.def);
+        continue;
+      }
       if (p.def) next.set(p.name, p.def);
       else next.delete(p.name);
     }
@@ -568,9 +579,9 @@ export class Codebase {
 
     // 3. Callers outside the transaction must not be broken by it. Only what
     // the caller wrote is inside: renamed definitions and followers are
-    // rewritten mechanically, not adapted.
-    const members = new Set(planned.filter((p) => p.op !== "rename").map((p) => p.name));
-    for (const p of planned) diagnostics.push(...this.callerRule(p, current, members));
+    // rewritten mechanically, not adapted; a rename with text is written.
+    const members = new Set(planned.filter((p) => p.op !== "rename" || p.def).map((p) => p.name));
+    for (const p of planned) diagnostics.push(...this.callerRule(p, current, members, rewritten));
     if (diagnostics.length > 0) return rejected(diagnostics);
     if (renames.length > 0) {
       const captured = this.captures(rewritten, renames, defs, members);
@@ -598,7 +609,7 @@ export class Codebase {
     for (const p of planned) {
       if (p.op === "rename") {
         const r = rewritten.get(p.name)!;
-        rows.push(row(r.name, "rename", r.def, r.from));
+        rows.push(row(r.name, "rename", p.def ?? r.def, r.from));
       } else if (p.def) {
         const r = row(p.name, p.op, p.def);
         if (p.op === "replace" && r.hash === p.guard) unchanged.push(p.name);
@@ -674,10 +685,11 @@ export class Codebase {
     shown: Version[],
   ): Planned | null {
     let def: Definition | null = null;
-    if (change.op === "add" || change.op === "replace") {
+    const text = change.op === "remove" ? undefined : change.text;
+    if (text !== undefined) {
       let defs: Definition[];
       try {
-        defs = parseProgram(change.text);
+        defs = parseProgram(text);
       } catch (e) {
         if (!(e instanceof AlangError)) throw e;
         diagnostics.push(...e.diagnostics);
@@ -687,8 +699,8 @@ export class Codebase {
         const found = defs.length === 0 ? "none" : list(defs.map((d) => pathText(d.path)));
         diagnostics.push(diagnostic({
           code: "E0504",
-          definition: change.op === "replace" ? change.name : null,
-          at: operationText(change, change.op === "replace" ? change.name : null),
+          definition: change.op === "add" ? null : change.name,
+          at: operationText(change, change.op === "add" ? null : change.name),
           message: `\`${change.op}\` takes the text of exactly one definition; this text defines ${found}.`,
         }));
         return null;
@@ -752,15 +764,17 @@ export class Codebase {
       }));
       return null;
     }
-    if (change.op === "rename") return this.planRename(change, cur, at, current, touched, diagnostics, shown);
+    if (change.op === "rename") return this.planRename(change, cur, def, at, current, touched, diagnostics, shown);
     return { op: change.op, name, at, def, guard: change.hash, to: null };
   }
 
   // The checks of a rename that need no other change: the new name is free,
-  // valid for the kind, and not in `std` (E0509).
+  // valid for the kind, and not in `std` (E0509); a text defines the new
+  // name (E0505).
   private planRename(
     change: Extract<Change, { op: "rename" }>,
     cur: Current,
+    def: Definition | null,
     at: string,
     current: ReadonlyMap<string, Current>,
     touched: Set<string>,
@@ -808,7 +822,18 @@ export class Codebase {
       shown.push({ name: to, hash: taken.hash, text: taken.text });
       return null;
     }
-    return { op: "rename", name, at, def: null, guard: change.hash, to };
+    if (def && pathText(def.path) !== to) {
+      diagnostics.push(diagnostic({
+        code: "E0505",
+        definition: name,
+        at,
+        message: `The text defines \`${pathText(def.path)}\`, not \`${to}\`; the text of a \`rename\` is the ` +
+          "definition under its new name.",
+        expected: `${cur.def.kind} ${to}`,
+      }));
+      return null;
+    }
+    return { op: "rename", name, at, def, guard: change.hash, to };
   }
 
   // Rewrites the renamed definitions and every definition that refers to them
@@ -890,8 +915,13 @@ export class Codebase {
   // The rules that protect callers outside the transaction: a replace may not
   // change the interface they use (E0506), and a remove may not take away a
   // definition they use (E0507).
-  private callerRule(p: Planned, current: ReadonlyMap<string, Current>, members: ReadonlySet<string>): Diagnostic[] {
-    if (p.op === "add" || p.op === "rename") return [];
+  private callerRule(
+    p: Planned,
+    current: ReadonlyMap<string, Current>,
+    members: ReadonlySet<string>,
+    rewritten: ReadonlyMap<string, Rewritten>,
+  ): Diagnostic[] {
+    if (p.op === "add" || (p.op === "rename" && !p.def)) return [];
     const before = current.get(p.name)!.def;
     const outside = (names: Iterable<string>) => [...names].filter((n) => !members.has(n));
 
@@ -906,7 +936,9 @@ export class Codebase {
       })];
     }
 
-    const change = interfaceChange(before, p.def!);
+    // Compared with what the renames of the transaction make of it, so that
+    // a renamed type in its signature, or its own new name, is no change.
+    const change = interfaceChange(rewritten.get(p.name)?.def ?? before, p.def!);
     const affected = new Set<string>();
     if (change.sections.length > 0) { for (const c of outside(this.callersOf(p.name, before))) affected.add(c); }
     if (change.addedEffects.length > 0) {

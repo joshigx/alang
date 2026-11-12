@@ -11,11 +11,13 @@
 //   add <file>                       the text of one definition ("-": stdin)
 //   replace <name> <hash> <file>
 //   remove <name> <hash>
-//   rename <name> <hash> <to>
+//   rename <name> <hash> <to> [<file>]  with a file: its text is the changed
+//                                    definition under the new name
 //   submit <file>                    a JSON array of changes, one transaction:
 //                                    {"op": "add", "text": ...}, {"op": "replace",
 //                                    "name", "hash", "text"}, {"op": "remove", "name",
 //                                    "hash"}, {"op": "rename", "name", "hash", "to"}
+//                                    (optionally with "text")
 //   export [--force]                 rewrite export/ from the database; without
 //                                    --force, files changed since the last write
 //                                    are imported first, not overwritten
@@ -56,8 +58,11 @@ function changesOf(json: unknown): Change[] {
   };
   return json.map((c, i) => {
     const needed = fields[c?.op];
-    if (!needed || !needed.every((f) => typeof c[f] === "string")) {
-      throw new Error(`submit: change ${i} is not one of ${JSON.stringify(fields)} with string fields.`);
+    const optional = c?.op === "rename" && c.text !== undefined ? ["text"] : [];
+    if (!needed || ![...needed, ...optional].every((f) => typeof c[f] === "string")) {
+      throw new Error(
+        `submit: change ${i} is not one of ${JSON.stringify(fields)} with string fields (a rename may add "text").`,
+      );
     }
     return c as Change;
   });
@@ -84,7 +89,7 @@ export async function dbMain(args: string[]): Promise<number> {
     add: [1, 1],
     replace: [3, 3],
     remove: [2, 2],
-    rename: [3, 3],
+    rename: [3, 4],
     submit: [1, 1],
     export: [0, 1],
     import: [0, 1],
@@ -99,7 +104,7 @@ export async function dbMain(args: string[]): Promise<number> {
 
   const cb = await Codebase.open(dir);
   try {
-    const [a, b, c] = rest;
+    const [a, b, c, d] = rest;
     if (QUERIES.has(command)) {
       const synced = await cb.sync();
       if (!synced.ok) {
@@ -145,7 +150,15 @@ export async function dbMain(args: string[]): Promise<number> {
       case "remove":
         return result(await cb.submit([{ op: "remove", name: a, hash: b }]));
       case "rename":
-        return result(await cb.submit([{ op: "rename", name: a, hash: b, to: c }]));
+        return result(
+          await cb.submit([{
+            op: "rename",
+            name: a,
+            hash: b,
+            to: c,
+            ...(d === undefined ? {} : { text: await readText(d) }),
+          }]),
+        );
       case "submit":
         return result(await cb.submit(changesOf(JSON.parse(await readText(a)))));
       case "export":

@@ -4,7 +4,21 @@
 
 import { join } from "node:path";
 import { assert_, assertEquals } from "./assert.ts";
-import { add, codes, done, dump, fails, fn, fresh, hashOf, LOAD_PORT, ok, PARSE, withPort } from "./db_helpers.ts";
+import {
+  add,
+  codes,
+  done,
+  dump,
+  fails,
+  fn,
+  fresh,
+  hashOf,
+  LOAD_PORT,
+  ok,
+  PARSE,
+  PORT,
+  withPort,
+} from "./db_helpers.ts";
 import { type Codebase, hashText } from "../src/codebase.ts";
 import { AlangError } from "../src/diagnostic.ts";
 
@@ -391,4 +405,100 @@ Deno.test("rename: export, then import into a fresh database, gives the same nam
   assertEquals(dump(other).names, dump(cb).names);
   await done(cb);
   await done(other);
+});
+
+// ---- rename with text ----
+
+// net.port.parse under the name net.port.read, changed: it ignores
+// surrounding whitespace, which adds a reference (std.string.trim).
+const READ = PARSE
+  .replaceAll("net.port.parse", "net.port.read")
+  .replaceAll('parse(text: "', 'read(text: "')
+  .replace("from decimal text.", "from decimal text, ignoring surrounding whitespace.")
+  .replace("std.int.parse(text: text)", "std.int.parse(text: std.string.trim(text: text))")
+  .replace("  examples:\n", '  examples:\n    read(text: " 80 ") == Ok(Port(value: 80))\n');
+
+Deno.test("rename: with text, a definition is renamed and changed in one transaction", async () => {
+  const cb = await withPort();
+  const r = await ok(cb, [{ ...rename(cb, "net.port.parse", "net.port.read"), text: READ }]);
+  const read = cb.definition("net.port.read");
+  assertEquals(read.text, READ);
+  assertEquals(r.written, [
+    { name: "net.port.parse", hash: null, operation: "rename" },
+    { name: "net.port.read", hash: read.hash, operation: "rename" },
+    { name: "config.load_port", hash: hashOf(cb, "config.load_port"), operation: "follow" },
+  ]);
+  assertEquals(
+    cb.definition("config.load_port").text,
+    LOAD_PORT.replace("net.port.parse(text: trimmed)", "net.port.read(text: trimmed)"),
+  );
+  assertEquals(cb.history("net.port.read").entries.map((e) => [e.name, e.operation]), [
+    ["net.port.parse", "add"],
+    ["net.port.read", "rename"],
+  ]);
+  await done(cb);
+});
+
+Deno.test("rename: a text that changes the interface takes its callers into the transaction", async () => {
+  const cb = await withPort();
+  const source = PARSE
+    .replaceAll("net.port.parse", "net.port.read")
+    .replaceAll('parse(text: "', 'read(text: "')
+    .replaceAll("text: ", "source: ")
+    .replace("std.int.parse(source: text)", "std.int.parse(text: source)");
+  const alone = await fails(cb, [{ ...rename(cb, "net.port.parse", "net.port.read"), text: source }]);
+  assertEquals(codes(alone.diagnostics), ["E0506"]);
+  assert_(alone.diagnostics[0].message.includes("`config.load_port`"), alone.diagnostics[0].message);
+  const adapted = LOAD_PORT.replace("net.port.parse(text: trimmed)", "net.port.read(source: trimmed)");
+  const r = await ok(cb, [
+    { ...rename(cb, "net.port.parse", "net.port.read"), text: source },
+    { op: "replace", name: "config.load_port", hash: hashOf(cb, "config.load_port"), text: adapted },
+  ]);
+  assertEquals(r.written.map((w) => [w.name, w.operation]), [
+    ["net.port.parse", "rename"],
+    ["net.port.read", "rename"],
+    ["config.load_port", "replace"],
+  ]);
+  assertEquals(cb.definition("net.port.read").text, source);
+  await done(cb);
+});
+
+Deno.test("rename: a text that is not the definition under its new name is rejected", async () => {
+  const cb = await withPort();
+  const before = dump(cb);
+  const wrong = await fails(cb, [{ ...rename(cb, "net.port.parse", "net.port.read"), text: PARSE }]);
+  assertEquals(codes(wrong.diagnostics), ["E0505"]);
+  assertEquals(wrong.diagnostics[0].expected, "fn net.port.read");
+  const two = await fails(cb, [{ ...rename(cb, "net.port.parse", "net.port.read"), text: `${READ}\n\n${READ}` }]);
+  assertEquals(codes(two.diagnostics), ["E0504"]);
+  assertEquals(two.diagnostics[0].definition, "net.port.parse");
+  // Still one change per name: a rename with text and a replace of either name.
+  const twice = await fails(cb, [
+    { ...rename(cb, "net.port.parse", "net.port.read"), text: READ },
+    { op: "replace", name: "net.port.parse", hash: hashOf(cb, "net.port.parse"), text: PARSE },
+  ]);
+  assertEquals(codes(twice.diagnostics), ["E0508"]);
+  assertEquals(dump(cb), before);
+  await done(cb);
+});
+
+Deno.test("rename: a definition replaced alongside a renamed type is compared with its renamed form", async () => {
+  // parse's `out` names Port. Renaming Port and adapting parse to the new
+  // name is no interface change for parse's caller, config.load_port.
+  const cb = await withPort();
+  const number = PORT.replaceAll("net.port.Port", "net.port.Number").replace("A valid TCP", "A TCP");
+  const parse = PARSE.replaceAll("Port", "Number");
+  const r = await ok(cb, [
+    { ...rename(cb, "net.port.Port", "net.port.Number"), text: number },
+    { op: "replace", name: "net.port.parse", hash: hashOf(cb, "net.port.parse"), text: parse },
+  ]);
+  assertEquals(r.written.map((w) => [w.name, w.operation]), [
+    ["net.port.Port", "rename"],
+    ["net.port.Number", "rename"],
+    ["net.port.parse", "replace"],
+    ["config.load_port", "follow"],
+  ]);
+  assertEquals(cb.definition("net.port.Number").text, number);
+  assertEquals(cb.definition("config.load_port").text, LOAD_PORT.replaceAll("net.port.Port", "net.port.Number"));
+  await done(cb);
 });

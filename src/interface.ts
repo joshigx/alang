@@ -15,7 +15,7 @@
 //
 // Contracts are compared as printed, since there is no proof that one
 // implies the other yet (5.2): any change counts. Types are compared by full
-// name, so `Port` and `net.port.Port` written in `net.port` are the same type.
+// name; a caller compares a version with what a rename makes of it.
 
 import type { Definition, Effect, Expr, Path, TypeRef } from "./ast.ts";
 import { moduleOf, pathText } from "./ast.ts";

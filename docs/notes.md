@@ -72,8 +72,6 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 
 ## From the database (2026-11-12)
 
-- **Renaming and editing one definition takes two transactions** (E0508 counts both names of a rename). Allowing
-  `replace(new_name, ...)` after `rename` in one transaction would need a guard for a name that does not exist yet.
 - **Capture is only possible through locals.** A call path always means a module function, and a new name that
   exists is E0503, so the only way a rename can change what a reference denotes is a local binding with the new
   name (function values) or with the new module's first segment (method-call reading). E0510 covers both.
@@ -110,6 +108,17 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   are the truth), but it means "a rejected transaction changes nothing" holds only for an export in step.
 - **E0513 has no automatic fix.** Which side should win is the user's call; an LLM caller should report it rather than
   run `import` or `export --force` on its own.
+
+## From rename with text (2026-11-12)
+
+- **A spurious interface change came with renames.** Renaming a type and replacing a function whose signature names it,
+  in one transaction, reported E0506 for the function's callers: the replace was compared with the version before the
+  rename. Both `replace` and `rename` with text now compare with the renamed form. Found while building the latter.
+- **6.1's table says `rename` changes only the pointer.** With text it changes the definition too, so the operation
+  table of section 6 no longer describes `rename` fully. If the spec is revised for "References stay names", this is
+  a good moment to document the optional text as well.
+- **An MCP tool for rename** should expose the text as an optional argument; an LLM that wants to rename and edit will
+  otherwise submit two transactions, and the second needs the hash the first returned.
 
 ## Spec observations
 

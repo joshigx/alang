@@ -110,3 +110,29 @@ Deno.test("db cli: queries follow the export; export refuses to overwrite change
   assertEquals((await alang(dir, "export", "--all")).code, 2);
   await Deno.remove(dir, { recursive: true });
 });
+
+Deno.test("db cli: rename with a text file, and in a submit", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "alang-db-cli-" });
+  const changes = join(dir, "changes.json");
+  await Deno.writeTextFile(changes, JSON.stringify([PORT, PARSE_ERROR, PARSE].map((text) => ({ op: "add", text }))));
+  assertEquals((await alang(dir, "submit", changes)).code, 0);
+  const hashOf = async (name: string) => ((await alang(dir, "definition", name)).json as { hash: string }).hash;
+
+  const read = PARSE.replaceAll("net.port.parse", "net.port.read").replaceAll('parse(text: "', 'read(text: "')
+    .replace("Reads a TCP port number", "Reads a port number");
+  const file = join(dir, "read.alang");
+  await Deno.writeTextFile(file, read);
+  const renamed = await alang(dir, "rename", "net.port.parse", await hashOf("net.port.parse"), "net.port.read", file);
+  assertEquals(renamed.code, 0, renamed.stderr);
+  assertEquals(((await alang(dir, "definition", "net.port.read")).json as { text: string }).text, read);
+
+  const back = PARSE.replace("Reads a TCP port number", "Reads a decimal port number");
+  const hash = await hashOf("net.port.read");
+  await Deno.writeTextFile(
+    changes,
+    JSON.stringify([{ op: "rename", name: "net.port.read", hash, to: "net.port.parse", text: back }]),
+  );
+  assertEquals((await alang(dir, "submit", changes)).code, 0);
+  assertEquals(((await alang(dir, "definition", "net.port.parse")).json as { text: string }).text, back);
+  await Deno.remove(dir, { recursive: true });
+});
