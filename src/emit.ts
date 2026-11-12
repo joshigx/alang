@@ -1,6 +1,13 @@
-// TypeScript output. Effects disappear; contracts become runtime checks
-// (requires at entry, ensures at every return, where at every construction);
-// examples become an exported list the toolchain runs.
+// TypeScript output. Contracts become runtime checks (requires at entry,
+// ensures at every return, where at every construction); examples become an
+// exported list the toolchain runs.
+//
+// Effects leave one trace: a function with effects is an `async` function,
+// and every call to one is awaited. alang itself has no asynchronous calls
+// (each call ends before the next statement), but most host operations that
+// effects stand for (network, waiting) exist only asynchronously. Pure code
+// cannot call effectful code (2.1, 2.4, 5.4), so pure functions, lambdas,
+// conditions and examples stay synchronous.
 //
 // The emitter runs only on programs the checker accepted, and uses the
 // checker's side tables for expression types (Int vs Float operations) and
@@ -256,12 +263,16 @@ class DefinitionEmitter {
     const scope = new Scope();
     const params = def.params.map((p) => `${scope.add(p.name)}: ${this.ts(p.type)}`);
     const out = this.ts(def.out);
-    const lines = [`export function ${mangle(def.path)}(${params.join(", ")}): ${out} {`];
+    const async = def.effects.length > 0;
+    const promised = async ? `Promise<${out}>` : out;
+    const lines = [
+      `export ${async ? "async " : ""}function ${mangle(def.path)}(${params.join(", ")}): ${promised} {`,
+    ];
     if (def.requires) lines.push(...indent(this.check("requires", def.requires, scope), 1));
     if (def.ensures) {
       const inner = scope.child();
       lines.push(
-        `  const result: ${out} = ((): ${out} => {`,
+        `  const result: ${out} = ${async ? "await (async " : "("}(): ${promised} => {`,
         ...indent(this.block(def.body, inner, DISCARD), 2),
         "  })();",
       );
@@ -472,7 +483,8 @@ class DefinitionEmitter {
         const typeArgs = e.typeArgs.length === 0 ? "" : `<${e.typeArgs.map((t) => this.ts(t)).join(", ")}>`;
         // Arguments appear in declaration order (rule 4.1), so they map to
         // positional parameters directly.
-        return `${callee}${typeArgs}(${e.args.map((a) => this.expr(a.value, scope)).join(", ")})`;
+        const call = `${callee}${typeArgs}(${e.args.map((a) => this.expr(a.value, scope)).join(", ")})`;
+        return this.info.effectful.has(e) ? `(await ${call})` : call;
       }
       case "construct": {
         const last = e.path[e.path.length - 1];

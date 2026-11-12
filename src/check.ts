@@ -58,6 +58,9 @@ export interface CheckInfo {
   readonly names: WeakMap<Expr, NameResolution>;
   // Full name of the function each call refers to.
   readonly calls: WeakMap<Expr, string>;
+  // Calls of functions with effects. Such functions are async in the
+  // generated TypeScript, so the emitter awaits these calls.
+  readonly effectful: WeakSet<Expr>;
   readonly constructs: WeakMap<Expr, ConstructResolution>;
   // Type references, names, calls, constructions and patterns that name a
   // definition of their own module in full (E0226), where the short form
@@ -126,6 +129,7 @@ export function checkProgram(defs: readonly Definition[], options: CheckOptions 
     types: new WeakMap(),
     names: new WeakMap(),
     calls: new WeakMap(),
+    effectful: new WeakSet(),
     constructs: new WeakMap(),
     longForms: new WeakSet(),
   };
@@ -803,6 +807,7 @@ class DefChecker {
       return ERROR;
     }
     this.info.calls.set(e, full);
+    if (sig.effects.length > 0) this.info.effectful.add(e);
     this.shortForm(e, e.path, at);
     this.effectsOfCall(sig, pathText(e.path), at);
 

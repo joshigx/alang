@@ -324,6 +324,102 @@ fn app.main
 end fn app.main
 `;
 
+// Effects in every position an expression can take: a function with effects
+// is async in the output (emit.ts), and the order of the effects must stay
+// the order of the text.
+const STEPS = `
+fn steps.words
+  doc: "Two words."
+  in: none
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    words() == std.list.append(list: std.list.append(list: std.list.empty<String>(), item: "a"), item: "bc")
+  body:
+    return std.list.append(list: std.list.append(list: std.list.empty<String>(), item: "a"), item: "bc")
+end fn steps.words
+
+fn steps.say
+  doc: "Prints the text and returns its length."
+  in:
+    text: String
+  out: Int
+  effects: console
+  requires: none
+  ensures: result >= 0
+  examples: none
+  body:
+    std.console.print_line(text: text)
+    return std.string.length(text: text)
+end fn steps.say
+
+fn steps.shout
+  doc: "Prints the text; promises more than it keeps."
+  in:
+    text: String
+  out: Int
+  effects: console
+  requires: none
+  ensures: result > 100
+  examples: none
+  body:
+    return say(text: text)
+end fn steps.shout
+
+fn steps.count_down
+  doc: "Prints the numbers from n down to 1."
+  in:
+    n: Int
+  out: Unit
+  effects: console
+  requires: n >= 0
+  ensures: none
+  examples: none
+  body:
+    if n == 0 then
+      return Unit
+    end if
+    std.console.print_line(text: std.text.show(value: n))
+    return count_down(n: n - 1)
+end fn steps.count_down
+
+fn steps.main
+  doc: "Prints in the order of the text."
+  in: none
+  out: Unit
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let sizes: List<Int> = for word: String in words() do
+      say(text: word)
+    end for
+    let total: Int = say(text: "sum") + std.list.fold(list: sizes, initial: 0, with: fn(sum: Int, item: Int): Int => sum + item)
+    if say(text: "check") > 0 then
+      std.console.print_line(text: std.text.show(value: total))
+    end if
+    count_down(n: 3)
+    return Unit
+end fn steps.main
+
+fn halt.main
+  doc: "Ends in a trap inside an awaited call."
+  in: none
+  out: Unit
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let n: Int = steps.shout(text: "quiet")
+    std.console.print_line(text: "not reached")
+    return Unit
+end fn halt.main
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
@@ -332,6 +428,7 @@ const PROGRAMS: Record<string, string> = {
   calc: CALC,
   port_plus: PORT_PLUS,
   app: APP,
+  steps: STEPS,
 };
 
 const built: Record<string, Built> = {};
@@ -343,7 +440,11 @@ for (const [name, source] of Object.entries(PROGRAMS)) {
 const load = async (name: string): Promise<Record<string, any>> => await import(`file://${built[name].outPath}`);
 
 Deno.test("emit: generated TypeScript passes the TypeScript checker", async () => {
-  const entries = [await writeEntry(built.hello), await writeEntry(built.app)];
+  const entries = [
+    await writeEntry(built.hello),
+    await writeEntry(built.app),
+    await writeEntry(built.steps, "steps.main"),
+  ];
   const files = [...Object.values(built).map((b) => b.outPath), ...entries];
   const result = await new Deno.Command(Deno.execPath(), { args: ["check", ...files], stderr: "piped" }).output();
   const stderr = new TextDecoder().decode(result.stderr);
@@ -369,7 +470,8 @@ Deno.test("emit: hello.main prints the greeting", async () => {
   const original = console.log;
   console.log = (...args: unknown[]) => printed.push(args.join(" "));
   try {
-    mod.hello$main();
+    // A function with effects is async (emit.ts).
+    assertEquals(await mod.hello$main(), null);
   } finally {
     console.log = original;
   }
@@ -410,6 +512,7 @@ Deno.test("emit: Int and Float arithmetic are separate", async () => {
 Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(CALC)), CALC.trimStart());
   assertEquals(printProgram(parseProgram(BLOCKS)), BLOCKS.trimStart());
+  assertEquals(printProgram(parseProgram(STEPS)), STEPS.trimStart());
 });
 
 Deno.test("emit: Int overflow traps", async () => {
@@ -433,15 +536,32 @@ Deno.test("emit: output runs on Node.js without Deno", async () => {
   const script = `const m = await import(${JSON.stringify(`file://${built.port.outPath}`)});` +
     `const rt = await import(${JSON.stringify(new URL("../src/runtime.ts", import.meta.url).href)});` +
     `const fs = await import(${JSON.stringify(`file://${built.app.outPath}`)});` +
-    `const r = fs.config$load_port(${JSON.stringify(new URL("../deno.json", import.meta.url).pathname)});` +
+    `const r = await fs.config$load_port(${JSON.stringify(new URL("../deno.json", import.meta.url).pathname)});` +
     // deno.json is not a port number: the file was read, then rejected.
     `const read = r.tag === "Err" && r.value.tag === "InvalidPort";` +
-    `const missing = fs.config$load_port("/does/not/exist").value.value.tag === "NotFound";` +
+    `const missing = (await fs.config$load_port("/does/not/exist")).value.value.tag === "NotFound";` +
     `const examples = rt.runExamples(m.$examples);` +
     `process.exit(examples.length === 3 && examples.every((r) => r.passed) && read && missing ? 0 : 1);`;
   const result = await new Deno.Command("node", { args: ["--input-type=module", "-e", script], stderr: "piped" })
     .output();
   assert_(result.success, new TextDecoder().decode(result.stderr));
+});
+
+Deno.test("emit: functions with effects are async, pure code stays synchronous", async () => {
+  const ts = await Deno.readTextFile(built.steps.outPath);
+  assert_(ts.includes("export function steps$words(): readonly string[] {"), ts);
+  assert_(ts.includes("export async function steps$say(text: string): Promise<number> {"), ts);
+  // Calls of functions with effects are awaited, std ones included; pure calls are not.
+  assert_(ts.includes("(await $rt.std$console$print_line(text));"), ts);
+  assert_(ts.includes("(await steps$say(word))"), ts);
+  assert_(ts.includes("for (const word of steps$words())"), ts);
+  // The ensures wrapper of an async function is awaited too.
+  assert_(ts.includes("const result: number = await (async (): Promise<number> => {"), ts);
+  // Examples call only pure functions (5.4), so they run without awaiting.
+  assertEquals((await testExamples(built.steps)).every((r) => r.passed), true);
+  const mod = await load("steps");
+  assertEquals(mod.steps$words(), ["a", "bc"]);
+  assert_(mod.steps$say instanceof (async () => {}).constructor);
 });
 
 // ---- effects at runtime ----
@@ -459,6 +579,19 @@ Deno.test("run: effects map to Deno permissions", () => {
 });
 
 const text = (b: Uint8Array) => new TextDecoder().decode(b).trim();
+
+Deno.test("run: effects happen in the order of the text", async () => {
+  const out = await run(built.steps, { stdio: "piped", main: "steps.main" });
+  assertEquals([out.code, text(out.stdout).split("\n")], [0, ["a", "bc", "sum", "check", "6", "3", "2", "1"]]);
+});
+
+Deno.test("run: a trap inside an awaited call ends the program", async () => {
+  const out = await run(built.steps, { stdio: "piped", main: "halt.main" });
+  assertEquals(out.code, 70);
+  assertEquals(text(out.stdout), "quiet");
+  const trap = JSON.parse(text(out.stderr));
+  assertEquals([trap.trap, trap.definition], ["ensures", "steps.shout"]);
+});
 
 Deno.test("run: main runs with exactly the permissions of its effects", async () => {
   const dir = await Deno.makeTempDir({ dir: OUT });

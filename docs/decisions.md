@@ -42,7 +42,7 @@ numbers refer to the spec. Open points are listed at the end.
 | String order         | By Unicode scalar values, not UTF-16 code units. `std.string.length` counts scalar values.                                                     |
 | Representation in TS | `Int`/`Float` → `number`, `Unit` → `null`, records → plain readonly objects with a checking constructor, variants → `{ tag, value? }`.        |
 | Names in TS          | Global paths joined with `$` (`net$port$parse`), so they never collide with locals. Locals that are TS reserved words get a `$` suffix.        |
-| Effects in TS        | Disappear; enforced later through Deno permissions on `main`.                                                                                  |
+| Effects in TS        | Leave one trace: a function with effects is `async` and every call to one is awaited (the checker marks these calls). The language stays sequential, since each call ends before the next statement; only the output is asynchronous, because network and waiting exist only asynchronously in JavaScript. Pure functions, lambdas, conditions and examples stay synchronous: pure code cannot call effectful code (2.1, 2.4, 5.4). An over-declared effect makes a function async that never waits, which costs nothing. The entry file awaits `main`. Enforced through Deno permissions on `main`. |
 
 ## Type checking
 

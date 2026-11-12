@@ -178,7 +178,9 @@ export async function writeEntry(built: Built, name?: string): Promise<string> {
       `import { ${fn} } from ${JSON.stringify(`./${basename(built.outPath)}`)};`,
       "",
       "try {",
-      `  ${fn}();`,
+      // A main with effects is async (see emit.ts); awaiting a plain value
+      // is harmless, so one entry fits both.
+      `  await ${fn}();`,
       "} catch (e) {",
       "  if (!(e instanceof Trap)) throw e;",
       "  console.error(JSON.stringify({ trap: e.kind, definition: e.definition, at: e.at, message: e.message }));",
