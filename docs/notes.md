@@ -182,6 +182,11 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   import happened "around when alang was reconnected" (it was a manual check from another process): `history`
   records `import` but not what triggered it. Recording the source (the sync of a query or submit, `alang db import`,
   and the file) would let a model explain an import instead of guessing.
+- **Playground, task "String to Int".** Found `std.int.parse` in three calls, explained `Option` against the
+  `Result` of `net.port.parse`, and ruled out `std.string.length`. `search_type` matches the result type exactly, so
+  `String -> Int` misses `Option<Int>` and the model searched again; matching through `Option`/`Result` (as Hoogle
+  does) would find it at once. The freshness instruction showed up in the answer ("these signatures come from that
+  fresh search"); watch whether that persists in a session without a stale answer to correct.
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
