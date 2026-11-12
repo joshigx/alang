@@ -132,6 +132,16 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   `export/*.alang` is "a generated copy, so don't edit it by hand", taken from the server's instructions, which called
   the export generated. That contradicts the export as source of truth (hand edits and pulls are read back); the
   instructions now describe the export as the database's copy for Git, read back before each call.
+- **Playground, tasks "is_privileged" and "parse_or_default".** Both accepted, with good choices the rules did not
+  force: `is_privileged` takes a `Port`, not an `Int`; examples sit at the boundary (1023, 1024); `parse_or_default`
+  reuses `parse` through `let ... else`. The first try of `parse_or_default` wrote `net.port.parse` inside `net.port`
+  and was rejected (E0226); with the fix in the diagnostic it recovered in one step. First evidence for the own-module
+  rule awaiting review: the long form is what an LLM writes by habit. Open: since a submit already stores the
+  canonical text, not the text sent, the tool could apply this unambiguous fix itself instead of rejecting. Rejecting
+  keeps the model aware of the one form within a session; normalizing saves a round trip each time. Count how often it
+  recurs before deciding.
+- **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
+  for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
   model not to run. A model with a shell may still run them; the diagnostic could carry a hint that it is for the user.
 
