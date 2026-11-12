@@ -463,7 +463,9 @@ async function* lines(input: ReadableStream<Uint8Array>): AsyncGenerator<string>
 }
 
 // Serves MCP over a pair of streams until the input ends, then waits for the
-// answers still being computed.
+// answers still being computed. A line may hold a batch, an array of
+// messages (2025-03-26 only, but harmless for the others); it gets an array
+// of the responses, or nothing if all were notifications.
 export async function serve(
   cb: Codebase,
   input: ReadableStream<Uint8Array>,
@@ -473,7 +475,7 @@ export async function serve(
   const writer = output.getWriter();
   const encoder = new TextEncoder();
   let written: Promise<void> = Promise.resolve();
-  const send = (response: Response) => {
+  const send = (response: Response | Response[]) => {
     written = written.then(() => writer.write(encoder.encode(JSON.stringify(response) + "\n")))
       .catch((e) => console.error("alang mcp: could not write a response:", e));
   };
@@ -487,9 +489,14 @@ export async function serve(
       send(failure(null, PARSE_ERROR, "Parse error: a message is one line of JSON."));
       continue;
     }
-    const answered = server.handle(message).then((response) => {
-      if (response) send(response);
-    });
+    const answered = Array.isArray(message) && message.length > 0
+      ? Promise.all(message.map((m) => server.handle(m))).then((responses) => {
+        const answers = responses.filter((r) => r !== null);
+        if (answers.length > 0) send(answers);
+      })
+      : server.handle(message).then((response) => {
+        if (response) send(response);
+      });
     pending.add(answered);
     answered.finally(() => pending.delete(answered));
   }

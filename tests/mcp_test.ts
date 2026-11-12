@@ -4,7 +4,7 @@
 import { join } from "node:path";
 import { assert_, assertEquals } from "./assert.ts";
 import { done, fresh, LOAD_PORT, PARSE, PARSE_ERROR, PARSE_REORDERED, PORT, withPort } from "./db_helpers.ts";
-import type { Codebase } from "../src/codebase.ts";
+import { type Codebase, hashText } from "../src/codebase.ts";
 import { LEGACY_VERSIONS, McpServer, MODERN_VERSIONS, type Response, TOOLS } from "../src/mcp.ts";
 
 let ids = 0;
@@ -118,6 +118,7 @@ Deno.test("mcp: the initialize handshake and the stateless era", async () => {
   assertEquals((await request(server, "tools/call", { name: "nope", arguments: {} })).error?.code, -32602);
   assertEquals((await server.handle({ jsonrpc: "2.0", id: 1, method: "ping", params: [] }))?.error?.code, -32602);
   assertEquals((await server.handle({ id: 1, method: "ping" }))?.error?.code, -32600);
+  // A batch is split by the transport (see the stdio test), not here.
   assertEquals((await server.handle([{ jsonrpc: "2.0", id: 1, method: "ping" }]))?.error?.code, -32600);
   assertEquals((await server.handle({ jsonrpc: "2.0", id: null, method: "ping" }))?.error?.code, -32600);
   // A response from the client: nothing to answer.
@@ -318,18 +319,34 @@ Deno.test("mcp: over stdio, one message per line", async () => {
     call2.slice(0, 40),
     call2.slice(40) + "\r\n",
     "\n",
-    msg(3, "tools/call", { name: "replace", arguments: { name: "net.port.parse", hash: "0000", text: PARSE } }),
+    // A batch: a request and a notification.
+    `[${msg(3, "ping", {})},{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":9}}]\n`,
+    // An accepted change runs the examples in the server process.
+    msg(4, "tools/call", {
+      name: "replace",
+      arguments: { name: "net.port.parse", hash: hashText(PARSE), text: PARSE_REORDERED },
+    }) + "\n",
+    msg(5, "tools/call", { name: "replace", arguments: { name: "net.port.parse", hash: "0000", text: PARSE } }),
   ]);
   assertEquals(code, 0, err);
   // Every line on stdout is a message.
-  const messages = out.map((l) => JSON.parse(l) as Response);
-  const byId = new Map(messages.map((m) => [m.id, m]));
-  assertEquals(messages.length, 4);
+  const messages = out.map((l) => JSON.parse(l) as Response | Response[]);
+  assertEquals(messages.length, 6);
+  const batch = messages.find((m) => Array.isArray(m)) as Response[];
+  assertEquals(batch, [{ jsonrpc: "2.0", id: 3, result: {} }]);
+  const byId = new Map(messages.filter((m) => !Array.isArray(m)).map((m) => [(m as Response).id, m as Response]));
   assertEquals(byId.get(null)?.error?.code, -32700);
   assertEquals((byId.get(1)?.result as { protocolVersion: string }).protocolVersion, "2025-11-25");
   const context = byId.get(2)?.result as { content: { text: string }[]; isError: boolean };
   assertEquals([context.isError, JSON.parse(context.content[0].text).text], [false, PARSE]);
-  const stale = byId.get(3)?.result as { content: { text: string }[]; isError: boolean };
+  const replaced = byId.get(4)?.result as { content: { text: string }[]; isError: boolean };
+  assertEquals(replaced.isError, false, replaced.content[0].text);
+  assertEquals(JSON.parse(replaced.content[0].text).written[0].hash, hashText(PARSE_REORDERED));
+  assertEquals(
+    await Deno.readTextFile(join(cb.dir, "export", "net.port.alang")),
+    `${PARSE_ERROR}\n\n${PORT}\n\n${PARSE_REORDERED}\n`,
+  );
+  const stale = byId.get(5)?.result as { content: { text: string }[]; isError: boolean };
   assertEquals([stale.isError, JSON.parse(stale.content[0].text).diagnostics[0].code], [true, "E0501"]);
 
   // Usage errors.

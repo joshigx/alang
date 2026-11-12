@@ -7,7 +7,7 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
 
 Read this first when picking up the work in a new session. Update it when a phase ends.
 
-**Branches.** Work happens on the local branch `mcp`, branched from `database` (also on `origin/database`), which
+**Branches.** Work happens on the local branch `mcp`, branched from `database` at `f5dde7e`, which
 sits on `examples` (local, phase 4 committed), which sits on `effects` (local), which sits on `type-checker` (pushed
 to `origin/type-checker`). `main` (= `origin/main`) has only the first slice, so do not start from `main`. Nothing is
 merged yet; merging and pushing is the user's call.
@@ -67,7 +67,8 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   deleted export file removes its module's definitions). Above all, references stay names, so `rename` rewrites
   callers instead of changing only a pointer (departs from 6.1); see "Database phase: open points".
 - MCP server: everything in `decisions.md`, section MCP server; above all, no `import`/`export` tools, JSON results
-  identical to `alang db`, and a hand-written protocol instead of the SDK.
+  identical to `alang db`, a hand-written protocol instead of the SDK, and queries marked read-only although their
+  sync can change the database.
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
 
