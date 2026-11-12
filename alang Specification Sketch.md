@@ -1,6 +1,6 @@
 # alang: Specification Sketch
 
-Nov 12, 2026
+Nov 12, 2026 · @Josua Lucas
 
 ## Overview
 
@@ -352,6 +352,61 @@ Changes:
 | `remove(name, hash)` | Is rejected as long as callers exist |
 
 If `replace` changes the signature, it is rejected and names the affected callers. They then belong in the same transaction.
+
+## Storage
+
+The codebase is one SQLite file; text is the interface the LLM reads and writes, not the storage format. The LLM never edits files: it passes definition text as an argument to the operations of section 6.
+
+The path of a change:
+
+1. The LLM calls `context(name)` and receives canonical text plus the hash.
+2. It generates the new definition as text and calls `replace(name, hash, text)`.
+3. The tool parses the text, checks types, effects and contracts, runs the examples and computes the new hash.
+4. Only if everything passes does it write to the database, in a single transaction. Otherwise nothing changes and the diagnostics are returned.
+
+Layout on disk:
+
+```
+project/
+  alang.db      SQLite file with the codebase
+  export/       canonical text, one file per module, for Git and review
+  out/          generated TypeScript
+```
+
+| Table | Columns | Purpose |
+| --- | --- | --- |
+| `definitions` | `hash`, `kind`, `text`, `signature` | One row per version, never changed |
+| `names` | `name`, `hash` | The changeable pointer of rule 6.1 |
+| `refs` | `from_hash`, `to_hash` | Who uses whom; answers `callers(name)` |
+| `history` | `name`, `hash`, `changed_at` | Earlier versions per rule 6.6 |
+
+The `text` column holds the canonical text itself. Because of rule 3.7 every syntax tree has exactly one text, so the tree is parsed on demand and needs no separate serialization.
+
+A SQLite file cannot be diffed or merged in Git. An export command therefore writes all definitions as canonical text, one file per module and sorted by name. Two options exist for the source of truth:
+
+| Source of truth | Consequence |
+| --- | --- |
+| The database | The export is only a view and a backup; history lives in the database, not in Git |
+| The export in Git | The database is rebuilt from it on checkout; review, CI and branches work as usual |
+
+Recommended for the prototype is the export in Git. Rule 6.2 then describes the LLM's view: it still works only through queries and transactions.
+
+## Toolchain
+
+The transpiler is written in TypeScript and runs on Deno. Target language and tool language are thereby the same, so examples run in the same process as the checker and on the real target semantics.
+
+- **One runtime library.** `std.*`, the overflow check for `Int` and the NaN check exist once and are shared by the checker and by generated programs.
+- **Effects enforced at runtime.** A program is started with exactly the Deno permissions that its `main` declares as effects (table below). This also catches an `extern fn` whose TypeScript code does more than its declared effects (rule 2.5).
+- **Checked output.** The test suite type-checks the generated TypeScript, to verify that whatever the checker accepts is never rejected by TypeScript.
+- **Runtime-neutral output.** Generated code does not depend on Deno, so alang programs also run on Node.js and Bun.
+
+| Effect | Deno permission |
+| --- | --- |
+| `fs.read` | `--allow-read` |
+| `fs.write` | `--allow-write` |
+| `net` | `--allow-net` |
+| `env` | `--allow-env` |
+| `time`, `random`, `log`, `console` | None needed |
 
 ## Recorded alternative: capabilities instead of effect labels
 
