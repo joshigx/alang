@@ -131,10 +131,16 @@ export const STD: readonly Signature[] = [
     FLOAT,
   ]], INT),
 
-  sig("std.string.trim", "Removes leading and trailing whitespace.", [], [["text", STRING]], STRING),
+  sig(
+    "std.string.trim",
+    "Removes leading and trailing whitespace, line breaks included.",
+    [],
+    [["text", STRING]],
+    STRING,
+  ),
   sig("std.string.length", "Number of Unicode scalar values.", [], [["text", STRING]], INT),
   sig("std.string.concat", "The two texts joined.", [], [["left", STRING], ["right", STRING]], STRING),
-  sig("std.string.join", "The parts joined with the separator between them.", [], [
+  sig("std.string.join", 'The parts joined with the separator between them; `""` for no parts.', [], [
     ["parts", list(STRING)],
     ["separator", STRING],
   ], STRING),

@@ -462,17 +462,18 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 | Not available | Instead |
 | --- | --- |
-| `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value |
+| `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
 | List literals | `std.list.append(list: std.list.empty<Int>(), item: 1)`, nested for more items |
 | Functions on `Map` | A `List` of records |
 | `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6), `std.int.min`, `std.int.max`, splitting or searching text | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
-| `if`, `match` or `for` inside another expression, such as an argument (E0303) | Bind it with `let` first, or `return` it |
+| `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
 | Function types in your own signatures | Only std functions take functions (`with`, `by`, `handler`) |
 | std functions with the effects `time`, `random`, `env` or `log` | The effects exist; nothing in std uses them yet |
 | Static proofs (5.2) and prefix checking (1.6) | Every `requires`, `ensures` and `where` is checked at runtime |
 | The depth limit (4.8) | Not enforced yet; keep to it anyway |
 | Concurrency | Everything runs in order; `std.http.serve` answers one request at a time |
+| A wildcard pattern `_` | Every value in a pattern gets a name, used or not: `case Ok(done) then` |
 
 ### 7.2 Text
 
@@ -482,7 +483,8 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Other values.** `true`, `false`, and `Unit`, the one value of the type `Unit`.
 - **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them.
 - **Foreign forms.** `===`, `!==`, `&&`, `||`, `!`, `{`, `}`, `[`, `]`, `?`, `;`, `'`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7).
-- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7).
+- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
+- **Files.** In a file given to `alang check` or `alang run`, the order of definitions has no meaning (6.2). The stored text and the export sort them by name, with one empty line between them.
 
 ### 7.3 Definitions and names
 
@@ -505,6 +507,8 @@ These forms are common in other languages but do not exist in alang. Write the f
   - A case without a value is matched bare: `case None then`.
   - A case with a value always takes a sub-pattern, either a name or a nested case: `case Some(n) then`, `case Err(OutOfRange(n)) then`, `case Err(std.fs.NotFound) then`.
   - A `match` on `Int` or `String` can never be exhaustive; use `if`.
+  - A name after specific nested cases (`case Err(std.fs.NotFound) then`, then `case Err(other) then`) is accepted today, but it acts as a catch-all for the remaining cases, against 3.3: a new case of `std.fs.ReadError` would not be reported there. List every case instead.
+  - A branch may hold `let` statements before its value.
 - **`for` (3.4).** `for name: Type in list do ... end for`. As a statement, its body has type `Unit`. As a value, it is the list of the body's values; this is how effects per element are collected.
 - **Where `if`, `match` and `for` stand.** As a statement, as the value of a `let`, or after `return`. Not yet inside another expression (E0303).
 
@@ -514,10 +518,10 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Explicit type arguments (1.4).** They are written exactly when a type parameter of the function occurs in no parameter type, and never otherwise (E0209): `std.list.empty<Int>()`, but `std.list.map(list: xs, with: ...)`.
 - **Types flow from left to right (1.4).** `Ok`, `Err` and `None` take their type from what is expected at that point: the type of a `let`, a parameter, `out` at a `return`, or the left side of `==`. Without an expected type they are an error (E0210); `Some(x)` can also take its type from `x`. So the side with a known type comes first: `parse(text: "1") == Ok(...)`, not `None == x`.
 - **Arithmetic.** `+ - * / %` work on two `Int` or two `Float`; nothing is converted implicitly (`std.int.to_float`). `Int` division truncates toward zero, and `%` takes the sign of the dividend (`-7 % 2 == -1`). Division by zero and leaving the `Int` range trap. A `Float` result that is NaN traps (`0.0 / 0.0`); infinities are ordinary values.
-- **Comparison and logic.** `==` and `!=` work on every type without functions, by structure (3.9). `< <= > >=` work only on `Int`, `Float` and `String` (E0222); other types are ordered by a function that returns `Order`. The logical operators are `and`, `or` and `not`. `not` binds more loosely than comparison: `not a == b` means `not (a == b)`. Mixing `+ -` with `* / %`, or `and` with `or`, needs parentheses (3.5).
+- **Comparison and logic.** `==` and `!=` work on every type without functions, by structure (3.9). `< <= > >=` work only on `Int`, `Float` and `String` (E0222); other types are ordered by a function that returns `Order`. The logical operators are `and`, `or` and `not`. `not` binds more loosely than comparison: `not a == b` means `not (a == b)`. Mixing `+ -` with `* / %`, or `and` with `or`, needs parentheses (3.5). Within `* / %`, or within `+ -`, operators group from the left without them: `12 * 5 / 4` is `(12 * 5) / 4`. Parentheses that 3.5 does not require are dropped from the stored text. `==` compares variant values too (`outcome == Err(std.fs.NotFound)`); to branch on several cases, use `match`.
 - **Lambdas (2.4).** `fn(item: Int): Int => item * factor` has typed parameters, a result type, and one expression as its body: no `let` and no `return` (E0219). It has no effects (E0232) and may read the bindings around it. A lambda used as an operand is put in parentheses.
 - **Function values.** Where a std function takes a function, a function name can be passed instead of a lambda (`by: std.int.compare`, `with: double`). The function must be pure (E0232) and not generic; a generic one needs a lambda (E0210). The exception is the `handler` of `std.http.serve`, which may have effects; the caller then declares them (E0230).
-- **Names.** A plain name means a local first, then a function of the own module.
+- **Names.** A plain name means a local first, then a function of the own module. A path followed by `(` is always a call, so a local may share its name with a function: `let total: Int = total(items: xs)`. A local named like the first segment of a module hides calls into that module: with a parameter `net`, `net.port.parse(...)` reads as a method call (E0220). Choose another name.
 
 ### 7.6 Contracts and examples
 
@@ -525,14 +529,14 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Examples (5.1).** Each line is `call == expected`. The call is to the function itself, by its short name (E0221), and both sides have the same type.
   - Every function with `effects: none` has at least one example (E0401). A function with effects has `examples: none` (5.4).
   - An example holds if both sides are equal (3.9). A failing one is reported with the actual value as alang text (E0402). A trapping one is reported with the trap (E0403); this includes a stack overflow from recursion without a base case.
-- **Acceptance.** Every change re-runs every example of the program, so a changed body that breaks a caller's example is rejected too.
+- **Acceptance.** Every change re-runs every example of the program, so a changed body that breaks a caller's example is rejected too. An example whose call breaks the function's `requires` traps (E0403).
 - **Shape of a program.** Logic goes into pure functions with examples. Functions with effects stay thin and call them; see the server in 7.9.
 
 ### 7.7 Effects and running
 
 - **Declaration (2.1).** `effects` includes the effects of every function that is called, directly or as a handler (E0230, with the corrected line). Declaring more than needed is allowed.
-- **Running.** `main` runs in its own process with exactly the Deno permissions of its effects (Toolchain); an operation without permission traps. A trap ends the program with exit code 70 and a diagnostic as JSON on stderr.
-- **Values as text.** `std.text.show` gives `42`, `2.5`, `"a\"b"` (quoted), `Some(3)`, `Less`, `Unit`, `["a", "b"]` for a list, and `(x: 1, y: -2)` for a record, without its type name. A whole `Float` shows without its fraction: `2.0` gives `2`.
+- **Running.** `main` runs in its own process with exactly the Deno permissions of its effects (Toolchain); an operation without permission traps. The program runs in the directory it was started from, so a relative path such as `notes.txt` is read from there. A trap ends the program with exit code 70 and a diagnostic as JSON on stderr.
+- **Values as text.** `std.text.show` gives `42`, `2.5`, `"a\"b"` (quoted), `Some(3)`, `Less`, `Unit`, `["a", "b"]` for a list, and `(x: 1, y: -2)` for a record, without its type name. A case shows without its module: `PermissionDenied`, `Other("disk full")`. Numbers show without `_` grouping (`12345`), and a whole `Float` without its fraction: `2.0` gives `2`.
 
 ### 7.8 Standard library
 
@@ -547,10 +551,10 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | `std.int.to_float(value: Int): Float` | none | The same number as a Float. |
 | `std.int.compare(left: Int, right: Int): Order` | none | Orders two integers. |
 | `std.float.floor(value: Float): Int` | none | The largest integer not above the value; traps outside the Int range. |
-| `std.string.trim(text: String): String` | none | Removes leading and trailing whitespace. |
+| `std.string.trim(text: String): String` | none | Removes leading and trailing whitespace, line breaks included. |
 | `std.string.length(text: String): Int` | none | Number of Unicode scalar values. |
 | `std.string.concat(left: String, right: String): String` | none | The two texts joined. |
-| `std.string.join(parts: List<String>, separator: String): String` | none | The parts joined with the separator between them. |
+| `std.string.join(parts: List<String>, separator: String): String` | none | The parts joined with the separator between them; `""` for no parts. |
 | `std.string.compare(left: String, right: String): Order` | none | Orders two texts by Unicode scalar values. |
 | `std.list.empty<T>(): List<T>` | none | The empty list. |
 | `std.list.append<T>(list: List<T>, item: T): List<T>` | none | The list with the item added at the end. |

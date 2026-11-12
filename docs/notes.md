@@ -57,7 +57,8 @@ is done; see "From the MCP server". Claude Code connected and used every kind of
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
-and need their form decided.
+and need their form decided. Open from the spec's blind test: whether a name after specific nested cases
+(`case Err(std.fs.NotFound)`, then `case Err(other)`) stays allowed; see "From the spec reference".
 
 **Checks before every commit:** `deno task test` (195 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
@@ -382,6 +383,32 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **An MCP tool for rename** should expose the text as an optional argument; an LLM that wants to rename and edit will
   otherwise submit two transactions, and the second needs the hash the first returned. Done: `rename` has `text`.
 
+## From the spec reference (2026-11-12)
+
+- **A blind test.** A fresh agent that read only `alang-specs.md` (not the sources, without running anything) wrote
+  three programs: list and text helpers, a file reader that tells a missing file from other read errors, and a shop
+  with a record with `where`, a discount variant, a total by `fold` and an HTTP route. All three were accepted by
+  `alang check` on the first try, examples included. It listed 17 points where it was unsure; those with an answer
+  in the implementation are now in section 7 (how `show` prints cases and numbers, operator grouping, `join` and
+  `trim`, constants need examples, no `match` in conditions, no `_`, locals named like functions or modules, the
+  working directory, file order, long lines, examples that break `requires`).
+- **A name after nested cases is a catch-all.** `case Err(std.fs.NotFound)` followed by `case Err(other)` is
+  accepted: exhaustiveness is met, and no earlier case covers `Err(other)` entirely. But `other` stands for every
+  remaining case of `std.fs.ReadError`, so a case added later is not reported there, which is what 3.3 forbids a
+  catch-all for. The blind agent read 3.3 strictly and listed every case. Options: reject a name in a position
+  where an earlier case of the same `match` named a specific case (list them all), or accept it as now. The user's
+  call; section 7.4 says it is accepted and advises listing every case.
+- **Examples that cannot fail.** Not knowing how `show` prints `std.fs.IsADirectory`, the agent wrote
+  `error_line(problem: std.fs.IsADirectory) == std.text.show(value: std.fs.IsADirectory)`: the expected side computes
+  what the body computes, so the example passes whatever `show` does. Section 7.7 now gives the text; such examples
+  are hard to detect in general.
+- **A parameter named like a module** hides calls into it: with a parameter `words`, `words.count(...)` is E0220, a
+  method call. Inside module `words` the short form avoids it, but a natural name such as `net` or `config` blocks
+  calls into that module. The diagnostic could say that the local hides the module.
+- **Constants are clumsy.** A function with `in: none` stands in for `const`, but needs an example, which repeats
+  the value (a list of three items took a 250-character example line). `const` would need none (5.1 covers
+  functions).
+
 ## Spec observations
 
 - `config.load_port` (section 2) uses `LoadError`, `FileUnreadable`, `InvalidPort` and `std.fs.read_text` /
@@ -392,6 +419,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   (`std.list.sort(by: ...)`) and by examples that mention non-empty lists.
 - The grammar has no way to declare a generic function or a generic type. Only builtins are generic.
 - 5.5 shows a diagnostic with a `fix`; the spec does not say whether a fix may span several places.
+- The grammar excerpt has no `"(" expr ")"`, although 3.5 requires parentheses, and does not say how `* / %` group
+  among themselves (from the left). Section 7.5 now states both; the grammar itself is the user's sketch.
 
 ## Not enforced yet (planned phases)
 
@@ -407,6 +436,15 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **Records at runtime** carry no type name, so `std.text.show` prints `(value: 8080)` instead of
   `Port(value: 8080)`. A non-enumerable symbol tag on records would fix this without affecting equality.
 - **Lexer:** `List<Int>= x` lexes `>=` as one token. Harmless with canonical spacing, but a corner case.
+- **Language knowledge served by the tool** (the user's idea, 2026-11-12: once the compiler ships, should the model
+  read a spec file or a database of specs and examples?). My recommendation: the server serves the language as it
+  serves code, in three layers. A short card of the rules every definition needs, in the instructions, always
+  loaded. Rules on demand, keyed by diagnostic code and rule number (an `explain(code)` tool, or the rule's text in
+  the diagnostic), so the model reads exactly the rule it broke. Examples as a real alang codebase, found with
+  `search` and `context`: accepted definitions cannot be wrong or stale, unlike prose. Knowledge served by the
+  compiler matches its version. The spec file stays as the design document and the source the card and rule texts
+  are generated from (as the std table already is). Tools only, so the Scope decision holds. The playground can
+  measure it: first-try acceptance and calls per task, full spec against card plus rules on demand.
 
 ## From the type checker (2026-11-12)
 
