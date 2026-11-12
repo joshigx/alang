@@ -360,6 +360,38 @@ Deno.test("mcp: over stdio, one message per line", async () => {
   await Deno.remove(cb.dir, { recursive: true });
 });
 
+Deno.test("mcp: a signal ends the server, and no acceptance file stays behind", async () => {
+  const cb = await withPort();
+  cb.close(); // The server process opens it.
+  const accepts = () => [...Deno.readDirSync(join(cb.dir, "out"))].filter((e) => e.name.startsWith("accept-"));
+  for (const [i, signal] of (["SIGTERM", "SIGINT", "SIGHUP"] as const).entries()) {
+    const child = new Deno.Command(Deno.execPath(), {
+      args: ["run", "--allow-read", "--allow-write", CLI, "mcp", "--dir", cb.dir],
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "null",
+    }).spawn();
+    const writer = child.stdin.getWriter();
+    const text = `fn m.f${i}\n  doc: "One."\n  in: none\n  out: Int\n  effects: none\n  requires: none\n` +
+      `  ensures: none\n  examples:\n    f${i}() == 1\n  body:\n    return 1\nend fn m.f${i}`;
+    const add = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "add", arguments: { text } } };
+    await writer.write(new TextEncoder().encode(JSON.stringify(add) + "\n"));
+    const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
+    let answer = "";
+    while (!answer.includes("\n")) answer += (await reader.read()).value ?? "";
+    assertEquals(JSON.parse(answer).result.isError, false, answer);
+    // The file exists only while an acceptance runs, so even SIGKILL leaves none.
+    assertEquals(accepts(), []);
+    // Clients may end a server with a signal instead of closing its stdin.
+    child.kill(signal);
+    assertEquals((await child.status).code, 0, signal);
+    await reader.cancel();
+    await writer.close().catch(() => {});
+    assertEquals(accepts(), []);
+  }
+  await Deno.remove(cb.dir, { recursive: true });
+});
+
 // The tool table and its list stay in step.
 Deno.test("mcp: each tool has a title, a description and described arguments", () => {
   for (const t of TOOLS) {

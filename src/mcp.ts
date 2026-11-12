@@ -18,6 +18,7 @@
 // results with `isError`, so the model sees them and can correct itself;
 // JSON-RPC errors are left for malformed requests and unknown tools.
 
+import { fileURLToPath } from "node:url";
 import { Codebase, parseChanges, type SubmitResult } from "./codebase.ts";
 import { AlangError } from "./diagnostic.ts";
 
@@ -66,17 +67,26 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 // ---- tools ----
 
-export const INSTRUCTIONS = `An alang codebase, stored as a database of definitions (spec section 6). Read and change \
-definitions only through these tools, never by editing files. export/*.alang is the database's copy for Git, one \
-file per module, kept in step in both directions without your help: every change is written there at once, and what \
-Git or a person changes there is read back before the next tool call. You never export or import anything yourself. \
+// The language description next to the sources, for a model that can read files.
+const SPEC = new URL("../alang-specs.md", import.meta.url);
+const SPEC_LINE = SPEC.protocol === "file:"
+  ? `The language (syntax, rules, standard library, what is not available yet) is described in \
+${fileURLToPath(SPEC)}; read it before writing alang. `
+  : "";
+
+export const INSTRUCTIONS = `${SPEC_LINE}An alang codebase, stored as a database of definitions (spec section 6). \
+Read and change definitions only through these tools, never by editing files. export/*.alang is the database's \
+copy for Git, one file per module, kept in step in both directions without your help: every change is written there \
+at once, and what Git or a person changes there is read back before the next tool call. You never export or import \
+anything yourself. \
 out/ is generated. So the codebase can change between your calls (a pull, a checkout, the user's own \
 edit): answer questions about its current state from a fresh query, not from earlier results.
 
-1. Find: \`list\` (modules), \`search\` (names and doc lines), \`search_type\` (signatures such as \
-\`String -> Result<Int, _>\`).
+1. Find: \`list\` (modules; \`std\` is the standard library), \`search\` (names and doc lines), \`search_type\` \
+(signatures such as \`String -> Result<Int, _>\`). std is included in all three.
 2. Read: \`context(name)\` gives the canonical text, its hash, and the signatures of everything it uses: all you \
-need to change it.
+need to change it. It reads std names too (hash null): \`context(std.http.serve)\` gives the signature and the \
+fields of the types it takes and returns. std cannot be changed.
 3. Change: \`replace(name, hash, text)\` with the complete new definition and the hash the query returned. Hashes \
 are guards; never write one into code. A change is parsed, type- and effect-checked, and every example of the \
 program is run (each pure function needs at least one); it is written, in canonical form, only if all of that passes. \
@@ -130,7 +140,8 @@ export const TOOLS: readonly Tool[] = [
     title: "Definition with what it uses",
     description: "The canonical text of a definition and its hash, followed by the signatures of every function " +
       "and type it uses, in order of first use, and of the types in those signatures (std functions as one " +
-      "line). Everything needed to change the definition: read this before `replace`.",
+      "line). Everything needed to change the definition: read this before `replace`. For a std name (hash " +
+      "null), its text and the types its signature mentions, such as the fields of `std.http.Request`.",
     params: { name: NAME },
     query: true,
     run: (cb, a) => cb.context(s(a.name)),
@@ -138,7 +149,8 @@ export const TOOLS: readonly Tool[] = [
   {
     name: "definition",
     title: "Definition text",
-    description: "The complete canonical text of a definition, with its hash.",
+    description: "The complete canonical text of a definition, with its hash. For a std name (hash null), a " +
+      "type's text or a function's signature on one line, since std functions have no alang body.",
     params: { name: NAME },
     query: true,
     run: (cb, a) => cb.definition(s(a.name)),
@@ -146,7 +158,8 @@ export const TOOLS: readonly Tool[] = [
   {
     name: "signature",
     title: "Signature",
-    description: "Every section of a definition except `body` (for a type, its whole text), with its hash.",
+    description: "Every section of a definition except `body` (for a type, its whole text), with its hash. For " +
+      "a std name (hash null), the same as `definition`.",
     params: { name: NAME },
     query: true,
     run: (cb, a) => cb.signature(s(a.name)),
@@ -164,7 +177,8 @@ export const TOOLS: readonly Tool[] = [
     name: "list",
     title: "List a module",
     description: "The definitions of a module (name, hash, kind, doc) and the names of its direct submodules. " +
-      "Without `module`, the top-level modules.",
+      "Without `module`, the top-level modules of the codebase; `std` and its submodules (`std.http`) list the " +
+      "standard library.",
     params: { module: { description: "A module such as `net.port`; leave it out for the top level.", optional: true } },
     query: true,
     run: (cb, a) => cb.list(a.module === undefined ? "" : s(a.module)),
@@ -193,7 +207,8 @@ export const TOOLS: readonly Tool[] = [
     name: "history",
     title: "History",
     description: "Every version a name had, oldest first, with time and operation (a removal has hash null), and " +
-      "the current hash (null if removed). A name that came from a rename continues with the old name's history.",
+      "the current hash (null if removed). A name that came from a rename continues with the old name's history. " +
+      "std names have none.",
     params: { name: NAME },
     query: true,
     run: (cb, a) => cb.history(s(a.name)),
@@ -525,9 +540,26 @@ export async function mcpMain(args: string[]): Promise<number> {
   // to stderr.
   console.log = console.info = console.debug = console.error;
   const cb = await Codebase.open(dir);
+  // Clients may end the server with a signal instead of closing its stdin.
+  // The acceptance file exists only during an acceptance; one in progress is
+  // abandoned (nothing is written before it ends), and the process ends.
+  const stop = () => {
+    cb.close();
+    Deno.exit(0);
+  };
+  const signals: Deno.Signal[] = [];
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    try {
+      Deno.addSignalListener(signal, stop);
+      signals.push(signal);
+    } catch {
+      // Only SIGINT (and SIGBREAK) can be listened to on Windows.
+    }
+  }
   try {
     await serve(cb, Deno.stdin.readable, Deno.stdout.writable);
   } finally {
+    for (const signal of signals) Deno.removeSignalListener(signal, stop);
     cb.close();
   }
   return 0;

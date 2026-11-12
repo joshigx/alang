@@ -173,6 +173,63 @@ Deno.test("queries: list gives a module's definitions and submodules", async () 
   await done(cb);
 });
 
+Deno.test("queries: std names are read like definitions, without a hash, and cannot be changed", async () => {
+  const cb = await withPort();
+  const request = printDefinition(STD_TYPES.find((d) => pathText(d.path) === "std.http.Request")!);
+  assertEquals(cb.definition("std.http.Request"), { name: "std.http.Request", hash: null, text: request });
+  assertEquals(cb.signature("std.http.Request").signature, request);
+  // A std function has no alang body: its text is the line search_type gives.
+  const serve = signatureLine(STD_BY_NAME.get("std.http.serve")!);
+  assertEquals(cb.definition("std.http.serve").text, serve);
+  assertEquals(cb.signature("std.http.serve"), { name: "std.http.serve", hash: null, signature: serve });
+  // context: the types of the signature, those the handler takes and returns
+  // included, then the types in theirs (Header).
+  const context = cb.context("std.http.serve");
+  assertEquals([context.hash, context.text], [null, serve]);
+  assertEquals(context.uses.map((u) => [u.name, u.hash]), [
+    ["std.http.Request", null],
+    ["std.http.Response", null],
+    ["std.http.ServeError", null],
+    ["std.http.Header", null],
+  ]);
+  assertEquals(context.uses[0].text, request);
+  assertEquals(cb.context("std.list.map").uses, []);
+  // callers: the codebase's users.
+  assertEquals(cb.callers("std.int.parse"), { name: "std.int.parse", hash: null, callers: ["net.port.parse"] });
+  assertEquals(cb.callers("std.fs.ReadError").callers, ["config.LoadError"]);
+  // list: std is reached by name, and is not one of the codebase's modules.
+  assertEquals(cb.list("std").submodules, [
+    "std.console",
+    "std.float",
+    "std.fs",
+    "std.http",
+    "std.int",
+    "std.list",
+    "std.string",
+    "std.text",
+  ]);
+  assertEquals(cb.list("std.http").definitions.map((d) => [d.name, d.kind, d.hash]), [
+    ["std.http.Header", "type", null],
+    ["std.http.Request", "type", null],
+    ["std.http.Response", "type", null],
+    ["std.http.ServeError", "type", null],
+    ["std.http.serve", "fn", null],
+  ]);
+  assertEquals(cb.list("").submodules, ["config", "net"]);
+  // Misspelled std names and modules get a fix.
+  assertEquals(throwsCode(() => cb.context("std.http.Requst"), "E0502").diagnostic.fix, {
+    replace: "std.http.Requst",
+    with: "std.http.Request",
+  });
+  assertEquals(throwsCode(() => cb.list("std.htp"), "E0502").diagnostic.fix?.with, "std.http");
+  // No history, no changes: the message says why instead of "no definition".
+  const history = throwsCode(() => cb.history("std.http.serve"), "E0502").diagnostic;
+  assert_(history.message.includes("belongs to the standard library"), history.message);
+  const removed = await fails(cb, [{ op: "remove", name: "std.int.parse", hash: "0".repeat(16) }]);
+  assertEquals(removed.diagnostics.map((d) => [d.code, d.message.includes("standard library")]), [["E0502", true]]);
+  await done(cb);
+});
+
 Deno.test("queries: search(text) matches names and doc lines, std included", async () => {
   const cb = await withPort();
   assertEquals(cb.searchText("PORT").map((h) => h.name), [

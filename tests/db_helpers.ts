@@ -80,7 +80,12 @@ export async function fails(cb: Codebase, changes: Change[]): Promise<Extract<Su
 }
 
 export const codes = (ds: readonly Diagnostic[]) => ds.map((d) => d.code);
-export const hashOf = (cb: Codebase, name: string) => cb.definition(name).hash;
+// The hash of a stored definition (std entries have none).
+export function hashOf(cb: Codebase, name: string): string {
+  const { hash } = cb.definition(name);
+  if (hash === null) throw new Error(`${name} has no hash`);
+  return hash;
+}
 
 // Every row of every table, for "a rejected transaction changes nothing".
 export function dump(cb: Codebase): Record<string, unknown[]> {

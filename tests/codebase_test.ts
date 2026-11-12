@@ -35,7 +35,7 @@ Deno.test("codebase: add stores canonical text under the hash of that text", asy
   const v = cb.definition("net.port.parse");
   assertEquals(v.text, PARSE);
   assertEquals(v.hash, hashText(PARSE));
-  assertEquals(v.hash.length, 16);
+  assertEquals(v.hash?.length, 16);
   await done(cb);
 });
 

@@ -27,6 +27,7 @@ import { dependencies, mapReferences, type Ref, shortenOwnNames } from "./refs.t
 import { matchesFn, namedTypes, parseFnPattern, showTree, treeOfRef, treeOfType, type TypeTree } from "./search.ts";
 import { signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
 import { acceptDefinitions, type Accepted, findMain, run as runBuilt, type RunOptions } from "./toolchain.ts";
+import { BUILTIN_TYPES, type Type } from "./types.ts";
 
 // ---- data ----
 
@@ -256,6 +257,59 @@ function signatureTypes(def: Definition): TypeTree[] {
   return def.shape.cases.flatMap((c) => (c.payload ? [treeOfRef(c.payload, module)] : []));
 }
 
+// ---- the standard library in queries ----
+//
+// std is not stored in the database: its entries come from std.ts and have no
+// hash. Queries read them like stored definitions; operations refuse them.
+
+const byName = (a: { name: string }, b: { name: string }) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+
+const STD_TYPE_BY_NAME: ReadonlyMap<string, Definition> = new Map(STD_TYPES.map((d) => [pathText(d.path), d]));
+
+const STD_HITS: readonly Hit[] = [
+  ...STD.map((s): Hit => ({ name: s.name, hash: null, kind: "fn", doc: s.doc })),
+  ...STD_TYPES.map((d): Hit => ({ name: pathText(d.path), hash: null, kind: "type", doc: d.doc })),
+].sort(byName);
+
+interface StdEntry {
+  // A type as alang text; a function as its signature on one line, since std
+  // functions have no alang body (and some of their types no surface syntax).
+  readonly text: string;
+  // Full names of the types its signature mentions, in order of first use,
+  // those of a function parameter included.
+  readonly types: readonly string[];
+  // The cases of a variant type, which callers use instead of the type.
+  readonly cases: readonly string[];
+}
+
+function stdEntry(name: string): StdEntry | null {
+  const fn = STD_BY_NAME.get(name);
+  if (fn) {
+    const types: string[] = [];
+    for (const t of [...fn.params.map((p) => p.type), fn.out]) stdTypeNames(t, types);
+    return { text: signatureLine(fn), types, cases: [] };
+  }
+  const type = STD_TYPE_BY_NAME.get(name);
+  if (type) {
+    const types: string[] = [];
+    for (const t of signatureTypes(type)) namedTypes(t, types);
+    return { text: printDefinition(type), types, cases: casesOf(type) };
+  }
+  return null;
+}
+
+// Full names of the non-builtin types in a std signature type, looking into
+// function types too (`serve`'s handler takes a Request).
+function stdTypeNames(t: Type, into: string[]): void {
+  if (t.k === "con") {
+    if (!BUILTIN_TYPES.has(t.name) && !into.includes(t.name)) into.push(t.name);
+    for (const a of t.args) stdTypeNames(a, into);
+  } else if (t.k === "fn") {
+    for (const p of t.params) stdTypeNames(p, into);
+    stdTypeNames(t.out, into);
+  }
+}
+
 export interface OpenOptions {
   // Source of `history.changed_at`; tests pass a fixed clock.
   readonly clock?: () => Date;
@@ -316,17 +370,32 @@ export class Codebase {
 
   close(): void {
     this.db.close();
+    this.removeAcceptFile();
+  }
+
+  // Acceptance writes the program here and runs its examples from it. One
+  // file per open codebase, so that two processes (or two instances) on one
+  // directory never run each other's program. It exists only while an
+  // acceptance runs (they run one at a time, through the queue): a process
+  // that is killed, as MCP clients end their servers, leaves nothing behind
+  // unless it dies during one.
+  private readonly acceptPath: string;
+
+  private async acceptHere(defs: Definition[], checked: CheckResult): Promise<Accepted> {
+    try {
+      return await acceptDefinitions(defs, this.acceptPath, checked);
+    } finally {
+      this.removeAcceptFile();
+    }
+  }
+
+  private removeAcceptFile(): void {
     try {
       Deno.removeSync(this.acceptPath);
     } catch (e) {
       if (!(e instanceof Deno.errors.NotFound)) throw e;
     }
   }
-
-  // Acceptance writes the program here and runs its examples from it. One
-  // file per open codebase, so that two processes (or two instances) on one
-  // directory never run each other's program.
-  private readonly acceptPath: string;
 
   // ---- reading ----
 
@@ -346,7 +415,16 @@ export class Codebase {
   }
 
   private unknownName(name: string, at: string): Diagnostic {
-    const near = closest(name, this.names().keys());
+    if (stdEntry(name)) {
+      return diagnostic({
+        code: "E0502",
+        definition: name,
+        at,
+        message: `\`${name}\` belongs to the standard library, which the codebase does not store: it can be read, ` +
+          "but it has no history and cannot be replaced, removed or renamed.",
+      });
+    }
+    const near = closest(name, [...this.names().keys(), ...STD_HITS.map((h) => h.name)]);
     return diagnostic({
       code: "E0502",
       definition: name,
@@ -376,20 +454,29 @@ export class Codebase {
 
   // ---- queries (section 6); each returns the hash it read ----
 
+  // The queries answer for std names too, with hash null: a std type as its
+  // alang text, a std function as its signature on one line (`stdEntry`).
+
   // The complete canonical text.
-  definition(name: string): Version {
+  definition(name: string): { name: string; hash: string | null; text: string } {
+    const std = stdEntry(name);
+    if (std) return { name, hash: null, text: std.text };
     const { hash, text } = this.row(name, "definition");
     return { name, hash, text };
   }
 
   // Every section except `body`.
-  signature(name: string): { name: string; hash: string; signature: string } {
+  signature(name: string): { name: string; hash: string | null; signature: string } {
+    const std = stdEntry(name);
+    if (std) return { name, hash: null, signature: std.text };
     const { hash, signature } = this.row(name, "signature");
     return { name, hash, signature };
   }
 
   // The definitions that use `name`, sorted.
-  callers(name: string): { name: string; hash: string; callers: string[] } {
+  callers(name: string): { name: string; hash: string | null; callers: string[] } {
+    const std = stdEntry(name);
+    if (std) return { name, hash: null, callers: this.usersOf(name, std.cases) };
     const { hash, def } = this.row(name, "callers");
     return { name, hash, callers: this.callersOf(name, def) };
   }
@@ -398,12 +485,23 @@ export class Codebase {
   // order of first use: functions, types, and the type of each case used. Then
   // the types that appear in those signatures, one level deep, since calling
   // a function means building its arguments. std functions come as one line
-  // (`signatureLine`), std types as alang text; both have no hash.
-  context(name: string): { name: string; hash: string; text: string; uses: Used[] } {
-    const { hash, text } = this.row(name, "context");
-    const refs = this.db.prepare("SELECT to_name FROM refs WHERE from_hash = ? ORDER BY rowid").all(hash) as {
-      to_name: string;
-    }[];
+  // (`signatureLine`), std types as alang text; both have no hash. For a std
+  // name, what it uses are the types in its signature.
+  context(name: string): { name: string; hash: string | null; text: string; uses: Used[] } {
+    const std = stdEntry(name);
+    let hash: string | null = null;
+    let text: string;
+    let used: readonly string[];
+    if (std) {
+      text = std.text;
+      used = std.types;
+    } else {
+      ({ hash, text } = this.row(name, "context"));
+      const refs = this.db.prepare("SELECT to_name FROM refs WHERE from_hash = ? ORDER BY rowid").all(hash) as {
+        to_name: string;
+      }[];
+      used = refs.map((r) => r.to_name);
+    }
     const uses: Used[] = [];
     const seen = new Set([name]);
     const include = (full: string): TypeTree[] | null => {
@@ -428,7 +526,7 @@ export class Codebase {
       return signatureTypes(parseProgram(row.text)[0]);
     };
     const level2: string[] = [];
-    for (const r of refs) for (const t of include(r.to_name) ?? []) namedTypes(t, level2);
+    for (const u of used) for (const t of include(u) ?? []) namedTypes(t, level2);
     for (const t of level2) include(t);
     return { name, hash, text, uses };
   }
@@ -447,20 +545,25 @@ export class Codebase {
   }
 
   // The definitions of `module` itself (name, hash, kind, doc) and the names
-  // of its direct submodules. `list("")` gives the top-level modules, and
-  // works on an empty codebase too; any other unknown module is E0502.
+  // of its direct submodules. `list("")` gives the top-level modules of the
+  // codebase (std not among them), and works on an empty codebase too;
+  // `list("std")` and below list the standard library. Any other unknown
+  // module is E0502.
   list(module: string): { module: string; definitions: Hit[]; submodules: string[] } {
     const prefix = module === "" ? "" : `${module}.`;
     const definitions: Hit[] = [];
     const submodules = new Set<string>();
-    for (const r of this.rowsUnder(prefix)) {
-      const rest = r.name.slice(prefix.length);
+    const entries = module === "std" || module.startsWith("std.")
+      ? STD_HITS.filter((h) => h.name.startsWith(prefix))
+      : this.rowsUnder(prefix).map((r): Hit => ({ name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc }));
+    for (const e of entries) {
+      const rest = e.name.slice(prefix.length);
       if (rest.includes(".")) submodules.add(prefix + rest.slice(0, rest.indexOf(".")));
-      else definitions.push({ name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc });
+      else definitions.push(e);
     }
     if (definitions.length === 0 && submodules.size === 0 && module !== "") {
       const modules = new Set(
-        this.rowsUnder("").flatMap((r) => {
+        [...this.rowsUnder(""), ...STD_HITS].flatMap((r) => {
           const segments = r.name.split(".");
           return segments.slice(1).map((_, i) => segments.slice(0, i + 1).join("."));
         }),
@@ -483,9 +586,8 @@ export class Codebase {
     const hit = (h: Hit) => h.name.toLowerCase().includes(needle) || h.doc.toLowerCase().includes(needle);
     return [
       ...this.rowsUnder("").map((r): Hit => ({ name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc })),
-      ...STD.map((s): Hit => ({ name: s.name, hash: null, kind: "fn", doc: s.doc })),
-      ...STD_TYPES.map((d): Hit => ({ name: pathText(d.path), hash: null, kind: "type", doc: d.doc })),
-    ].filter(hit).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      ...STD_HITS,
+    ].filter(hit).sort(byName);
   }
 
   // Functions, std included, whose signature matches a type pattern such as
@@ -519,6 +621,7 @@ export class Codebase {
   // removed). A name that came from a rename continues with the history of
   // its old name before the rename.
   history(name: string): { name: string; hash: string | null; entries: HistoryEntry[] } {
+    if (stdEntry(name)) throw new AlangError(this.unknownName(name, `history(${name})`));
     const entries = this.historyOf(name, Number.MAX_SAFE_INTEGER);
     if (entries.length === 0) {
       const known = this.db.prepare("SELECT DISTINCT name FROM history").all() as { name: string }[];
@@ -556,7 +659,13 @@ export class Codebase {
   // Current definitions that refer to `name` (or, for a variant type, to one
   // of its cases), sorted, without `name` itself.
   private callersOf(name: string, def: Definition): string[] {
-    const targets = [name, ...casesOf(def)];
+    return this.usersOf(name, casesOf(def));
+  }
+
+  // The current definitions other than `name` that refer to it or to one of
+  // its cases, sorted.
+  private usersOf(name: string, cases: readonly string[]): string[] {
+    const targets = [name, ...cases];
     const rows = this.db.prepare(
       `SELECT DISTINCT n.name FROM refs r JOIN names n ON n.hash = r.from_hash
        WHERE r.to_name IN (${targets.map(() => "?").join(", ")}) AND n.name <> ? ORDER BY n.name`,
@@ -662,7 +771,7 @@ export class Codebase {
     // example, so a caller whose example a changed body breaks is reported.
     let accepted: Accepted;
     try {
-      accepted = await acceptDefinitions(defs, this.acceptPath, short.checked);
+      accepted = await this.acceptHere(defs, short.checked);
     } catch (e) {
       if (e instanceof AlangError) return rejectedAfter(e.diagnostics);
       throw e;
@@ -1330,7 +1439,7 @@ export class Codebase {
     const { defs: program, checked, fixed } = withShortNames(defs, new Set(defs.map((d) => pathText(d.path))));
     let accepted: Accepted;
     try {
-      accepted = await acceptDefinitions(program, this.acceptPath, checked);
+      accepted = await this.acceptHere(program, checked);
     } catch (e) {
       if (e instanceof AlangError) return rejected([...fixed, ...e.diagnostics]);
       throw e;
