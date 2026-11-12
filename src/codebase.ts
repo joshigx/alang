@@ -17,12 +17,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Definition, Effect } from "./ast.ts";
 import { moduleOf, pathText } from "./ast.ts";
-import { closest } from "./check.ts";
+import { checkProgram, closest } from "./check.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { casesOf, interfaceChange } from "./interface.ts";
 import { parseProgram } from "./parser.ts";
 import { printDefinition, printSignature, printString } from "./printer.ts";
-import { dependencies } from "./refs.ts";
+import { dependencies, mapReferences, type Ref } from "./refs.ts";
 import { matchesFn, namedTypes, parseFnPattern, showTree, treeOfRef, treeOfType, type TypeTree } from "./search.ts";
 import { signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
 import { acceptDefinitions, type Accepted } from "./toolchain.ts";
@@ -34,7 +34,8 @@ export type Operation = "add" | "replace" | "remove" | "rename" | "follow" | "im
 export type Change =
   | { readonly op: "add"; readonly text: string }
   | { readonly op: "replace"; readonly name: string; readonly hash: string; readonly text: string }
-  | { readonly op: "remove"; readonly name: string; readonly hash: string };
+  | { readonly op: "remove"; readonly name: string; readonly hash: string }
+  | { readonly op: "rename"; readonly name: string; readonly hash: string; readonly to: string };
 
 // A definition as a query returns it.
 export interface Version {
@@ -139,19 +140,35 @@ interface Current {
 
 // A change that passed its own checks, ready to be applied.
 interface Planned {
-  readonly op: "add" | "replace" | "remove";
+  readonly op: "add" | "replace" | "remove" | "rename";
   readonly name: string;
   readonly at: string;
-  // Null for a removal.
+  // The submitted definition; null for a removal and a rename.
   readonly def: Definition | null;
   // The hash the database must still hold for `name`; null for an add.
   readonly guard: string | null;
+  // The new name of a rename.
+  readonly to: string | null;
+}
+
+// A definition rewritten by a rename: the renamed one under its new name, or
+// a follower (a caller) under its own.
+interface Rewritten {
+  readonly from: string;
+  readonly name: string;
+  readonly def: Definition;
+  readonly renamed: boolean;
+  // Its dependencies before the rename, mapped through it: what it must
+  // still refer to afterwards.
+  readonly expected: ReadonlySet<string>;
 }
 
 // A version to store.
 interface Row {
   readonly name: string;
   readonly op: Operation;
+  // The old name of a rename.
+  readonly other?: string;
   readonly hash: string;
   readonly kind: "fn" | "type";
   readonly text: string;
@@ -192,6 +209,8 @@ function operationText(change: Change, name: string | null): string {
     case "replace":
     case "remove":
       return `${change.op}(${change.name}, ${change.hash})`;
+    case "rename":
+      return `rename(${change.name}, ${change.hash}, ${change.to})`;
   }
 }
 
@@ -440,7 +459,9 @@ export class Codebase {
   }
 
   private historyOf(name: string, before: number): HistoryEntry[] {
-    return this.historyRows(name, before).sort((a, b) => a.id - b.id).map(({ id: _, ...e }) => e);
+    // A rename back (a -> b -> a) reaches the same rows twice.
+    const rows = new Map(this.historyRows(name, before).map((r) => [r.id, r]));
+    return [...rows.values()].sort((a, b) => a.id - b.id).map(({ id: _, ...e }) => e);
   }
 
   // Rows of `name` before row `before`, and for each rename that brought the
@@ -489,21 +510,36 @@ export class Codebase {
     }
     if (diagnostics.length > 0) return rejected(diagnostics, shown);
 
-    // 2. The program after the transaction.
+    // 2. The program after the transaction: renames first, with their
+    // followers, then the other changes on top. A replace of a follower wins
+    // over the rewrite.
+    const renames = planned.filter((p) => p.op === "rename");
+    const rewritten = renames.length > 0 ? this.rewriteForRenames(renames, current) : new Map<string, Rewritten>();
     const next = new Map([...current].map(([name, c]) => [name, c.def]));
+    for (const r of rewritten.values()) {
+      if (r.renamed) next.delete(r.from);
+      next.set(r.name, r.def);
+    }
     for (const p of planned) {
+      if (p.op === "rename") continue;
       if (p.def) next.set(p.name, p.def);
       else next.delete(p.name);
     }
+    const defs = [...next.keys()].sort().map((name) => next.get(name)!);
 
-    // 3. Callers outside the transaction must not be broken by it.
-    const members = new Set(planned.map((p) => p.name));
+    // 3. Callers outside the transaction must not be broken by it. Only what
+    // the caller wrote is inside: renamed definitions and followers are
+    // rewritten mechanically, not adapted.
+    const members = new Set(planned.filter((p) => p.op !== "rename").map((p) => p.name));
     for (const p of planned) diagnostics.push(...this.callerRule(p, current, members));
     if (diagnostics.length > 0) return rejected(diagnostics);
+    if (renames.length > 0) {
+      const captured = this.captures(rewritten, renames, defs, members);
+      if (captured.length > 0) return rejected(captured);
+    }
 
     // 4. Acceptance of the whole resulting program (6.3). It re-runs every
     // example, so a caller whose example a changed body breaks is reported.
-    const defs = [...next.keys()].sort().map((name) => next.get(name)!);
     let accepted: Accepted;
     try {
       accepted = await acceptDefinitions(defs, this.acceptPath);
@@ -515,17 +551,22 @@ export class Codebase {
     // 5. Rows from the accepted trees: their check info is keyed by node.
     const rows: Row[] = [];
     const unchanged: string[] = [];
+    const row = (name: string, op: Operation, def: Definition, other?: string): Row => {
+      const text = printDefinition(def);
+      const refs = dependencies(def, accepted.built.info);
+      return { name, op, other, hash: hashText(text), kind: def.kind, text, signature: printSignature(def), refs };
+    };
     for (const p of planned) {
-      if (p.op === "remove" || !p.def) continue;
-      const text = printDefinition(p.def);
-      const hash = hashText(text);
-      if (p.op === "replace" && hash === p.guard) {
-        unchanged.push(p.name);
-        continue;
+      if (p.op === "rename") {
+        const r = rewritten.get(p.name)!;
+        rows.push(row(r.name, "rename", r.def, r.from));
+      } else if (p.def) {
+        const r = row(p.name, p.op, p.def);
+        if (p.op === "replace" && r.hash === p.guard) unchanged.push(p.name);
+        else rows.push(r);
       }
-      const refs = dependencies(p.def, accepted.built.info);
-      rows.push({ name: p.name, op: p.op, hash, kind: p.def.kind, text, signature: printSignature(p.def), refs });
     }
+    for (const r of rewritten.values()) if (!r.renamed && !members.has(r.from)) rows.push(row(r.name, "follow", r.def));
 
     // 6. One SQLite transaction. Another process may have written since the
     // snapshot; then the accepted program is not what would be stored, so
@@ -540,28 +581,43 @@ export class Codebase {
         return await this.apply(changes, attempt + 1);
       }
       const history = this.db.prepare(
-        "INSERT INTO history (name, hash, changed_at, operation, other_name) VALUES (?, ?, ?, ?, NULL)",
+        "INSERT INTO history (name, hash, changed_at, operation, other_name) VALUES (?, ?, ?, ?, ?)",
       );
-      for (const row of rows) {
-        this.store(row);
-        this.db.prepare("INSERT OR REPLACE INTO names (name, hash) VALUES (?, ?)").run(row.name, row.hash);
-        history.run(row.name, row.hash, changedAt, row.op);
+      const unname = this.db.prepare("DELETE FROM names WHERE name = ?");
+      // Pointers that go away: old names of renames, removed names.
+      for (const p of renames) unname.run(p.name);
+      for (const p of planned) if (p.op === "remove") unname.run(p.name);
+      for (const r of rows) {
+        this.store(r);
+        this.db.prepare("INSERT OR REPLACE INTO names (name, hash) VALUES (?, ?)").run(r.name, r.hash);
+        history.run(r.name, r.hash, changedAt, r.op, r.other ?? null);
       }
-      for (const p of planned) {
-        if (p.op !== "remove") continue;
-        this.db.prepare("DELETE FROM names WHERE name = ?").run(p.name);
-        history.run(p.name, null, changedAt, "remove");
-      }
+      for (const p of planned) if (p.op === "remove") history.run(p.name, null, changedAt, "remove", null);
+      // The old name's entry comes after the new one's, so that `history` of
+      // the new name, which continues with the old name's entries before the
+      // rename, does not list the rename twice.
+      for (const p of renames) history.run(p.name, null, changedAt, "rename", p.to);
       this.db.exec("COMMIT");
     } catch (e) {
       if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw e;
     }
-    const written = planned.flatMap((p): Written[] => {
-      if (p.op === "remove") return [{ name: p.name, hash: null, operation: p.op }];
-      const row = rows.find((r) => r.name === p.name);
-      return row ? [{ name: p.name, hash: row.hash, operation: p.op }] : [];
-    });
+    const written = [
+      ...planned.flatMap((p): Written[] => {
+        if (p.op === "remove") return [{ name: p.name, hash: null, operation: p.op }];
+        if (p.op === "rename") {
+          const to = rows.find((r) => r.name === p.to)!;
+          return [{ name: p.name, hash: null, operation: p.op }, { name: to.name, hash: to.hash, operation: p.op }];
+        }
+        const r = rows.find((r) => r.name === p.name);
+        return r ? [{ name: p.name, hash: r.hash, operation: p.op }] : [];
+      }),
+      ...rows.filter((r) => r.op === "follow").map((r): Written => ({
+        name: r.name,
+        hash: r.hash,
+        operation: "follow",
+      })),
+    ];
 
     // 7. The export of the affected modules (Storage). The database has
     // committed; if writing fails, `exportAll` brings the files back in line.
@@ -579,7 +635,7 @@ export class Codebase {
     shown: Version[],
   ): Planned | null {
     let def: Definition | null = null;
-    if (change.op !== "remove") {
+    if (change.op === "add" || change.op === "replace") {
       let defs: Definition[];
       try {
         defs = parseProgram(change.text);
@@ -626,7 +682,7 @@ export class Codebase {
         shown.push({ name, hash: cur.hash, text: cur.text });
         return null;
       }
-      return { op: "add", name, at, def, guard: null };
+      return { op: "add", name, at, def, guard: null, to: null };
     }
 
     if (!cur) {
@@ -657,14 +713,146 @@ export class Codebase {
       }));
       return null;
     }
-    return { op: change.op, name, at, def, guard: change.hash };
+    if (change.op === "rename") return this.planRename(change, cur, at, current, touched, diagnostics, shown);
+    return { op: change.op, name, at, def, guard: change.hash, to: null };
+  }
+
+  // The checks of a rename that need no other change: the new name is free,
+  // valid for the kind, and not in `std` (E0509).
+  private planRename(
+    change: Extract<Change, { op: "rename" }>,
+    cur: Current,
+    at: string,
+    current: ReadonlyMap<string, Current>,
+    touched: Set<string>,
+    diagnostics: Diagnostic[],
+    shown: Version[],
+  ): Planned | null {
+    const { name, to } = change;
+    const invalid = (why: string) => {
+      diagnostics.push(diagnostic({
+        code: "E0509",
+        definition: name,
+        at,
+        message: `\`${to}\` cannot be the new name of \`${name}\`: ${why}`,
+      }));
+      return null;
+    };
+    if (to === name) return invalid("it is the current name.");
+    if (to.split(".")[0] === "std") return invalid("the module `std` is reserved for the standard library.");
+    // The new name must survive printing and parsing as the name of this kind.
+    try {
+      const reparsed = parseProgram(printDefinition({ ...cur.def, path: to.split(".") }));
+      if (reparsed.length !== 1 || pathText(reparsed[0].path) !== to) return invalid("it is not a valid name.");
+    } catch (e) {
+      if (!(e instanceof AlangError)) throw e;
+      return invalid(e.diagnostic.message);
+    }
+    if (touched.has(to)) {
+      diagnostics.push(diagnostic({
+        code: "E0508",
+        definition: to,
+        at,
+        message: `\`${to}\` is changed twice in this transaction; submit one change per name.`,
+      }));
+      return null;
+    }
+    touched.add(to);
+    const taken = current.get(to);
+    if (taken) {
+      diagnostics.push(diagnostic({
+        code: "E0503",
+        definition: to,
+        at,
+        message: `\`${to}\` already exists; its current version is under \`current\`.`,
+      }));
+      shown.push({ name: to, hash: taken.hash, text: taken.text });
+      return null;
+    }
+    return { op: "rename", name, at, def: null, guard: change.hash, to };
+  }
+
+  // Rewrites the renamed definitions and every definition that refers to them
+  // (6.1: references are names, so a rename rewrites its callers). All renames
+  // of the transaction go through one mapping; a variant type that changes
+  // module takes its cases along. Keyed by the old name; a caller whose text
+  // does not change is left out.
+  private rewriteForRenames(
+    renames: readonly Planned[],
+    current: ReadonlyMap<string, Current>,
+  ): Map<string, Rewritten> {
+    const { info } = checkProgram([...current.values()].map((c) => c.def));
+    const moves = new Map<string, string>();
+    for (const r of renames) {
+      moves.set(r.name, r.to!);
+      const from = moduleName(r.name);
+      const to = moduleName(r.to!);
+      if (from === to) continue;
+      for (const c of casesOf(current.get(r.name)!.def)) moves.set(c, `${to}${c.slice(from.length)}`);
+    }
+    const target = (ref: Ref) => moves.get(ref.full) ?? ref.full;
+    const affected = new Set<string>();
+    for (const r of renames) {
+      affected.add(r.name);
+      for (const c of this.callersOf(r.name, current.get(r.name)!.def)) affected.add(c);
+    }
+    const out = new Map<string, Rewritten>();
+    for (const from of [...affected].sort()) {
+      const cur = current.get(from)!;
+      const renamed = renames.some((r) => r.name === from);
+      const path = renamed ? moves.get(from)!.split(".") : cur.def.path;
+      const def = mapReferences(cur.def, info, target, path);
+      if (!renamed && printDefinition(def) === cur.text) continue;
+      const expected = new Set(dependencies(cur.def, info).map((d) => moves.get(d) ?? d));
+      out.set(from, { from, name: pathText(path), def, renamed, expected });
+    }
+    return out;
+  }
+
+  // A rename must not change what a rewritten definition refers to: a new
+  // name can be captured by a local binding (`by: g` with a local `g`, or
+  // `path.parse(...)` with a parameter `path`). Checks the program after the
+  // transaction and reports E0510 for every rewritten definition whose
+  // references differ from the expected ones or that no longer checks; then
+  // the other definitions' diagnostics of the same check, if any.
+  private captures(
+    rewritten: ReadonlyMap<string, Rewritten>,
+    renames: readonly Planned[],
+    defs: readonly Definition[],
+    members: ReadonlySet<string>,
+  ): Diagnostic[] {
+    const { diagnostics, info } = checkProgram(defs);
+    const checked = [...rewritten.values()].filter((r) => !members.has(r.from));
+    const names = new Set(checked.map((r) => r.name));
+    const found: Diagnostic[] = [];
+    for (const r of checked) {
+      const actual = new Set(dependencies(r.def, info));
+      const lost = [...r.expected].filter((d) => !actual.has(d));
+      const gained = [...actual].filter((d) => !r.expected.has(d));
+      const broken = diagnostics.find((d) => d.definition === r.name);
+      if (lost.length === 0 && gained.length === 0 && !broken) continue;
+      const rename = renames.find((p) => p.name === r.from) ??
+        renames.find((p) => r.expected.has(p.to!)) ?? renames[0];
+      const why = broken
+        ? `it no longer checks: ${broken.message} (at \`${broken.at}\`)`
+        : `it would no longer refer to ${list(lost)}` + (gained.length > 0 ? `, but to ${list(gained)}` : "");
+      found.push(diagnostic({
+        code: "E0510",
+        definition: r.name,
+        at: rename.at,
+        message: `The rename changes what \`${r.name}\` refers to: ${why}. A local binding probably has the new ` +
+          "name; choose another new name, or rename that binding first.",
+      }));
+    }
+    if (found.length === 0) return [];
+    return [...found, ...diagnostics.filter((d) => d.definition === null || !names.has(d.definition))];
   }
 
   // The rules that protect callers outside the transaction: a replace may not
   // change the interface they use (E0506), and a remove may not take away a
   // definition they use (E0507).
   private callerRule(p: Planned, current: ReadonlyMap<string, Current>, members: ReadonlySet<string>): Diagnostic[] {
-    if (p.op === "add") return [];
+    if (p.op === "add" || p.op === "rename") return [];
     const before = current.get(p.name)!.def;
     const outside = (names: Iterable<string>) => [...names].filter((n) => !members.has(n));
 

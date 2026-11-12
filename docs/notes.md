@@ -28,12 +28,14 @@ is the user's call.
 - Step 2 done: the queries `signature`, `context`, `list`, `searchText`, `searchType` (patterns in `src/search.ts`),
   `history`.
 - Step 3 done: the export after each transaction, `exportAll`, `importAll`.
-- Next: step 4, `rename`.
+- Step 4 done: `rename`, with followers, moving variant cases, and the capture check (E0510).
+- Next: step 5, a thin CLI (`alang db ...`, JSON output). It needs a multi-change `submit` (e.g. a JSON file of
+  changes), or E0506's "submit them in the same transaction" cannot be followed from the command line.
 
 **After the database:** the MCP server around its queries and operations (its own phase). `extern fn` and `const`
 are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (121 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (132 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -201,10 +203,16 @@ Stop after the database. The MCP server is its own phase.
 
 ## From the database (2026-11-12)
 
-- **1.2 is not enforced for the own module.** The checker accepts `net.port.Port` written inside `net.port`, although
-  1.2 says names of the same module are written short. Two spellings give two texts and two hashes for one meaning.
-  The interface rule compares full names, so it is not fooled; the checker should still reject the long form, with
-  the short form as fix.
+- **1.2 is not enforced for the own module, and inconsistently.** The checker accepts `net.port.Port` written as a type
+  inside `net.port`, but rejects `geo.Empty` as a pattern inside `geo` (E0214, "not a case of `Shape`"). 1.2 says names
+  of the same module are written short. Two spellings give two texts and two hashes for one meaning. The interface
+  rule compares full names, so it is not fooled, and `rename` always writes the short form. The checker should
+  reject the long form everywhere, with the short form as fix.
+- **Renaming and editing one definition takes two transactions** (E0508 counts both names of a rename). Allowing
+  `replace(new_name, ...)` after `rename` in one transaction would need a guard for a name that does not exist yet.
+- **Capture is only possible through locals.** A call path always means a module function, and a new name that
+  exists is E0503, so the only way a rename can change what a reference denotes is a local binding with the new
+  name (function values) or with the new module's first segment (method-call reading). E0510 covers both.
 - **Every submit loads, parses and accepts the whole program**, and the write compares every name with the snapshot.
   Fine for the prototype; a large codebase wants a cached parsed program and acceptance limited to the changed
   definitions and their dependents (see "Examples as a regression net").
