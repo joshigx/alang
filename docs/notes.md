@@ -51,11 +51,16 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
   in one definition. Options: quote the whole statement, add an occurrence index, or include the enclosing `case`.
 - **`error` for `None`.** In `let ... else` on an `Option`, `error` is bound to `Unit`. Not binding it at all would be
   cleaner, but then using it would be an "unknown name" instead of a clear message.
-- **Reserve the `std` namespace.** User definitions named `std.*` are accepted today and would collide with the
-  runtime.
 - **Locals vs module functions.** A local named like a function of the module wins over it as a value. A stricter
   rule (forbid the clash) would break locality: adding a function could break unrelated bodies.
 - **Expression-position `if`/`match`/`for`** could now be emitted anywhere by hoisting into temporaries (types are
   known); evaluation order requires hoisting the sibling expressions to the left as well.
 - **`std.text.show` of strings** uses JSON quoting, not alang's escape rules; it should print canonical alang text.
 - **Diagnostics for the 4.8 depth limit** would naturally live in the checker's block walk.
+- **Checked output is a real guard.** Emitting every accepted test program and running `deno check` over all of them
+  found three emitter bugs the hand-picked end-to-end programs missed (literal `===` rejected by TypeScript, `error`
+  typed `E | Unit`, `for` inside a branch typed `unknown[]`). Keep adding every new `clean(...)` case there; a
+  generator of random well-typed programs would push this further.
+- **The std library is provisional.** Rule 3.8 freezes published signatures, so names and parameter names in
+  `src/std.ts` (`with:`, `left:`/`right:`, `std.string.concat`, ...) should be reviewed before anything is
+  "published".

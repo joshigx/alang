@@ -57,11 +57,12 @@ export function isPresent<T>(r: Result<T, unknown> | Option<T>): r is Ok<T> | So
   return r.tag === "Ok" || r.tag === "Some";
 }
 
-export function failureOf<E>(r: Err<E> | None): E | Unit {
-  return r.tag === "Err" ? r.value : Unit;
-}
-
 // ---- equality and order (rule 3.9) ----
+
+// Equality of Int, Float, Bool, String and Unit.
+export function same<T extends number | string | boolean | null>(a: T, b: T): boolean {
+  return a === b;
+}
 
 export function eq(a: unknown, b: unknown): boolean {
   if (a === b) return true;

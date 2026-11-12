@@ -7,6 +7,7 @@ import { type CheckOptions, checkProgram } from "../src/check.ts";
 import type { Diagnostic } from "../src/diagnostic.ts";
 import { parseProgram } from "../src/parser.ts";
 import { STD } from "../src/std.ts";
+import { build } from "../src/toolchain.ts";
 import * as runtime from "../src/runtime.ts";
 import { con, list, result, STRING } from "../src/types.ts";
 
@@ -49,9 +50,15 @@ function one(source: string, code: string): Diagnostic {
   return ds[0];
 }
 
+// Every accepted program with the default std is also emitted and checked by
+// TypeScript at the end, so that whatever the checker accepts TypeScript
+// accepts too ("Checked output" in the spec).
+const accepted: string[] = [];
+
 function clean(source: string, options?: CheckOptions): void {
   const ds = check(source, options);
   assertEquals(ds, [], JSON.stringify(ds, null, 2));
+  if (!options) accepted.push(source);
 }
 
 const POINT = 'type m.Point\n  doc: "A point."\n  record:\n    x: Int\n    y: Int\n  where: none\nend type m.Point';
@@ -267,6 +274,15 @@ Deno.test("check: uniqueness of definitions, cases, fields and params", () => {
     "E0215",
   );
   one(fn("return a", { params: ["a: Int", "a: Int"] }), "E0215");
+  one(
+    fn("return 1", { extra: 'type m.Option\n  doc: "O."\n  record:\n    v: Int\n  where: none\nend type m.Option' }),
+    "E0215",
+  );
+  one(
+    fn("return 1", { extra: 'type m.R\n  doc: "R."\n  variant:\n    Ok: Int\n    Bad\n  where: none\nend type m.R' }),
+    "E0215",
+  );
+  one(G.replaceAll("m.g", "std.g"), "E0215");
 });
 
 // ---- match ----
@@ -395,4 +411,57 @@ Deno.test("check: the std table can be given explicitly", () => {
   const ds = check(fn('return std.string.length(text: "a")'), { std: [] });
   assertEquals(ds.map((d) => d.code), ["E0201"]);
   assertEquals(list(STRING).k, "con");
+});
+
+Deno.test("check: programs that stress the emitter's TypeScript", () => {
+  // Literal and narrowed operands of ==.
+  clean(fn("let flag: Bool = true\nreturn flag == false", { out: "Bool" }));
+  clean(fn("return 1 == 2", { out: "Bool" }));
+  clean(fn('return "a" != "b"', { out: "Bool" }));
+  // `error` of a Result, as in config.load_port.
+  clean(
+    specBlock("type net.port.Port") + "\n\n" + [
+      "fn net.port.value_of",
+      '  doc: "The port number of the text."',
+      "  in:",
+      "    text: String",
+      "  out: Result<Int, ParseError>",
+      "  effects: none",
+      "  requires: none",
+      "  ensures: none",
+      "  examples:",
+      '    value_of(text: "80") == Ok(80)',
+      "  body:",
+      "    let port: Port = parse(text: text) else return Err(error)",
+      "    return Ok(port.value)",
+      "end fn net.port.value_of",
+    ].join("\n"),
+  );
+  // A for collecting values inside an if branch.
+  clean(fn(
+    "if std.list.length(list: xs) > 0 then\n  return for x: Int in xs do\n    x + 1\n  end for\nend if\nreturn xs",
+    { params: ["xs: List<Int>"], out: "List<Int>" },
+  ));
+  // A user variant narrowed by its initializer, then matched.
+  clean(fn(
+    "let s: Shape = Circle(1)\nlet n: Int = match s\n  case Circle(r) then\n    r\n  case Square(a) then\n    a\n  case Dot then\n    0\nend match\nreturn n",
+    { extra: SHAPE },
+  ));
+  // Order values and a match on them.
+  clean(fn(
+    "let o: Order = std.int.compare(left: 1, right: 2)\nlet n: Int = match o\n  case Less then\n    -1\n  case Equal then\n    0\n  case Greater then\n    1\nend match\nreturn n",
+  ));
+});
+
+Deno.test("check: every accepted program is accepted by TypeScript too", async () => {
+  const dir = new URL("../out/test/accepted/", import.meta.url).pathname;
+  await Deno.remove(dir, { recursive: true }).catch(() => {});
+  const files: string[] = [];
+  for (const [i, source] of accepted.entries()) {
+    files.push((await build(source, `${dir}program_${i}.ts`)).outPath);
+  }
+  assertEquals(files.length > 15, true);
+  const result = await new Deno.Command(Deno.execPath(), { args: ["check", ...files], stderr: "piped" }).output();
+  const stderr = new TextDecoder().decode(result.stderr);
+  assertEquals(result.success, true, stderr);
 });

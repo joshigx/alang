@@ -135,6 +135,21 @@ export function checkProgram(defs: readonly Definition[], options: CheckOptions 
       continue;
     }
     seen.add(name);
+    const last = def.path[def.path.length - 1];
+    if (def.kind === "type" && (BUILTIN_TYPES.has(last) || BUILTIN_VALUES.has(last))) {
+      c.report(
+        "E0215",
+        `type ${name}`,
+        `\`${last}\` is a built-in name and is always written short (1.2); choose another name.`,
+      );
+      checkers.delete(def);
+      continue;
+    }
+    if (def.path[0] === "std" && defs.includes(def)) {
+      c.report("E0215", `${def.kind} ${name}`, "The module `std` is reserved for the standard library.");
+      checkers.delete(def);
+      continue;
+    }
     if (def.kind === "type") {
       env.types.set(
         name,
@@ -257,6 +272,10 @@ class DefChecker {
       for (const c of def.shape.cases) {
         const full = `${this.module}.${c.name}`;
         const at = c.payload ? `${c.name}: ${printTypeRef(c.payload)}` : c.name;
+        if (BUILTIN_VALUES.has(c.name) || BUILTIN_TYPES.has(c.name)) {
+          this.report("E0215", at, `\`${c.name}\` is a built-in name; choose another case name.`);
+          continue;
+        }
         if (this.env.cases.has(full)) {
           this.report(
             "E0215",

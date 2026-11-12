@@ -10,7 +10,7 @@ import type { Definition, Expr, FnDef, Path, Pattern, Stmt, TypeDef, TypeRef } f
 import { moduleOf, pathText } from "./ast.ts";
 import type { CheckInfo } from "./check.ts";
 import { AlangError, diagnostic } from "./diagnostic.ts";
-import { FLOAT, INT, STRING, type Type, typeEquals } from "./types.ts";
+import { FLOAT, INT, isCon, STRING, type Type, typeEquals } from "./types.ts";
 import { printExpr } from "./printer.ts";
 
 export interface EmitOptions {
@@ -115,7 +115,9 @@ class DefinitionEmitter {
         // Primitives compare natively; everything else structurally (3.9).
         const primitive = t.k === "con" && t.args.length === 0 &&
           ["Int", "Float", "Bool", "String", "Unit"].includes(t.name);
-        if (primitive) return `(${l} ${e.op === "==" ? "===" : "!=="} ${r})`;
+        // Through a function, since TypeScript rejects `===` on operands it
+        // has narrowed to different literals (`1 === 2`).
+        if (primitive) return `${e.op === "!=" ? "!" : ""}${RT}.same(${l}, ${r})`;
         return `${e.op === "!=" ? "!" : ""}${RT}.eq(${l}, ${r})`;
       }
       case "<":
@@ -144,6 +146,39 @@ class DefinitionEmitter {
   }
 
   // ---- types ----
+
+  // TypeScript type of a checker type.
+  private tsType(t: Type): string {
+    switch (t.k) {
+      case "con": {
+        const args = t.args.map((a) => this.tsType(a));
+        switch (t.name) {
+          case "Int":
+          case "Float":
+            return "number";
+          case "Bool":
+            return "boolean";
+          case "String":
+            return "string";
+          case "Unit":
+          case "Order":
+            return `${RT}.${t.name}`;
+          case "List":
+            return `readonly ${args[0]}[]`;
+          case "Map":
+            return `ReadonlyMap<${args.join(", ")}>`;
+          case "Option":
+          case "Result":
+            return `${RT}.${t.name}<${args.join(", ")}>`;
+        }
+        return this.globalRef(t.name.split("."));
+      }
+      case "fn":
+        return `((${t.params.map((p, i) => `p${i}: ${this.tsType(p)}`).join(", ")}) => ${this.tsType(t.out)})`;
+      default:
+        throw new Error(`no TypeScript type for ${t.k} in ${this.name}`);
+    }
+  }
 
   private ts(t: TypeRef): string {
     const args = t.args.map((a) => this.ts(a));
@@ -227,14 +262,14 @@ class DefinitionEmitter {
       const inner = scope.child();
       lines.push(
         `  const result: ${out} = ((): ${out} => {`,
-        ...indent(this.block(def.body, inner, DISCARD, def.out), 2),
+        ...indent(this.block(def.body, inner, DISCARD), 2),
         "  })();",
       );
       const ensuresScope = scope.child();
       ensuresScope.add("result", "result");
       lines.push(...indent(this.check("ensures", def.ensures, ensuresScope), 1), "  return result;");
     } else {
-      lines.push(...indent(this.block(def.body, scope.child(), DISCARD, def.out), 1));
+      lines.push(...indent(this.block(def.body, scope.child(), DISCARD), 1));
     }
     lines.push("}");
     return lines;
@@ -263,13 +298,11 @@ class DefinitionEmitter {
 
   // ---- statements ----
 
-  // `expected` is the declared type of the block's value, where known; it
-  // types the list a `for` collects into.
-  private block(stmts: readonly Stmt[], scope: Scope, sink: Sink, expected: TypeRef | null): string[] {
+  private block(stmts: readonly Stmt[], scope: Scope, sink: Sink): string[] {
     const lines: string[] = [];
     stmts.forEach((s, i) => {
       const last = i === stmts.length - 1;
-      lines.push(...this.stmt(s, scope, last ? sink : DISCARD, last ? expected : null));
+      lines.push(...this.stmt(s, scope, last ? sink : DISCARD));
       if (last && s.kind === "let" && (sink.kind === "assign" || sink.kind === "push")) {
         lines.push(this.applySink(sink, `${RT}.Unit`));
       }
@@ -277,7 +310,7 @@ class DefinitionEmitter {
     return lines;
   }
 
-  private stmt(s: Stmt, scope: Scope, sink: Sink, expected: TypeRef | null): string[] {
+  private stmt(s: Stmt, scope: Scope, sink: Sink): string[] {
     switch (s.kind) {
       case "let": {
         const type = this.ts(s.type);
@@ -285,10 +318,12 @@ class DefinitionEmitter {
           const tmp = this.temp("r");
           const elseScope = scope.child();
           const err = elseScope.add("error");
+          // `error` is the Err value of a Result, and Unit for an Option.
+          const isResult = isCon(this.typeOf(s.value), "Result");
           const lines = [
             `const ${tmp} = ${this.expr(s.value, scope)};`,
             `if (!${RT}.isPresent(${tmp})) {`,
-            `  const ${err} = ${RT}.failureOf(${tmp});`,
+            `  const ${err} = ${isResult ? `${tmp}.value` : `${RT}.Unit`};`,
             `  return ${this.expr(s.elseReturn, elseScope)};`,
             "}",
           ];
@@ -299,7 +334,7 @@ class DefinitionEmitter {
           const target = local(s.name);
           const lines = [
             `let ${target}: ${type};`,
-            ...this.blockExpr(s.value, scope, { kind: "assign", target }, s.type),
+            ...this.blockExpr(s.value, scope, { kind: "assign", target }),
           ];
           scope.add(s.name);
           return lines;
@@ -308,10 +343,10 @@ class DefinitionEmitter {
         return [`const ${scope.add(s.name)}: ${type} = ${value};`];
       }
       case "return":
-        if (isBlock(s.value)) return this.blockExpr(s.value, scope, { kind: "return" }, expected);
+        if (isBlock(s.value)) return this.blockExpr(s.value, scope, { kind: "return" });
         return [`return ${this.expr(s.value, scope)};`];
       case "expr":
-        if (isBlock(s.expr)) return this.blockExpr(s.expr, scope, sink, expected);
+        if (isBlock(s.expr)) return this.blockExpr(s.expr, scope, sink);
         return [this.applySink(sink, this.expr(s.expr, scope))];
     }
   }
@@ -331,15 +366,15 @@ class DefinitionEmitter {
 
   // `if`, `match` and `for` compile to statements that deliver their value
   // into the sink, so a `return` inside them leaves the function.
-  private blockExpr(e: Expr, scope: Scope, sink: Sink, expected: TypeRef | null): string[] {
+  private blockExpr(e: Expr, scope: Scope, sink: Sink): string[] {
     switch (e.kind) {
       case "if": {
         const lines = [
           `if (${this.expr(e.cond, scope)}) {`,
-          ...indent(this.block(e.then, scope.child(), sink, expected), 1),
+          ...indent(this.block(e.then, scope.child(), sink), 1),
         ];
         if (e.else) {
-          lines.push("} else {", ...indent(this.block(e.else, scope.child(), sink, expected), 1));
+          lines.push("} else {", ...indent(this.block(e.else, scope.child(), sink), 1));
         } else if (sink.kind !== "discard") {
           lines.push("} else {", `  ${this.applySink(sink, `${RT}.Unit`)}`);
         }
@@ -357,7 +392,7 @@ class DefinitionEmitter {
           const test = conds.length === 0 ? "true" : conds.join(" && ");
           lines.push(`${i === 0 ? "if" : "} else if"} (${test}) {`);
           for (const [name, access] of binds) lines.push(`  const ${armScope.add(name)} = ${access};`);
-          lines.push(...indent(this.block(arm.body, armScope, sink, expected), 1));
+          lines.push(...indent(this.block(arm.body, armScope, sink), 1));
         });
         lines.push(
           "} else {",
@@ -373,14 +408,15 @@ class DefinitionEmitter {
         const bodyScope = scope.child();
         const head = `for (const ${bodyScope.add(e.name)} of ${iterable}) {`;
         if (sink.kind === "discard") {
-          return [head, ...indent(this.block(e.body, bodyScope, DISCARD, null), 1), "}"];
+          return [head, ...indent(this.block(e.body, bodyScope, DISCARD), 1), "}"];
         }
-        const elem = expected && expected.path.length === 1 && expected.path[0] === "List" ? expected.args[0] : null;
+        const t = this.typeOf(e);
+        if (!isCon(t, "List")) throw new Error(`for without a List type in ${this.name}`);
         const list = this.temp("f");
         return [
-          `const ${list}: ${elem ? this.ts(elem) : "unknown"}[] = [];`,
+          `const ${list}: ${this.tsType(t.args[0])}[] = [];`,
           head,
-          ...indent(this.block(e.body, bodyScope, { kind: "push", target: list }, elem), 1),
+          ...indent(this.block(e.body, bodyScope, { kind: "push", target: list }), 1),
           "}",
           this.applySink(sink, list),
         ];

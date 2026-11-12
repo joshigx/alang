@@ -243,12 +243,58 @@ fn calc.sorted
 end fn calc.sorted
 `;
 
+// Nested patterns and `error` of a Result, on top of the spec's port module.
+const PORT_PLUS = specBlock("type net.port.Port") + `
+
+fn net.port.describe
+  doc: "Names the outcome of parsing the text."
+  in:
+    text: String
+  out: String
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    describe(text: "80") == "port 80"
+    describe(text: "x") == "not a number"
+    describe(text: "70_000") == "not a number"
+    describe(text: "70000") == "out of range: 70000"
+  body:
+    let s: String = match parse(text: text)
+      case Ok(port) then
+        std.string.concat(left: "port ", right: std.text.show(value: port.value))
+      case Err(NotANumber) then
+        "not a number"
+      case Err(OutOfRange(n)) then
+        std.string.concat(left: "out of range: ", right: std.text.show(value: n))
+    end match
+    return s
+end fn net.port.describe
+
+fn net.port.value_of
+  doc: "The port number of the text."
+  in:
+    text: String
+  out: Result<Int, ParseError>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    value_of(text: "80") == Ok(80)
+    value_of(text: "0") == Err(OutOfRange(0))
+  body:
+    let port: Port = parse(text: text) else return Err(error)
+    return Ok(port.value)
+end fn net.port.value_of
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
   clamp: specBlock("fn math.clamp"),
   blocks: BLOCKS,
   calc: CALC,
+  port_plus: PORT_PLUS,
 };
 
 const built: Record<string, Built> = {};
@@ -272,7 +318,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
   assert_(!bad.success, "deno check accepted an ill-typed file");
 });
 
-for (const name of ["hello", "port", "clamp", "calc"]) {
+for (const name of ["hello", "port", "clamp", "calc", "port_plus"]) {
   Deno.test(`emit: spec examples of ${name} pass`, async () => {
     const results = await testExamples(built[name]);
     assertEquals(results.filter((r) => !r.passed), []);
