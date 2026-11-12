@@ -292,6 +292,13 @@ Deno.test("check: names of the own module are written short (1.2)", () => {
     assertEquals([d.fix, d.expected], [{ replace: d.fix!.replace, with: short }, short]);
     clean(source.replace(d.at, d.at.replace(d.fix!.replace, d.fix!.with)));
   }
+  // A local with the short name takes it, so where a function is passed as
+  // a value the full name is then the only spelling, and no error.
+  const captured =
+    "let xs: List<Int> = std.list.empty<Int>()\nlet ys: List<Int> = std.list.map(list: xs, with: m.h)\n" +
+    "return h";
+  clean(fn(captured, { params: ["h: Int"], extra: H }));
+  one(fn(captured.replace("with: m.h", "with: h"), { params: ["h: Int"], extra: H }), "E0204");
   // Each long name is one diagnostic, also nested in a type.
   const twice = check(fn("let p: Result<m.Point, m.Point> = Ok(Point(x: 1, y: 2))\nreturn 0", { extra: POINT }));
   assertEquals(twice.map((d) => d.code), ["E0226", "E0226"]);

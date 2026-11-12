@@ -380,6 +380,23 @@ Deno.test("sync: an imported file that is not canonical is rewritten", async () 
   await done(cb);
 });
 
+Deno.test("sync: an own-module name written in full by hand is stored short, and the file rewritten", async () => {
+  const cb = await withPort();
+  const canonical = await files(cb);
+  const hash = hashOf(cb, "net.port.parse");
+  const long = canonical["net.port.alang"].replace(
+    "out: Result<Port, ParseError>",
+    "out: Result<net.port.Port, ParseError>",
+  );
+  assert_(long !== canonical["net.port.alang"]);
+  await Deno.writeTextFile(join(cb.dir, "export", "net.port.alang"), long);
+  const r = await synced(cb);
+  assertEquals([r.exported, r.imported], [["net.port"], []]);
+  assertEquals(await files(cb), canonical);
+  assertEquals(hashOf(cb, "net.port.parse"), hash);
+  await done(cb);
+});
+
 Deno.test("sync: a pull while a submit is accepted starts the submit over", async () => {
   // A new definition in the module the pull changed goes in on top of it.
   const pulled = `${PARSE_ERROR}\n\n${PORT}\n\n${PARSE_REORDERED}\n`;

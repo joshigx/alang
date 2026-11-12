@@ -79,10 +79,13 @@ edit): answer questions about its current state from a fresh query, not from ear
 need to change it.
 3. Change: \`replace(name, hash, text)\` with the complete new definition and the hash the query returned. Hashes \
 are guards; never write one into code. A change is parsed, type- and effect-checked, and every example of the \
-program is run (each pure function needs at least one); it is written, in canonical form, only if all of that passes.
+program is run (each pure function needs at least one); it is written, in canonical form, only if all of that passes. \
+Names of the definition's own module are written short (\`parse\` inside \`net.port\`), all others in full \
+(\`std.int.parse\`).
 4. Results: \`ok: true\` lists each written name with its new hash, which the next change can use without another \
-query. \`ok: false\` means nothing was written; it lists \`diagnostics\` (code, definition, section, at: the quoted \
-location, message, expected, fix) and \`current\` versions. E0501 (stale hash): redo the change on the version in \
+query; \`fixed\`, if present, lists own-module names you wrote in full, which were stored short. \`ok: false\` \
+means nothing was written; it lists \`diagnostics\` (code, definition, section, at: the quoted location, message, \
+expected, fix) and \`current\` versions. E0501 (stale hash): redo the change on the version in \
 \`current\`. E0506 (interface changed): send the change together with the callers it names, adapted, in one \`submit\`.
 5. E0513 (an export file and the database both changed): stop and tell the user. Do not run \`alang db import\` or \
 \`alang db export --force\` yourself; which side wins is the user's call.`;

@@ -130,16 +130,90 @@ Deno.test("codebase: doc and examples are not interface changes", async () => {
   const parse = PARSE
     .replace("Reads a TCP port number", "Parses a TCP port number")
     .replace("  examples:\n", '  examples:\n    parse(text: "1") == Ok(Port(value: 1))\n');
-  // A name of the own module has one spelling, the short one (1.2), so a
-  // full spelling cannot pose as a changed type.
+  // A name of the own module has one spelling, the short one (1.2): a full
+  // spelling is stored short, so it cannot pose as a changed type.
   const long = parse.replace("out: Result<Port, ParseError>", "out: Result<net.port.Port, ParseError>");
   const hash = hashOf(cb, "net.port.parse");
-  assertEquals(codes((await fails(cb, [{ op: "replace", name: "net.port.parse", hash, text: long }])).diagnostics), [
-    "E0226",
-  ]);
-  await ok(cb, [{ op: "replace", name: "net.port.parse", hash, text: parse }]);
+  const r = await ok(cb, [{ op: "replace", name: "net.port.parse", hash, text: long }]);
+  assertEquals(codes(r.fixed!), ["E0226"]);
+  assertEquals(cb.definition("net.port.parse").text, parse);
   const error = PARSE_ERROR.replace("Reasons why", "Why");
   await ok(cb, [{ op: "replace", name: "net.port.ParseError", hash: hashOf(cb, "net.port.ParseError"), text: error }]);
+  await done(cb);
+});
+
+Deno.test("codebase: own-module names written in full are stored short (1.2)", async () => {
+  const cb = await fresh();
+  await ok(cb, [add(fn("m.one", { out: "Int", examples: ["one() == 1"], body: "return 1" }))]);
+
+  // In a call and an example: accepted, stored short, and the applied E0226
+  // listed under `fixed`, one per place.
+  const two = fn("m.two", { out: "Int", examples: ["two() == 2"], body: "return one() + one()" });
+  const long = two.replace("two() == 2", "m.two() == 2").replace("one() + one()", "m.one() + m.one()");
+  const r = await ok(cb, [add(long)]);
+  assertEquals(
+    new Set(r.fixed!.map((d) => `${d.code} ${d.definition} ${d.fix!.replace} -> ${d.fix!.with}`)),
+    new Set([
+      "E0226 m.two m.one -> one",
+      "E0226 m.two m.two -> two",
+    ]),
+  );
+  assertEquals(r.fixed!.length, 3);
+  assertEquals(cb.definition("m.two").text, two);
+  assertEquals(cb.definition("m.two").hash, hashText(two));
+  assertEquals(
+    (await ok(cb, [add(fn("m.zero", { out: "Int", examples: ["zero() == 0"], body: "return 0" }))])).fixed,
+    undefined,
+  );
+
+  // With any other complaint nothing is shortened, so every diagnostic
+  // quotes the text as sent (5.5).
+  const before = dump(cb);
+  const typo = await fails(cb, [
+    add(fn("m.three", { out: "Int", examples: ["three() == 3"], body: "return m.one() + tw()" })),
+  ]);
+  assertEquals(codes(typo.diagnostics).sort(), ["E0201", "E0226"]);
+  // A failing example is found only once the names are shortened; the
+  // applied E0226 come first, since the example is quoted short.
+  const wrong = await fails(cb, [add(fn("m.three", { out: "Int", examples: ["m.three() == 4"], body: "return 3" }))]);
+  assertEquals(codes(wrong.diagnostics), ["E0226", "E0402"]);
+  assertEquals(dump(cb), before);
+
+  // A contract that names its module in full is the same contract: no
+  // interface change pulls the callers in (E0506).
+  const b = fn("m.b", { params: ["n: Int"], out: "Int", examples: ["b(n: 1) == 1"], body: "return n" })
+    .replace("  requires: none", "  requires: n >= one()");
+  const c = fn("m.c", {
+    out: "Unit",
+    effects: "console",
+    body: 'let x: Int = b(n: 1)\nstd.console.print_line(text: "c")\nreturn Unit',
+  });
+  await ok(cb, [add(b), add(c)]);
+  const same = b.replace("n >= one()", "n >= m.one()");
+  const s = await ok(cb, [{ op: "replace", name: "m.b", hash: hashOf(cb, "m.b"), text: same }]);
+  assertEquals([s.unchanged, codes(s.fixed!)], [["m.b"], ["E0226"]]);
+  await done(cb);
+});
+
+Deno.test("codebase: a full own-module name that a local would capture is stored as written", async () => {
+  // `by: backwards` would be the parameter, so `m.backwards` is the only
+  // spelling of the function there; it is neither reported nor shortened.
+  const cb = await fresh();
+  const backwards = fn("m.backwards", {
+    params: ["left: Int", "right: Int"],
+    out: "Order",
+    examples: ["backwards(left: 1, right: 2) == Greater"],
+    body: "return std.int.compare(left: right, right: left)",
+  });
+  const sorted = fn("m.sorted", {
+    params: ["backwards: Int"],
+    out: "List<Int>",
+    examples: ["sorted(backwards: 0) == std.list.empty<Int>()"],
+    body: "let xs: List<Int> = std.list.empty<Int>()\nreturn std.list.sort(list: xs, by: m.backwards)",
+  });
+  const r = await ok(cb, [add(backwards), add(sorted)]);
+  assertEquals(r.fixed, undefined);
+  assertEquals(cb.definition("m.sorted").text, sorted);
   await done(cb);
 });
 

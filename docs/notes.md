@@ -29,15 +29,18 @@ merged yet; merging and pushing is the user's call.
 7. The MCP server, on branch `mcp`: `src/mcp.ts` (`alang mcp [--dir <dir>]`), the queries and operations of section 6
    as tools over stdio, hand-written protocol for both MCP eras (`initialize` and the stateless 2026-07-28).
    Decisions in `decisions.md`, section MCP server; registration in the README.
+8. Own-module names written in full are stored short by submit and import instead of rejected (the user's choice
+   after the playground); the result lists them under `fixed`. A function value whose short name a local holds is
+   written in full and not reported (the old fix broke it). Decisions in `decisions.md`, Database, Own-module names.
 
 **Next:** a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
 is done; see "From the MCP server". Claude Code connected and used every kind of tool, so the protocol works with a
-real client (the official SDK client was not run). Open from that round, each the user's call: normalize E0226
-instead of rejecting; `alang db run` (and later an MCP `run` tool); recording what triggered an `import` in
-`history`; a tool operation for renaming a parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`.
-`extern fn` and `const` are still unparsed and need their form decided.
+real client (the official SDK client was not run). Open from that round, each the user's call: `alang db run` (and
+later an MCP `run` tool); recording what triggered an `import` in `history`; a tool operation for renaming a
+parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
+and need their form decided.
 
-**Checks before every commit:** `deno task test` (163 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (166 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -60,7 +63,9 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
 - Examples: no fix for a failing example (the body may be wrong, not the example); every failing example is
   reported; a stack overflow in an example is a trap; `check`, `ts`, `build` and `run` refuse programs whose examples
   fail or are missing.
-- Own-module names: the long form is an error (E0226), reported only for a name that exists.
+- Own-module names: the long form is an error (E0226) in the checker, reported only for a name that exists; the
+  database applies the fix itself (chosen by the user, 2026-11-12). Still to confirm: a function value whose short
+  name a local holds keeps its full name (the alternative was forbidding such a local, as shadowing per 2.6).
 - Database: everything in `decisions.md`, section Database. The user chose (2026-11-12) automatic sync with the
   export and an optional text on `rename`; the details within them are still open for review: a conflict is
   refused (E0513) rather than resolved; a missing export directory is written, never read as every file deleted;
@@ -140,10 +145,16 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   force: `is_privileged` takes a `Port`, not an `Int`; examples sit at the boundary (1023, 1024); `parse_or_default`
   reuses `parse` through `let ... else`. The first try of `parse_or_default` wrote `net.port.parse` inside `net.port`
   and was rejected (E0226); with the fix in the diagnostic it recovered in one step. First evidence for the own-module
-  rule awaiting review: the long form is what an LLM writes by habit. Open: since a submit already stores the
-  canonical text, not the text sent, the tool could apply this unambiguous fix itself instead of rejecting. Rejecting
-  keeps the model aware of the one form within a session; normalizing saves a round trip each time. Count how often it
-  recurs before deciding.
+  rule awaiting review: the long form is what an LLM writes by habit. Decided (the user, 2026-11-12): submit and
+  import now shorten it themselves and list it under `fixed`, since the stored text and hash are the same either
+  way, while a rejection costs a whole transaction. The instructions now state rule 1.2 as well. Watch in the next
+  round whether the model still writes the long form, and whether it reads `fixed` or ignores it.
+- **The E0226 fix was not always right.** The notes called it unambiguous; it is not where a function is passed as a
+  value and a local holds its short name (`by: m.backwards` with a parameter `backwards`): `by: backwards` means the
+  parameter (E0204), so the program had no accepted spelling short of renaming the parameter. Calls, types, cases
+  and patterns cannot be captured (a path before `(` is always a call; locals are never PascalCase). The checker now
+  accepts the full name there. The same capture is what E0510 reports for renames; a rename could now write the full
+  name instead of refusing, which is not built.
 - **Playground, task "rename a parameter".** Renaming `text` of `net.port.parse` to `source` went through as one
   transaction with its caller (4 calls); the diff is exactly the change, and it kept `std.int.parse(text: source)`,
   where `text` is std's parameter. Not yet known whether E0506 was hit or the callers were read in advance. A

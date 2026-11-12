@@ -61,20 +61,37 @@ export function mapReferences(
   target: (ref: Ref) => string,
   path: Path = def.path,
 ): Definition {
-  const oldModule = moduleOf(def.path);
-  const newModule = moduleOf(path);
-  const moved = pathText(oldModule) !== pathText(newModule);
-  const resolve = (p: Path) => (p.length === 1 ? [...oldModule, p[0]].join(".") : pathText(p));
-
-  const rewrite = (written: Path, ref: Ref): Path => {
+  const moved = pathText(moduleOf(def.path)) !== pathText(moduleOf(path));
+  return rebuild(def, info, path, (_node, written, ref) => {
     const to = target(ref);
-    return to === ref.full && !moved ? written : writtenFrom(to, newModule);
-  };
+    return to === ref.full && !moved ? written : writtenFrom(to, moduleOf(path));
+  });
+}
+
+// `def` with each name of its own module that is written in full shortened
+// (1.2): exactly the nodes the checker reported as E0226 (`info.longForms`),
+// so a full name that a local would capture keeps its spelling.
+export function shortenOwnNames(def: Definition, info: CheckInfo): Definition {
+  return rebuild(def, info, def.path, (node, written, ref) => {
+    return info.longForms.has(node) ? writtenFrom(ref.full, moduleOf(def.path)) : written;
+  });
+}
+
+// Rebuilds `def` under the name `path`, with the path of every reference
+// given by `spell`: the node, its path as written, and what it refers to.
+function rebuild(
+  def: Definition,
+  info: CheckInfo,
+  path: Path,
+  spell: (node: object, written: Path, ref: Ref) => Path,
+): Definition {
+  const oldModule = moduleOf(def.path);
+  const resolve = (p: Path) => (p.length === 1 ? [...oldModule, p[0]].join(".") : pathText(p));
 
   const type = (t: TypeRef): TypeRef => {
     const args = t.args.map(type);
     if (t.path.length === 1 && BUILTIN_TYPES.has(t.path[0])) return { ...t, args };
-    return { kind: "type", path: rewrite(t.path, { kind: "type", full: resolve(t.path) }), args };
+    return { kind: "type", path: spell(t, t.path, { kind: "type", full: resolve(t.path) }), args };
   };
   const param = (p: Param): Param => ({ name: p.name, type: type(p.type) });
 
@@ -82,7 +99,7 @@ export function mapReferences(
     if (p.kind !== "case") return p;
     const sub = p.sub && pattern(p.sub);
     if (p.path.length === 1 && BUILTIN_VALUES.has(p.path[0])) return { ...p, sub };
-    return { kind: "case", path: rewrite(p.path, { kind: "case", full: resolve(p.path) }), sub };
+    return { kind: "case", path: spell(p, p.path, { kind: "case", full: resolve(p.path) }), sub };
   };
 
   const payload = (p: Payload): Payload => {
@@ -120,7 +137,7 @@ export function mapReferences(
       case "name": {
         const r = info.names.get(e);
         if (r?.kind !== "fn") return e;
-        return { kind: "name", path: rewrite(e.path, { kind: "fn", full: r.name }) };
+        return { kind: "name", path: spell(e, e.path, { kind: "fn", full: r.name }) };
       }
       case "field":
         return { kind: "field", target: expr(e.target), field: e.field };
@@ -128,7 +145,7 @@ export function mapReferences(
         const full = info.calls.get(e) ?? resolve(e.path);
         return {
           kind: "call",
-          path: rewrite(e.path, { kind: "fn", full }),
+          path: spell(e, e.path, { kind: "fn", full }),
           typeArgs: e.typeArgs.map(type),
           args: e.args.map((a) => ({ name: a.name, value: expr(a.value) })),
         };
@@ -140,7 +157,7 @@ export function mapReferences(
           : r.kind === "record"
           ? { kind: "type", full: r.type }
           : { kind: "case", full: resolve(e.path) };
-        return { kind: "construct", path: ref ? rewrite(e.path, ref) : e.path, payload: payload(e.payload) };
+        return { kind: "construct", path: ref ? spell(e, e.path, ref) : e.path, payload: payload(e.payload) };
       }
       case "binary":
         return { kind: "binary", op: e.op, left: expr(e.left), right: expr(e.right) };

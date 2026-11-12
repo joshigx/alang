@@ -18,12 +18,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Definition, Effect } from "./ast.ts";
 import { moduleOf, pathText } from "./ast.ts";
-import { checkProgram, closest } from "./check.ts";
+import { checkProgram, type CheckResult, closest } from "./check.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { casesOf, interfaceChange } from "./interface.ts";
 import { parseProgram } from "./parser.ts";
 import { printDefinition, printSignature, printString } from "./printer.ts";
-import { dependencies, mapReferences, type Ref } from "./refs.ts";
+import { dependencies, mapReferences, type Ref, shortenOwnNames } from "./refs.ts";
 import { matchesFn, namedTypes, parseFnPattern, showTree, treeOfRef, treeOfType, type TypeTree } from "./search.ts";
 import { signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
 import { acceptDefinitions, type Accepted } from "./toolchain.ts";
@@ -93,6 +93,10 @@ export type SubmitResult =
     readonly written: readonly Written[];
     // Replaced by the very same text: accepted, nothing written.
     readonly unchanged: readonly string[];
+    // Diagnostics whose fix the codebase applied itself (E0226, see
+    // `withShortNames`); only present if there are any. Where they point, the
+    // stored text differs from the text sent.
+    readonly fixed?: readonly Diagnostic[];
   }
   | {
     readonly ok: false;
@@ -606,26 +610,38 @@ export class Codebase {
       if (p.def) next.set(p.name, p.def);
       else next.delete(p.name);
     }
-    const defs = [...next.keys()].sort().map((name) => next.get(name)!);
+
+    // 2b. Own-module names the texts wrote in full are shortened, before the
+    // rules below compare contracts as printed. Each submitted definition is
+    // the one in the program under its name, so it is swapped for its
+    // shortened form; the check info of acceptance is keyed by node.
+    const sent = new Set(planned.flatMap((p) => (p.def ? [pathText(p.def.path)] : [])));
+    const short = withShortNames([...next.keys()].sort().map((name) => next.get(name)!), sent);
+    const { defs, fixed } = short;
+    if (fixed.length > 0) {
+      const byName = new Map(defs.map((d) => [pathText(d.path), d]));
+      for (const [i, p] of planned.entries()) if (p.def) planned[i] = { ...p, def: byName.get(pathText(p.def.path))! };
+    }
+    const rejectedAfter = (ds: readonly Diagnostic[]) => rejected([...fixed, ...ds]);
 
     // 3. Callers outside the transaction must not be broken by it. Only what
     // the caller wrote is inside: renamed definitions and followers are
     // rewritten mechanically, not adapted; a rename with text is written.
     const members = new Set(planned.filter((p) => p.op !== "rename" || p.def).map((p) => p.name));
     for (const p of planned) diagnostics.push(...this.callerRule(p, current, members, rewritten));
-    if (diagnostics.length > 0) return rejected(diagnostics);
+    if (diagnostics.length > 0) return rejectedAfter(diagnostics);
     if (renames.length > 0) {
       const captured = this.captures(rewritten, renames, defs, members);
-      if (captured.length > 0) return rejected(captured);
+      if (captured.length > 0) return rejectedAfter(captured);
     }
 
     // 4. Acceptance of the whole resulting program (6.3). It re-runs every
     // example, so a caller whose example a changed body breaks is reported.
     let accepted: Accepted;
     try {
-      accepted = await acceptDefinitions(defs, this.acceptPath);
+      accepted = await acceptDefinitions(defs, this.acceptPath, short.checked);
     } catch (e) {
-      if (e instanceof AlangError) return rejected(e.diagnostics);
+      if (e instanceof AlangError) return rejectedAfter(e.diagnostics);
       throw e;
     }
 
@@ -714,7 +730,7 @@ export class Codebase {
     // reports it (E0513), since both sides changed.
     await this.during?.("committed");
     await this.exportModules(written.map((w) => moduleName(w.name)));
-    return { ok: true, written, unchanged };
+    return { ok: true, written, unchanged, ...(fixed.length > 0 ? { fixed } : {}) };
   }
 
   // Starts a submit over because the codebase or its export changed while it
@@ -1286,14 +1302,17 @@ export class Codebase {
     if (diagnostics.length > 0) return rejected(diagnostics);
 
     defs.sort((a, b) => (pathText(a.path) < pathText(b.path) ? -1 : 1));
+    // A file written by hand may name its own module in full; it is stored
+    // short, and the sync then rewrites the file.
+    const { defs: program, checked, fixed } = withShortNames(defs, new Set(defs.map((d) => pathText(d.path))));
     let accepted: Accepted;
     try {
-      accepted = await acceptDefinitions(defs, this.acceptPath);
+      accepted = await acceptDefinitions(program, this.acceptPath, checked);
     } catch (e) {
-      if (e instanceof AlangError) return rejected(e.diagnostics);
+      if (e instanceof AlangError) return rejected([...fixed, ...e.diagnostics]);
       throw e;
     }
-    const rows = defs.map((def): Row => {
+    const rows = program.map((def): Row => {
       const text = printDefinition(def);
       return {
         name: pathText(def.path),
@@ -1343,8 +1362,32 @@ export class Codebase {
       for (const module of this.recordedFiles().keys()) if (!contents.has(module)) this.recordFile(module, null);
       for (const [module, content] of contents) this.recordFile(module, content);
     }
-    return { ok: true, written, unchanged };
+    return { ok: true, written, unchanged, ...(fixed.length > 0 ? { fixed } : {}) };
   }
+}
+
+// Names of a definition's own module written in full (E0226) are the one
+// complaint the codebase fixes itself instead of rejecting: the short form
+// means the same and is the only one stored (1.2, 3.7), so text and hash are
+// those of the short form either way. Applied only when every diagnostic of
+// the program's check is such a name in one of `sent` (the definitions whose
+// text came with this change), since any other diagnostic quotes the text as
+// sent (5.5); and only if the shortened program checks. Returns the program to
+// accept, its check, and the E0226 diagnostics applied (none if the program
+// is returned as it was).
+function withShortNames(
+  defs: Definition[],
+  sent: ReadonlySet<string>,
+): { defs: Definition[]; checked: CheckResult; fixed: Diagnostic[] } {
+  const checked = checkProgram(defs);
+  const { diagnostics, info } = checked;
+  const own = (d: Diagnostic) => d.code === "E0226" && d.definition !== null && sent.has(d.definition);
+  if (diagnostics.length === 0 || !diagnostics.every(own)) return { defs, checked, fixed: [] };
+  const names = new Set(diagnostics.map((d) => d.definition));
+  const shortened = defs.map((def) => (names.has(pathText(def.path)) ? shortenOwnNames(def, info) : def));
+  const again = checkProgram(shortened);
+  if (again.diagnostics.length > 0) return { defs, checked, fixed: [] };
+  return { defs: shortened, checked: again, fixed: diagnostics };
 }
 
 // E0513 for each module whose file and database both changed.

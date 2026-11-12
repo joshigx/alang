@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Definition, Effect, FnDef } from "./ast.ts";
 import { EFFECTS, pathText } from "./ast.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
-import { type CheckInfo, checkProgram } from "./check.ts";
+import { type CheckInfo, checkProgram, type CheckResult } from "./check.ts";
 import { emitProgram } from "./emit.ts";
 import { describeResults, exampleDiagnostics, type ExampleOutcome, missingExamples } from "./examples.ts";
 import { parseProgram } from "./parser.ts";
@@ -66,8 +66,13 @@ export async function accept(source: string, outPath: string): Promise<Accepted>
 }
 
 // `accept` for definitions that are already parsed, e.g. from the database.
-export async function acceptDefinitions(defs: Definition[], outPath: string): Promise<Accepted> {
-  const { diagnostics, info } = checkProgram(defs);
+// `checked` is the check of these very definitions, if the caller has one.
+export async function acceptDefinitions(
+  defs: Definition[],
+  outPath: string,
+  checked: CheckResult = checkProgram(defs),
+): Promise<Accepted> {
+  const { diagnostics, info } = checked;
   const all = byDefinition(defs, [...diagnostics, ...missingExamples(defs)]);
   if (all.length > 0) throw new AlangError(all);
   const built = await emitTo(defs, info, outPath);
