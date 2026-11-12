@@ -1,7 +1,8 @@
 # alang
 
 A language written and edited by LLMs, read by humans at the contract level, and transpiled to TypeScript. The
-language is described in [alang-specs.md](alang-specs.md); decisions on gaps in the spec are in
+language is described in [alang-specs.md](alang-specs.md), whose section 7 is the reference for writing it today
+(standard library included); decisions on gaps in the spec, with their reasons, are in
 [docs/decisions.md](docs/decisions.md).
 
 ## Status

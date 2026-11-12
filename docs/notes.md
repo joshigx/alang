@@ -7,7 +7,7 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
 
 Read this first when picking up the work in a new session. Update it when a phase ends.
 
-**Branches.** Work happens on the local branch `async`, branched from `mcp` at `2837853`; `mcp` was branched from `database` at `f5dde7e`, which
+**Branches.** Work happens on the local branch `spec`, branched from `async` at `22f6ce9`; `async` was branched from `mcp` at `2837853`; `mcp` was branched from `database` at `f5dde7e`, which
 sits on `examples` (local, phase 4 committed), which sits on `effects` (local), which sits on `type-checker` (pushed
 to `origin/type-checker`). `main` (= `origin/main`) has only the first slice, so do not start from `main`. Nothing is
 merged yet; merging and pushing is the user's call.
@@ -41,18 +41,25 @@ merged yet; merging and pushing is the user's call.
     time; ends on SIGINT/SIGTERM with `Ok(Unit)`; the handler may have effects (the one exception to E0232, marked
     `effects: "caller"` on the std function type). Runs on Deno and Node.js. `alang run` waits for the program on
     Ctrl-C. Example in `examples/server.alang`. Decisions in `decisions.md`, HTTP server.
+12. After the playground's HTTP task, on branch `spec`: `definition`, `signature`, `context`, `callers` and `list` read
+    std names (hash null; `list("std")`, not in `list("")`); the acceptance file exists only during an acceptance,
+    and the MCP server closes on SIGINT, SIGTERM and SIGHUP; its instructions start with the path of the spec.
+    Decisions in `decisions.md` (Database: Concurrency, std in queries, `list`; MCP server: Instructions, Shutdown).
+13. Section 7 of `alang-specs.md` (the user asked for "everything to write alang" in the spec, 2026-11-12): a
+    reference of what the implementation accepts, what is not available, the std library (a test compares it with
+    `src/std.ts`), the server example (accepted in the tests), the codebase tools and the diagnostic ranges. Section
+    7 restates decisions from `decisions.md`; when one changes, change both.
 
 **Next:** phase 3 of the HTTP work, an HTTP client (`std.http.fetch` or similar, on fetch), was postponed by the
-user (2026-11-12); async output makes it possible now. Earlier: a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
+user (2026-11-12); async output makes it possible now. Reconnect the playground's MCP server to pick up branch
+`spec`, and watch whether the model reads std through `context` instead of the sources. Earlier: a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
 is done; see "From the MCP server". Claude Code connected and used every kind of tool, so the protocol works with a
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
-and need their form decided. From the HTTP server task (2026-11-12, it worked): std definitions cannot be read
-through `context`/`definition`/`signature`/`list`, so the model read `src/std.ts`; every MCP session leaves an
-`accept-<pid>-1.ts` (no SIGTERM handling). Both in "From the MCP server" and "From db run".
+and need their form decided.
 
-**Checks before every commit:** `deno task test` (189 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (195 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -95,6 +102,9 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   sync can change the database.
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
+- Section 7 of the spec states these decisions as rules, since a model writing alang needs them; it is the
+  implementation's reference, not a settled design. Also mine: std readable through the queries but left out of
+  `list("")`, and the MCP server's instructions naming the spec's path.
 - Async output and `std.http` (the user asked for async and a server, 2026-11-12; the details are mine): every
   function with effects becomes async, not only those that wait; the handler exception to E0232; requests one at a
   time; `host` as a parameter; the record fields (`content`, since `body` is reserved; method and query as plain
@@ -248,7 +258,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   model grepped the repository and read `src/std.ts`; a model with only the server would have had to guess the fields
   from diagnostics. Not built: answer these queries for std names too. std types already exist as alang text (in
   `src/std.ts`); std functions do not, since they are in effect `extern fn`, whose form is undecided, but `signature`
-  can give the line `search_type` prints, and `list std.http` can list the module.
+  can give the line `search_type` prints, and `list std.http` can list the module. Done (branch `spec`): all of
+  these, and `context(std.http.serve)` gives the line and the fields of the four types it involves.
 
 ## From db run (2026-11-12)
 
@@ -292,7 +303,9 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **Every MCP session leaves an acceptance file.** The fourth `out/accept-<pid>-1.ts` is from the server of the HTTP
   task (written at its last `add`, no server process left afterwards). So it is not an occasional crash: the client
   ends the server in a way that skips `close()`, most likely SIGTERM, which Deno answers by exiting at once. A
-  SIGTERM listener in `mcpMain` that closes the codebase would fix it.
+  SIGTERM listener in `mcpMain` that closes the codebase would fix it. Done (branch `spec`): closing stdin cleaned
+  up, but SIGINT, SIGTERM and SIGHUP each left the file (checked). The file is now removed right after each
+  acceptance, which covers SIGKILL too, and the server closes on the three signals.
 
 ## From async output and std.http (2026-11-12)
 
@@ -329,6 +342,10 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   below 1024 without root.
 - **One handler at a time is slow** for a handler that waits (a file read, later an outgoing request). Concurrency
   would be a language feature with its own rules; the queue is where it would start.
+- **`std.text.show` prints a whole Float without its fraction.** `std.text.show(value: 2.0)` gives `2`, as
+  JavaScript prints the number, so a `Float` and an `Int` look alike in output. Found while writing section 7 of the
+  spec, which states it as is. Printing `2.0` (the alang literal) would match the canonical text and the actual
+  values of failing examples; it is a change of std behaviour, so not made unasked.
 
 ## From the export sync (2026-11-12)
 
