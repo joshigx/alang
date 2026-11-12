@@ -80,10 +80,14 @@ function byDefinition(defs: readonly Definition[], diagnostics: readonly Diagnos
   return [...diagnostics].sort((a, b) => rank(a) - rank(b));
 }
 
+let loads = 0;
+
 // deno-lint-ignore no-explicit-any
 async function load(outPath: string): Promise<Record<string, any>> {
-  // A fresh query string defeats the module cache when a file is rebuilt.
-  return await import(`${pathToFileURL(outPath).href}?v=${Date.now()}`);
+  // A fresh query string defeats the module cache when a file is rebuilt. A
+  // counter, not the clock: two builds within one millisecond must not share
+  // a module.
+  return await import(`${pathToFileURL(outPath).href}?v=${++loads}`);
 }
 
 // Runs every example of a built program, in this process (spec, Toolchain).

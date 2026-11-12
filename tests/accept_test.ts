@@ -170,6 +170,17 @@ Deno.test("accept: runaway recursion is a trap, not a crash of the tool", async 
   await accepted(source.replace("down(n: n + 1)", "down(n: n - 1)"));
 });
 
+Deno.test("accept: a rebuilt program runs its new code, however quickly it follows", async () => {
+  const path = outPath();
+  const version = (n: number) => fn("m.k", { out: "Int", examples: [`k() == ${n}`], body: `return ${n}` });
+  for (let n = 1; n <= 5; n++) {
+    await accept(version(n), path);
+    // The previous version's examples would fail against this one.
+    const ds = await accept(version(n).replace(`k() == ${n}`, `k() == ${n - 1}`), path).then(() => [], (e) => e);
+    assert_(ds instanceof AlangError, `version ${n}: an outdated module ran`);
+  }
+});
+
 Deno.test("accept: every failing example of a program is reported", async () => {
   const source = specBlock("fn math.clamp")
     .replace("clamp(value: 5, low: 0, high: 10) == 5", "clamp(value: 5, low: 0, high: 10) == 6")
