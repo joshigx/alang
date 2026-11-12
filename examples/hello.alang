@@ -1,0 +1,12 @@
+fn hello.main
+  doc: "Prints a greeting to the console."
+  in: none
+  out: Unit
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    std.console.print_line(text: "Hello, world")
+    return Unit
+end fn hello.main

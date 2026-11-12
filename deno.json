@@ -1,0 +1,8 @@
+{
+  "tasks": {
+    "test": "deno test --allow-read --allow-write --allow-run --allow-env",
+    "alang": "deno run --allow-read --allow-write src/cli.ts"
+  },
+  "fmt": { "lineWidth": 120, "include": ["src/", "tests/"] },
+  "lint": { "exclude": ["out/"] }
+}

@@ -1,0 +1,23 @@
+fn math.clamp
+  doc: "Limits value to the range from low to high."
+  in:
+    value: Int
+    low: Int
+    high: Int
+  out: Int
+  effects: none
+  requires: low <= high
+  ensures: low <= result and result <= high
+  examples:
+    clamp(value: 5, low: 0, high: 10) == 5
+    clamp(value: -3, low: 0, high: 10) == 0
+    clamp(value: 42, low: 0, high: 10) == 10
+  body:
+    if value < low then
+      return low
+    end if
+    if value > high then
+      return high
+    end if
+    return value
+end fn math.clamp

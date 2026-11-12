@@ -1,0 +1,34 @@
+type net.port.Port
+  doc: "A valid TCP port number."
+  record:
+    value: Int
+  where: 1 <= value and value <= 65_535
+end type net.port.Port
+
+type net.port.ParseError
+  doc: "Reasons why a text is not a port number."
+  variant:
+    NotANumber
+    OutOfRange: Int
+  where: none
+end type net.port.ParseError
+
+fn net.port.parse
+  doc: "Reads a TCP port number from decimal text."
+  in:
+    text: String
+  out: Result<Port, ParseError>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    parse(text: "8080") == Ok(Port(value: 8080))
+    parse(text: "0") == Err(OutOfRange(0))
+    parse(text: "abc") == Err(NotANumber)
+  body:
+    let n: Int = std.int.parse(text: text) else return Err(NotANumber)
+    if n < 1 or n > 65_535 then
+      return Err(OutOfRange(n))
+    end if
+    return Ok(Port(value: n))
+end fn net.port.parse
