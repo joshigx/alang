@@ -230,6 +230,16 @@ async function get(url: string): Promise<{ status: number; text: string }> {
   }
 }
 
+// Sends a POST that announces 100 bytes of content, sends 3 and goes away.
+async function cutShort(url: string): Promise<void> {
+  const { hostname, port } = new URL(url);
+  const conn = await Deno.connect({ hostname, port: Number(port) });
+  await conn.write(new TextEncoder().encode("POST /cut HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\nabc"));
+  conn.close();
+  // Give the server time to notice before the next request.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
 async function hasNode(): Promise<boolean> {
   const node = await new Deno.Command("node", { args: ["--version"], stdout: "null", stderr: "null" }).output()
     .catch(() => null);
@@ -250,12 +260,16 @@ for (const host of ["deno", "node"] as const) {
       host === "deno" ? ["run", "--no-prompt", "--allow-net"] : [],
     );
     assertEquals(await get(`${url}/hello`), { status: 200, text: "path /hello" });
+    // Nothing a client sends ends the server: a target both hosts read as a
+    // path, and a request that announces more content than it sends.
+    assertEquals(await get(`${url}//odd`), { status: 200, text: "path //odd" });
+    await cutShort(url);
     assertEquals(await get(`${url}/again?x=1`), { status: 200, text: "path /again" });
     child.kill("SIGTERM");
     const out = await child.output();
     assertEquals(
       [out.code, decode(out.stdout).split("\n")],
-      [0, ["GET /hello", "GET /again", "stopped"]],
+      [0, ["GET /hello", "GET //odd", "GET /again", "stopped"]],
       decode(out.stderr),
     );
   });

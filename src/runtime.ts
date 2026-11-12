@@ -377,21 +377,23 @@ const listenDeno = (deno: DenoHost): Listen => (host, port, a) => {
         return new Response(null, { status: 500 });
       },
     }, async (request) => {
-      const url = new URL(request.url);
-      let content: string;
+      let received: std$http$Request;
       try {
-        content = await request.text();
+        const url = new URL(request.url);
+        received = {
+          method: request.method,
+          path: url.pathname,
+          query: url.search.slice(1),
+          headers: [...request.headers].map(([name, value]) => ({ name, value })),
+          content: await request.text(),
+        };
       } catch {
-        // The client went away while sending; not the program's fault.
+        // A request that cannot be read (the client went away while
+        // sending) is the client's fault, not the program's: 400, and the
+        // server goes on.
         return new Response(null, { status: 400 });
       }
-      const answer = await a.answer({
-        method: request.method,
-        path: url.pathname,
-        query: url.search.slice(1),
-        headers: [...request.headers].map(([name, value]) => ({ name, value })),
-        content,
-      });
+      const answer = await a.answer(received);
       if (answer === null) return new Response(null, { status: 500 });
       try {
         // Empty content is no body, so Deno adds no content-type of its own.
@@ -434,29 +436,35 @@ type NodeHttp = { createServer(handler: (req: NodeRequest, res: NodeResponse) =>
 const listenNode = (http: NodeHttp): Listen => (host, port, a) => {
   let closing = false;
   const server = http.createServer(async (req, res) => {
-    let content = "";
+    let received: std$http$Request;
     try {
+      // Read like Deno does: the target appended to the origin, so `//x`
+      // is a path, not a host.
+      const target = req.url ?? "/";
+      const url = new URL(target.startsWith("/") ? `http://localhost${target}` : target);
+      let content = "";
       const decoder = new TextDecoder();
       for await (const chunk of req) content += decoder.decode(chunk, { stream: true });
       content += decoder.decode();
+      received = {
+        method: req.method ?? "GET",
+        path: url.pathname,
+        query: url.search.slice(1),
+        headers: Object.entries(req.headersDistinct)
+          .map(([name, values]) => ({ name, value: values.join(", ") }))
+          .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0)),
+        content,
+      };
     } catch {
-      // The client went away while sending; not the program's fault.
+      // A request that cannot be read (an odd target, the client went away
+      // while sending) is the client's fault, not the program's: 400, and
+      // the server goes on.
       res.writeHead(400, ["connection", "close"]);
       res.end();
       return;
     }
     try {
-      const url = new URL(req.url ?? "/", "http://localhost");
-      const headers = Object.entries(req.headersDistinct)
-        .map(([name, values]) => ({ name, value: values.join(", ") }))
-        .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
-      const answer = await a.answer({
-        method: req.method ?? "GET",
-        path: url.pathname,
-        query: url.search.slice(1),
-        headers,
-        content,
-      });
+      const answer = await a.answer(received);
       if (answer === null) {
         res.writeHead(500, ["connection", "close"]);
         res.end();
