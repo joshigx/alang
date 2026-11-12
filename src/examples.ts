@@ -1,0 +1,206 @@
+// Rule 5.1: every function with `effects: none` has at least one example, and
+// a definition whose example fails is rejected. Examples run at acceptance
+// (toolchain.ts); this file turns their results into diagnostics (5.5).
+//
+// A failing example reports the value the call returned, as alang text, so
+// that the caller can decide whether the body or the example is wrong. There
+// is deliberately no fix: replacing the expected value with the actual one
+// would write a bug into the example.
+
+import type { Definition, Expr, FnDef, Path } from "./ast.ts";
+import { moduleOf, pathText } from "./ast.ts";
+import type { CheckInfo, TypeShape } from "./check.ts";
+import { toTypeRef } from "./check.ts";
+import { type Diagnostic, diagnostic } from "./diagnostic.ts";
+import { printExpr, printTypeRef } from "./printer.ts";
+import { type ExampleResult, std$text$show, type TrapInfo } from "./runtime.ts";
+import type { Type } from "./types.ts";
+
+// ---- presence ----
+
+export function missingExamples(defs: readonly Definition[]): Diagnostic[] {
+  return defs
+    .filter((d): d is FnDef => d.kind === "fn" && d.effects.length === 0 && d.examples.length === 0)
+    .map((def) => {
+      const short = def.path[def.path.length - 1];
+      const params = def.params.map((p) => `${p.name}: ${printTypeRef(p.type)}`).join(", ");
+      return diagnostic({
+        code: "E0401",
+        definition: pathText(def.path),
+        section: "examples",
+        at: "examples: none",
+        message: `\`${short}\` has \`effects: none\` and needs at least one example (5.1): a call and the value it ` +
+          "returns, in the form shown under `expected`.",
+        expected: `${short}(${params}) == ${printTypeRef(def.out)}`,
+      });
+    });
+}
+
+// ---- results ----
+
+export interface ExampleOutcome {
+  readonly definition: string;
+  // The whole example, as printed.
+  readonly text: string;
+  // Its left side, the call.
+  readonly call: string;
+  readonly passed: boolean;
+  // The value of the call as alang text; null if the example trapped.
+  readonly actual: string | null;
+  readonly trap: TrapInfo | null;
+}
+
+// Pairs the results of the generated `$examples` (in definition order, then
+// example order, as the emitter writes them) with their syntax, and renders
+// each actual value with the static type of its call.
+export function describeResults(
+  defs: readonly Definition[],
+  info: CheckInfo,
+  results: readonly ExampleResult[],
+): ExampleOutcome[] {
+  const examples = defs.flatMap((d) => (d.kind === "fn" ? d.examples.map((ex) => ({ def: d, ex })) : []));
+  if (examples.length !== results.length) {
+    throw new Error(`expected ${examples.length} example results, got ${results.length}`);
+  }
+  return results.map((r, i) => {
+    const { def, ex } = examples[i];
+    if (ex.kind !== "binary") throw new Error(`not an example: ${r.text}`);
+    const type = info.types.get(ex.left);
+    const module = pathText(moduleOf(def.path));
+    return {
+      definition: r.definition,
+      text: r.text,
+      call: printExpr(ex.left, ""),
+      passed: r.passed,
+      actual: r.trap || !type ? null : showValue(r.actual, type, info.shapes, module),
+      trap: r.trap,
+    };
+  });
+}
+
+export function exampleDiagnostics(outcomes: readonly ExampleOutcome[]): Diagnostic[] {
+  return outcomes.filter((o) => !o.passed).map((o) => {
+    const base = { definition: o.definition, section: "examples", at: o.text };
+    if (o.trap) {
+      const { kind, at, message } = o.trap;
+      // The trap's own location, unless the message already quotes it or it is the example itself.
+      const where = at === o.text || message.includes(at) ? "" : ` (at \`${at}\`)`;
+      return diagnostic({
+        ...base,
+        code: "E0403",
+        message: `The example ends in a trap (\`${kind}\`). ${message.replace(/\.$/, "")}${where}.`,
+      });
+    }
+    return diagnostic({
+      ...base,
+      code: "E0402",
+      message: `The example does not hold: \`${o.call}\` is \`${o.actual}\`.`,
+    });
+  });
+}
+
+// ---- values as alang text ----
+
+// A runtime value of type `t` as canonical alang text, written as it would
+// be in `module` (rule 1.2). Values without an alang form (maps, for which
+// std has no constructor yet) fall back to std.text.show.
+export function showValue(value: unknown, t: Type, shapes: ReadonlyMap<string, TypeShape>, module: string): string {
+  const e = valueExpr(value, t, shapes, module);
+  return e ? printExpr(e, "") : std$text$show(value);
+}
+
+const construct = (path: Path, value: Expr | null = null): Expr => ({
+  kind: "construct",
+  path,
+  payload: value ? { kind: "value", value } : null,
+});
+
+export function valueExpr(
+  value: unknown,
+  t: Type,
+  shapes: ReadonlyMap<string, TypeShape>,
+  module: string,
+): Expr | null {
+  if (t.k !== "con") return null;
+  const go = (v: unknown, type: Type) => valueExpr(v, type, shapes, module);
+  const tagged = value as { readonly tag: string; readonly value?: unknown };
+  switch (t.name) {
+    case "Int":
+      return { kind: "int", value: value as number };
+    case "Float": {
+      const n = value as number;
+      if (Number.isFinite(n)) return { kind: "float", value: n };
+      // There is no literal for infinity.
+      return {
+        kind: "binary",
+        op: "/",
+        left: { kind: "float", value: n > 0 ? 1 : -1 },
+        right: { kind: "float", value: 0 },
+      };
+    }
+    case "Bool":
+      return { kind: "bool", value: value as boolean };
+    case "String":
+      return { kind: "string", value: value as string };
+    case "Unit":
+      return construct(["Unit"]);
+    case "Order":
+      return construct([tagged.tag]);
+    case "Option":
+    case "Result": {
+      if (tagged.tag === "None") return construct(["None"]);
+      const inner = go(tagged.value, t.args[tagged.tag === "Err" ? 1 : 0]);
+      return inner && construct([tagged.tag], inner);
+    }
+    case "List": {
+      // No list literal yet (see docs/notes.md): the list is built by appending.
+      let e: Expr = {
+        kind: "call",
+        path: ["std", "list", "empty"],
+        typeArgs: [toTypeRef(t.args[0], module)],
+        args: [],
+      };
+      for (const item of value as readonly unknown[]) {
+        const v = go(item, t.args[0]);
+        if (!v) return null;
+        e = {
+          kind: "call",
+          path: ["std", "list", "append"],
+          typeArgs: [],
+          args: [{ name: "list", value: e }, {
+            name: "item",
+            value: v,
+          }],
+        };
+      }
+      return e;
+    }
+    case "Map":
+      return null;
+  }
+  const shape = shapes.get(t.name);
+  if (!shape) return null;
+  if (shape.kind === "record") {
+    const fields = value as Record<string, unknown>;
+    const args = [];
+    for (const f of shape.fields) {
+      const v = go(fields[f.name], f.type);
+      if (!v) return null;
+      args.push({ name: f.name, value: v });
+    }
+    return { kind: "construct", path: written(t.name, module), payload: { kind: "args", args } };
+  }
+  const c = shape.cases.find((c) => c.name === tagged.tag);
+  if (!c) return null;
+  const path = written(`${pathText(moduleOf(t.name.split(".")))}.${c.name}`, module);
+  if (!c.payload) return construct(path);
+  const inner = go(tagged.value, c.payload);
+  return inner && construct(path, inner);
+}
+
+// A full name as written in `module`: short inside it, full elsewhere (1.2).
+function written(full: string, module: string): Path {
+  const prefix = module + ".";
+  const rest = full.slice(prefix.length);
+  return full.startsWith(prefix) && !rest.includes(".") ? [rest] : full.split(".");
+}

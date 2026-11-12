@@ -5,38 +5,79 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Definition, Effect, FnDef } from "./ast.ts";
 import { EFFECTS, pathText } from "./ast.ts";
-import { AlangError, diagnostic } from "./diagnostic.ts";
-import { checkProgram } from "./check.ts";
+import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
+import { type CheckInfo, checkProgram } from "./check.ts";
 import { emitProgram } from "./emit.ts";
+import { describeResults, exampleDiagnostics, type ExampleOutcome, missingExamples } from "./examples.ts";
 import { parseProgram } from "./parser.ts";
-import type { Example, ExampleResult } from "./runtime.ts";
+import type { Example } from "./runtime.ts";
 import { runExamples } from "./runtime.ts";
 
 const RUNTIME_PATH = fileURLToPath(new URL("./runtime.ts", import.meta.url));
 
 export interface Built {
   readonly defs: Definition[];
+  readonly info: CheckInfo;
   readonly outPath: string;
 }
 
-// Parses and checks `source`; throws an AlangError with all diagnostics if
-// the program is not accepted.
-export function compile(source: string, runtimeImport: string): { defs: Definition[]; ts: string } {
+// Parses and type-checks `source`; throws an AlangError with all
+// diagnostics if it does not check.
+function parseAndCheck(source: string): { defs: Definition[]; info: CheckInfo } {
   const defs = parseProgram(source);
   const { diagnostics, info } = checkProgram(defs);
   if (diagnostics.length > 0) throw new AlangError(diagnostics);
+  return { defs, info };
+}
+
+// Parses, checks and emits `source`, without running its examples.
+export function compile(source: string, runtimeImport: string): { defs: Definition[]; ts: string } {
+  const { defs, info } = parseAndCheck(source);
   return { defs, ts: emitProgram(defs, info, { runtimeImport }) };
 }
 
-// Compiles `source` and writes the generated TypeScript to `outPath`.
-export async function build(source: string, outPath: string): Promise<Built> {
+async function emitTo(defs: Definition[], info: CheckInfo, outPath: string): Promise<Built> {
   const absOut = resolve(outPath);
   let runtimeImport = relative(dirname(absOut), RUNTIME_PATH).replaceAll("\\", "/");
   if (!runtimeImport.startsWith(".")) runtimeImport = `./${runtimeImport}`;
   await Deno.mkdir(dirname(absOut), { recursive: true });
-  const { defs, ts } = compile(source, runtimeImport);
-  await Deno.writeTextFile(absOut, ts);
-  return { defs, outPath: absOut };
+  await Deno.writeTextFile(absOut, emitProgram(defs, info, { runtimeImport }));
+  return { defs, info, outPath: absOut };
+}
+
+// Compiles `source` and writes the generated TypeScript to `outPath`,
+// without running its examples (see `accept`).
+export async function build(source: string, outPath: string): Promise<Built> {
+  const { defs, info } = parseAndCheck(source);
+  return await emitTo(defs, info, outPath);
+}
+
+export interface Accepted {
+  readonly built: Built;
+  readonly examples: readonly ExampleOutcome[];
+}
+
+// Acceptance (6.3): parsing, type and effect checking, mandatory examples
+// (5.1), then the examples themselves. Throws an AlangError with every
+// diagnostic if a step fails. The static diagnostics come in one round;
+// examples run only once the program checks, since they need its code.
+export async function accept(source: string, outPath: string): Promise<Accepted> {
+  const defs = parseProgram(source);
+  const { diagnostics, info } = checkProgram(defs);
+  const all = byDefinition(defs, [...diagnostics, ...missingExamples(defs)]);
+  if (all.length > 0) throw new AlangError(all);
+  const built = await emitTo(defs, info, outPath);
+  const examples = await testExamples(built);
+  const failed = exampleDiagnostics(examples);
+  if (failed.length > 0) throw new AlangError(failed);
+  return { built, examples };
+}
+
+// Diagnostics grouped by the order of their definitions; stable within one.
+function byDefinition(defs: readonly Definition[], diagnostics: readonly Diagnostic[]): Diagnostic[] {
+  const order = new Map(defs.map((d, i) => [pathText(d.path), i]));
+  const rank = (d: Diagnostic) => (d.definition === null ? -1 : order.get(d.definition) ?? defs.length);
+  return [...diagnostics].sort((a, b) => rank(a) - rank(b));
 }
 
 // deno-lint-ignore no-explicit-any
@@ -45,9 +86,10 @@ async function load(outPath: string): Promise<Record<string, any>> {
   return await import(`${pathToFileURL(outPath).href}?v=${Date.now()}`);
 }
 
-export async function testExamples(built: Built): Promise<ExampleResult[]> {
+// Runs every example of a built program, in this process (spec, Toolchain).
+export async function testExamples(built: Built): Promise<ExampleOutcome[]> {
   const mod = await load(built.outPath);
-  return runExamples(mod.$examples as readonly Example[]);
+  return describeResults(built.defs, built.info, runExamples(mod.$examples as readonly Example[]));
 }
 
 export function findMain(defs: readonly Definition[]): FnDef {

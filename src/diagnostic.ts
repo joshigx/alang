@@ -1,7 +1,8 @@
 // Diagnostics are data (rule 5.5): fixed fields, the location as quoted text,
 // and a ready-made fix where one is known.
 //
-// Code ranges: E00xx lexer, E01xx parser, E02xx checker, E03xx emitter.
+// Code ranges: E00xx lexer, E01xx parser, E02xx checker, E03xx emitter and
+// toolchain, E04xx examples (5.1).
 
 export interface Fix {
   readonly replace: string;

@@ -150,26 +150,58 @@ export const float_rem = (a: number, b: number): number => float("%", a, b, a % 
 
 // ---- examples ----
 
+// An example `call == expected`, with both sides as separate thunks so that a
+// failing example can report the value the call returned.
 export interface Example {
   readonly definition: string;
   readonly text: string;
-  readonly run: () => boolean;
+  readonly actual: () => unknown;
+  readonly expected: () => unknown;
+}
+
+export interface TrapInfo {
+  readonly kind: string;
+  readonly definition: string | null;
+  readonly at: string;
+  readonly message: string;
 }
 
 export interface ExampleResult {
   readonly definition: string;
   readonly text: string;
   readonly passed: boolean;
-  readonly trap: string | null;
+  // The value of the call; undefined if the example trapped.
+  readonly actual: unknown;
+  readonly trap: TrapInfo | null;
+}
+
+// Recursion is the only way to repeat (3), so a missing base case ends in a
+// stack overflow, which the host reports as a RangeError, not as a trap.
+function isStackOverflow(e: unknown): boolean {
+  return e instanceof RangeError && /call stack/i.test(e.message);
 }
 
 export function runExamples(examples: readonly Example[]): ExampleResult[] {
   return examples.map((ex) => {
+    const result = (actual: unknown, passed: boolean, trap: TrapInfo | null): ExampleResult => ({
+      definition: ex.definition,
+      text: ex.text,
+      passed,
+      actual,
+      trap,
+    });
     try {
-      return { definition: ex.definition, text: ex.text, passed: ex.run(), trap: null };
+      const actual = ex.actual();
+      return result(actual, eq(actual, ex.expected()), null);
     } catch (e) {
-      if (!(e instanceof Trap)) throw e;
-      return { definition: ex.definition, text: ex.text, passed: false, trap: e.message };
+      if (e instanceof Trap) {
+        return result(undefined, false, { kind: e.kind, definition: e.definition, at: e.at, message: e.message });
+      }
+      if (isStackOverflow(e)) {
+        const message = "The call stack overflowed; a recursion does not reach its base case, or recurses too deep.";
+        return result(undefined, false, { kind: "stack", definition: null, at: ex.text, message });
+      }
+      throw e;
     }
   });
 }

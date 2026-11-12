@@ -50,6 +50,8 @@ export type ConstructResolution =
   | { readonly kind: "case"; readonly type: string };
 
 export interface CheckInfo {
+  // Resolved shape of every user and std type, by full name.
+  readonly shapes: ReadonlyMap<string, TypeShape>;
   // Type of every checked expression.
   readonly types: WeakMap<Expr, Type>;
   // How each `name` expression resolved.
@@ -74,7 +76,7 @@ export interface CheckOptions {
 
 // ---- environment ----
 
-interface Param {
+export interface Param {
   readonly name: string;
   readonly type: Type;
 }
@@ -87,11 +89,11 @@ interface FnSig {
   readonly effects: readonly Effect[];
 }
 
-type UserType =
+export type TypeShape =
   | { readonly kind: "record"; readonly name: string; readonly fields: Param[] }
   | { readonly kind: "variant"; readonly name: string; readonly cases: CaseInfo[] };
 
-interface CaseInfo {
+export interface CaseInfo {
   readonly owner: string; // full name of the variant type; builtins use their type name
   readonly name: string;
   readonly payload: Type | null;
@@ -100,7 +102,7 @@ interface CaseInfo {
 const BUILTIN_VALUES = new Set(["Ok", "Err", "Some", "None", "Unit", "Less", "Equal", "Greater"]);
 
 class Env {
-  readonly types = new Map<string, UserType>();
+  readonly types = new Map<string, TypeShape>();
   readonly fns = new Map<string, FnSig>();
   // Full case name (`module.Case`) -> case.
   readonly cases = new Map<string, CaseInfo>();
@@ -114,13 +116,14 @@ class Env {
 
 export function checkProgram(defs: readonly Definition[], options: CheckOptions = {}): CheckResult {
   const diagnostics: Diagnostic[] = [];
+  const env = new Env();
   const info: CheckInfo = {
+    shapes: env.types,
     types: new WeakMap(),
     names: new WeakMap(),
     calls: new WeakMap(),
     constructs: new WeakMap(),
   };
-  const env = new Env();
   for (const s of options.std ?? STD) env.fns.set(s.name, s);
 
   const all = [...STD_TYPES, ...(options.declarations ?? []), ...defs];
@@ -1352,7 +1355,8 @@ function printPattern(p: Pattern): string {
   }
 }
 
-function toTypeRef(t: Type, module: string): TypeRef {
+// A type as it is written in `module` (rule 1.2).
+export function toTypeRef(t: Type, module: string): TypeRef {
   if (t.k !== "con") return { kind: "type", path: ["Unit"], args: [] };
   const prefix = module + ".";
   const path = t.name.startsWith(prefix) && !t.name.slice(prefix.length).includes(".")

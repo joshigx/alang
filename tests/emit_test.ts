@@ -431,12 +431,14 @@ Deno.test("emit: output runs on Node.js without Deno", async () => {
     .catch(() => null);
   if (!node?.success) return; // Node.js not installed.
   const script = `const m = await import(${JSON.stringify(`file://${built.port.outPath}`)});` +
+    `const rt = await import(${JSON.stringify(new URL("../src/runtime.ts", import.meta.url).href)});` +
     `const fs = await import(${JSON.stringify(`file://${built.app.outPath}`)});` +
     `const r = fs.config$load_port(${JSON.stringify(new URL("../deno.json", import.meta.url).pathname)});` +
     // deno.json is not a port number: the file was read, then rejected.
     `const read = r.tag === "Err" && r.value.tag === "InvalidPort";` +
     `const missing = fs.config$load_port("/does/not/exist").value.value.tag === "NotFound";` +
-    `process.exit(m.$examples.every((e) => e.run()) && read && missing ? 0 : 1);`;
+    `const examples = rt.runExamples(m.$examples);` +
+    `process.exit(examples.length === 3 && examples.every((r) => r.passed) && read && missing ? 0 : 1);`;
   const result = await new Deno.Command("node", { args: ["--input-type=module", "-e", script], stderr: "piped" })
     .output();
   assert_(result.success, new TextDecoder().decode(result.stderr));

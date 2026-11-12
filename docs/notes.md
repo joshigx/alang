@@ -7,20 +7,22 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
 
 Read this first when picking up the work in a new session. Update it when a phase ends.
 
-**Branches.** Work happens on the local branch `effects`, which is not pushed. Its commits sit on top of
-`type-checker` (pushed to `origin/type-checker`). `main` (= `origin/main`) has only the first slice, so do not start
-from `main`. Nothing is merged yet; merging and pushing is the user's call.
+**Branches.** Work happens on the local branch `examples`, which is not pushed. It sits on top of `effects` (local),
+which sits on `type-checker` (pushed to `origin/type-checker`). `main` (= `origin/main`) has only the first slice, so
+do not start from `main`. Nothing is merged yet; merging and pushing is the user's call.
 
 **Done** (phases from CLAUDE.md, in order):
 
 1. Thin slice: lexer, parser, canonical printer, TypeScript emitter, runtime.
 2. Type checker (`src/check.ts`), with every accepted test program also checked by TypeScript.
 3. Effects: static checks (2.1, 2.4, 5.4) and runtime enforcement through Deno permissions in `alang run`.
+4. Mandatory examples (5.1) and the acceptance pipeline of 6.3 (`accept` in `src/toolchain.ts`, rule code in
+   `src/examples.ts`). Failing examples report the actual value as alang text.
 
-**Next:** mandatory examples for pure functions (5.1), then the database (section 6), then the MCP server around
-its queries and operations. `extern fn` and `const` are still unparsed and need their form decided.
+**Next:** the database (section 6), then the MCP server around its queries and operations. `accept` is the step the
+database calls before it writes. `extern fn` and `const` are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (71 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (81 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -40,6 +42,9 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   numeric only; an example calls its own function; builtin names and the `std` module are reserved.
 - Effects: over-declaring effects is allowed; functions passed by name must be pure; functions with effects cannot
   have examples (5.4); a read refused for lack of permission traps; effects are listed in table order (E0111).
+- Examples: no fix for a failing example (the body may be wrong, not the example); every failing example is
+  reported; a stack overflow in an example is a trap; `check`, `ts`, `build` and `run` refuse programs whose examples
+  fail or are missing.
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
 
@@ -56,7 +61,6 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
 
 ## Not enforced yet (planned phases)
 
-- Mandatory examples for pure functions (5.1).
 - Nesting depth limit (4.8).
 - Static proof of conditions (5.2) and prefix checkability (1.6) — separate projects.
 - Database, hashes, queries, MCP server (section 6).
@@ -133,3 +137,32 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   the checker could compute the transitive closure and list every definition that needs the effect.
 - **Fix locations.** Every fix now applies inside its quoted `at` within its `section` (asserted in the tests). Worth
   stating in the spec, since 5.5 leaves open how a tool applies a fix.
+
+## From mandatory examples (2026-11-12)
+
+- **Over-declaring an effect sidesteps 5.1.** A pure function declared `effects: console` needs no example, and by 5.4
+  may not have one. Over-declaration is allowed for signature stability (decisions, Effects), so this loophole is real.
+  A hint "declared but never triggered" (see the effect notes) would also catch it.
+- **Deep recursion overflows the JavaScript stack.** Recursion is the only way to repeat (3), but V8 has no tail calls,
+  so a correct recursion over ~10k steps overflows. Examples report it as a `stack` trap; `alang run` still crashes with
+  a JavaScript stack trace. The emitter could turn self tail calls into loops, and the run entry could turn a stack
+  overflow into a trap.
+- **Examples have no time limit.** An exponential recursion (`fib(n: 40)`) blocks acceptance. Running examples in a
+  subprocess with a timeout would fix this, the permissions issue (effects notes), and the module cache below.
+- **Module cache.** Each acceptance imports a freshly written module, which is never unloaded. A long-running database
+  or MCP server will grow by one module per acceptance; a worker or subprocess per acceptance would release them.
+- **Callers' examples after a change.** With the database, `replace` keeps callers if the signature is unchanged
+  (section 6). A changed body can still break a caller's example, so acceptance must re-run the examples of every
+  definition that depends on the changed one, transitively.
+- **Long lists are unreadable.** An actual value of type `List<T>` prints as a chain of `std.list.append` calls
+  (`vals.ports` in the tests). List literals (open question) would make both examples and diagnostics readable.
+- **`expected` of E0401 mixes types into value positions** (`twice(n: Int) == Int`). An LLM might copy it literally;
+  watch for this once the MCP server is used. Alternative: a placeholder spelling, or none.
+- **No structured field for the actual value.** 5.5 fixes the fields of a diagnostic, so the actual value of E0402 sits
+  inside `message`. A caller that wants to compare it must parse the message. An `actual` field, or a general `data`
+  field, would be cleaner.
+- **`std.text.show` and the tool now disagree.** The tool prints values from their static type (`Port(value: 8080)`,
+  alang string escapes); `std.text.show` at runtime has no types (`(value: 8080)`, JSON quoting). The emitter knows the
+  static type at every `show` call and could pass a type descriptor, so both share one printer.
+- **Examples as a regression net.** Since all examples run at every acceptance, the whole program's examples act as its
+  test suite. For a large codebase only the examples of changed definitions and their dependents need to run.

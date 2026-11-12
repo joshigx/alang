@@ -85,6 +85,21 @@ numbers refer to the spec. Open points are listed at the end.
 | `std.fs.read_text`     | `String -> Result<String, std.fs.ReadError>` with cases `NotFound`, `PermissionDenied` (by the OS), `IsADirectory`, `Other: String`. std types are written in alang (`STD_TYPES_SOURCE` in `src/std.ts`).                                 | 2.3       |
 | Diagnostics            | An unknown name, type or function is reported once per definition, however often it is used (5.6).                                                                                                                                       | 5.6       |
 
+## Examples and acceptance
+
+| Topic                | Decision                                                                                                                                                                                                                                                      | Principle |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| Acceptance           | One pipeline (6.3): parse, type and effect check, mandatory examples, then run the examples. `alang check`, `ts`, `build` and `run` go through it and refuse a program that fails any step; `fmt` and `test` do not.                                          | 5, 6.3    |
+| Missing examples     | A function with `effects: none` and `examples: none` is rejected (E0401), located at `examples: none`. `expected` shows the form of an example from the signature (`twice(n: Int) == Int`); there is no fix, since no tool can invent the expected value.     | 5.1, 5.5  |
+| Same round           | E0401 is static and reported together with type and effect errors. Examples run only when there are none of these, since they need the generated code.                                                                                                        | 5.6       |
+| Failing example      | Rejected with E0402. The message quotes the call and its actual value as alang text. There is no fix: whether the body or the example is wrong is the author's call, and replacing the expected value by the actual one would write the bug into the example. | 5.1, 5.5  |
+| Trapping example     | Rejected with E0403, naming the trap kind (`requires`, `where`, `overflow`, ...) and its message. A trap on the expected side (`Ok(Port(value: 0))`) counts the same.                                                                                         | 5.3       |
+| Runaway recursion    | A stack overflow while running an example is a trap of kind `stack` (E0403), not a crash of the tool. Recursion is the only way to repeat (3), so a missing base case is a common mistake.                                                                    | 3, 5      |
+| Every failure counts | All failing examples are reported, one diagnostic each. Several failures of one function give the author more evidence about what is wrong.                                                                                                                   | 5.6       |
+| Equality             | An example holds if both sides are equal under `==`, i.e. structurally (3.9). The left side runs first.                                                                                                                                                       | 3.9       |
+| Actual values        | Printed from the static type of the call, as canonical alang written from the function's module (`net.port.Port(value: 80)` outside `net.port`), so they can be pasted into an example. Lists print as `std.list.append` chains; infinities as `1.0 / 0.0`.   | 1.2, 3.7  |
+| Where examples run   | In the tool's process, on the generated TypeScript (spec, Toolchain).                                                                                                                                                                                         | —         |
+
 ## Temporary limits
 
 These are not language decisions, only what the implementation does not do yet.
@@ -92,7 +107,7 @@ These are not language decisions, only what the implementation does not do yet.
 - `if`, `match` and `for` are compiled only as a statement, as the value of `let`, and after `return`.
 - `where` on a variant type is rejected (E0225); it is open which name refers to the value.
 - `const` and `extern fn` are not parsed yet.
-- Mandatory examples (5.1) are not checked yet.
+- Maps have no alang form for actual values (std has no constructor); they fall back to `std.text.show`.
 
 ## Open questions
 

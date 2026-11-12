@@ -287,12 +287,16 @@ class DefinitionEmitter {
     ];
   }
 
+  // Each example `call == expected` as its two sides; the toolchain compares
+  // them with structural equality, which is what `==` means on every type (3.9).
   examples(def: FnDef): string[] {
     return def.examples.map((ex) => {
+      // The parser guarantees the form (E0105).
+      if (ex.kind !== "binary" || ex.op !== "==") throw new Error(`not an example: ${printExpr(ex, "")}`);
       const text = printExpr(ex, "");
-      return `{ definition: ${JSON.stringify(this.name)}, text: ${JSON.stringify(text)}, run: () => ${
-        this.expr(ex, new Scope())
-      } }`;
+      return `{ definition: ${JSON.stringify(this.name)}, text: ${JSON.stringify(text)}, actual: () => ${
+        this.expr(ex.left, new Scope())
+      }, expected: () => ${this.expr(ex.right, new Scope())} }`;
     });
   }
 
