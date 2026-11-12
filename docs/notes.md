@@ -32,15 +32,17 @@ merged yet; merging and pushing is the user's call.
 8. Own-module names written in full are stored short by submit and import instead of rejected (the user's choice
    after the playground); the result lists them under `fixed`. A function value whose short name a local holds is
    written in full and not reported (the old fix broke it). Decisions in `decisions.md`, Database, Own-module names.
+9. `alang db run [<main>]` (`Codebase.run`): the program the database holds, synced, accepted and started like
+   `alang run`; the full name chooses among several `main` functions. Decisions in `decisions.md`, Database, Run.
 
 **Next:** a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
 is done; see "From the MCP server". Claude Code connected and used every kind of tool, so the protocol works with a
-real client (the official SDK client was not run). Open from that round, each the user's call: `alang db run` (and
-later an MCP `run` tool); recording what triggered an `import` in `history`; a tool operation for renaming a
+real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
+(`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (167 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (171 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -74,6 +76,8 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   report as E0513. To confirm: every `alang db` command, a plain query included, can now change the database (a
   deleted export file removes its module's definitions). Above all, references stay names, so `rename` rewrites
   callers instead of changing only a pointer (departs from 6.1); see "Database phase: open points".
+- Running from the database: everything in `decisions.md`, Database, Run; above all, a failed sync refuses the run
+  instead of falling back to the database, examples are re-run, and the program runs in the caller's directory.
 - MCP server: everything in `decisions.md`, section MCP server; above all, no `import`/`export` tools, JSON results
   identical to `alang db`, a hand-written protocol instead of the SDK, and queries marked read-only although their
   sync can change the database.
@@ -211,6 +215,33 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
   model not to run. A model with a shell may still run them; the diagnostic could carry a hint that it is for the user.
+
+## From db run (2026-11-12)
+
+- **The MCP `run` tool is not built.** `Codebase.run` takes the `RunOptions` of `alang run`, so the tool would be a
+  thin layer, but it needs more than that: piped output returned as the result (stdout and stderr apart, with the
+  exit code); a time limit, since tool calls run one at a time and a program that never ends would block every later
+  call; stdin closed; a working directory (the codebase's, presumably, since the model has no other); and annotations
+  that say it is neither read-only nor closed-world. It would be the first tool whose effects reach outside the
+  codebase, so a client should ask the user before each call. The README's registration line would need
+  `--allow-run`.
+- **Exit code 1 means two things.** Diagnostics end `db run` with 1, and so does a program that crashes with a
+  JavaScript error (a stack overflow, see "From mandatory examples"). A trap is 70. alang programs cannot choose
+  their exit code yet, so only a crash collides; once they can (a std function, or `main` returning a code), the
+  tool's own codes need a range of their own.
+- **Two runs of one `main` share files.** `out/<main>.ts` is a stable path, so two processes running the same `main`
+  at once may overwrite each other's build; with an unchanged database both write the same text. Per-run files would
+  close this but leave nothing to look at afterwards.
+- **Every run re-runs every example.** Fine for the playground; for a large codebase the same limit to changed
+  definitions as for submits (see "Examples as a regression net") would apply, or a run could trust the database.
+- **Stale acceptance files.** The playground's `out/` holds three `accept-<pid>-1.ts` from MCP server processes that
+  ended without `close()` (killed with their client, so the `finally` never ran). Harmless, but they pile up; the
+  server could close on SIGTERM, or opening a codebase could remove the files of processes that no longer exist.
+- **Running a file from anywhere.** `deno task alang run x.alang` resolves `x.alang` from the repository root, since
+  `deno task` runs in its config's directory. `deno install --global ... -n alang src/cli.ts` gives an `alang`
+  command that works from any directory and needs no reinstall after changes (README). `alang run` then writes
+  `out/` into the current directory; a temporary directory would leave no trace, but the generated TypeScript is
+  useful to look at.
 
 ## From the export sync (2026-11-12)
 

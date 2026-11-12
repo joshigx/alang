@@ -23,9 +23,21 @@ deno task alang ts examples/port.alang       # generated TypeScript
 deno task alang test examples/port.alang     # list every example, with the actual value of failing ones
 deno task alang run examples/hello.alang     # run main with the permissions of its effects
 deno task alang db --dir project list        # database queries and operations (section 6), JSON out
+deno task alang db --dir project run         # run the program the database holds (main's full name if several)
 deno task alang mcp --dir project            # the same as an MCP server on stdio
 deno task test                               # test suite
 ```
+
+`deno task` runs in this directory, so file paths are relative to it. To have an `alang` command everywhere, install
+it once (it runs the sources in place, so later changes need no reinstall):
+
+```sh
+deno install --global --allow-read --allow-write --allow-run -n alang /path/to/alang/src/cli.ts
+alang run hello.alang                        # writes out/hello.ts and out/hello.run.ts next to where you are
+```
+
+A file given to `alang run` must hold the whole program; a program spread over modules runs from its database with
+`alang db --dir <project> run`.
 
 ## MCP server
 

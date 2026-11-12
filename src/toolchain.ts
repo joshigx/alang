@@ -105,18 +105,27 @@ export async function testExamples(built: Built): Promise<ExampleOutcome[]> {
   return describeResults(built.defs, built.info, runExamples(mod.$examples as readonly Example[]));
 }
 
-export function findMain(defs: readonly Definition[]): FnDef {
+// The function a program starts at (spec, section 1): a function named
+// `main` with `in: none` and `out: Unit`. With `name`, the `main` of that
+// full name, for a program with several (a codebase of many modules).
+export function findMain(defs: readonly Definition[], name?: string): FnDef {
   const mains = defs.filter((d): d is FnDef => d.kind === "fn" && d.path[d.path.length - 1] === "main");
-  if (mains.length !== 1) {
+  const chosen = name === undefined ? mains : mains.filter((m) => pathText(m.path) === name);
+  if (chosen.length !== 1) {
+    const names = mains.map((m) => pathText(m.path));
+    const known = names.length === 0 ? "" : ` The \`main\` functions are ${names.map((n) => `\`${n}\``).join(", ")}.`;
     throw new AlangError(diagnostic({
       code: "E0304",
-      at: mains.map((m) => pathText(m.path)).join(", ") || "<program>",
-      message: mains.length === 0
+      definition: name ?? null,
+      at: name ?? (names.join(", ") || "<program>"),
+      message: name !== undefined
+        ? `\`${name}\` is not a \`main\` function; a program starts at a function named \`main\`.${known}`
+        : chosen.length === 0
         ? "The program has no `main` function."
-        : "The program has more than one `main` function; name the one to run.",
+        : `The program has more than one \`main\` function; name the one to run.${known}`,
     }));
   }
-  const main = mains[0];
+  const main = chosen[0];
   const isUnit = main.out.path.length === 1 && main.out.path[0] === "Unit";
   if (main.params.length !== 0 || !isUnit) {
     throw new AlangError(diagnostic({
@@ -149,11 +158,14 @@ export interface RunOptions {
   // Grant the permissions of these effects instead of main's own. For tests
   // of the runtime enforcement only.
   readonly effects?: readonly Effect[];
+  // The full name of the `main` to start, if the program has several.
+  readonly main?: string;
 }
 
-// Writes the entry file that starts main (`out/<name>.run.ts`) and returns its path.
-export async function writeEntry(built: Built): Promise<string> {
-  const main = findMain(built.defs);
+// Writes the entry file that starts main (`out/<name>.run.ts`) and returns
+// its path. `name` chooses among several `main` functions (see `findMain`).
+export async function writeEntry(built: Built, name?: string): Promise<string> {
+  const main = findMain(built.defs, name);
   const entry = built.outPath.replace(/\.ts$/, ".run.ts");
   const fn = main.path.join("$");
   let runtimeImport = relative(dirname(entry), RUNTIME_PATH).replaceAll("\\", "/");
@@ -184,8 +196,8 @@ export async function writeEntry(built: Built): Promise<string> {
 // permissions main declares as effects, so that code doing more than its
 // effects (an extern function, rule 2.5) fails at runtime.
 export async function run(built: Built, options: RunOptions = {}): Promise<Deno.CommandOutput> {
-  const main = findMain(built.defs);
-  const entry = await writeEntry(built);
+  const main = findMain(built.defs, options.main);
+  const entry = await writeEntry(built, options.main);
   const permissions = permissionsFor(options.effects ?? main.effects);
   const stdio = options.stdio ?? "inherit";
   return await new Deno.Command(Deno.execPath(), {

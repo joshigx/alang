@@ -23,16 +23,26 @@
 //                                    are imported first, not overwritten
 //   import [<dir>]                   rebuild the database from export/ (or <dir>)
 //
-// Every command prints one JSON value. Operations print the submit result and
-// exit with 1 if it was rejected; a query on an unknown name prints its
-// diagnostics on stderr and exits with 1. Before a query, the database is
+//   run [<main>]                     accept the program the database holds and
+//                                    start its `main` (the full name, if there
+//                                    are several), as `alang run` does
+//
+// Every command but `run` prints one JSON value. Operations print the submit
+// result and exit with 1 if it was rejected; a query on an unknown name prints
+// its diagnostics on stderr and exits with 1. Before a query, the database is
 // brought in step with the export (`Codebase.sync`); if that fails, the query
 // answers from the database and the diagnostics go to stderr.
+//
+// `run` leaves stdout to the program and exits with its code (70 on a trap,
+// whose description goes to stderr). If the sync fails (E0513), there is no
+// such `main`, or the program is not accepted, it runs nothing and prints the
+// diagnostics on stderr, exiting with 1. The program runs in the current
+// directory, not in <dir>.
 
 import { Codebase, type ExportResult, parseChanges, type SubmitResult } from "./codebase.ts";
 
 export const DB_USAGE = "usage: alang db [--dir <dir>] <definition|signature|context|callers|list|search|" +
-  "search-type|history|add|replace|remove|rename|submit|export|import> ...";
+  "search-type|history|add|replace|remove|rename|submit|export|import|run> ...";
 
 async function readText(path: string): Promise<string> {
   return path === "-" ? await new Response(Deno.stdin.readable).text() : await Deno.readTextFile(path);
@@ -72,6 +82,7 @@ export async function dbMain(args: string[]): Promise<number> {
     submit: [1, 1],
     export: [0, 1],
     import: [0, 1],
+    run: [0, 1],
   };
   const range = arity[command];
   const usage = !range || rest.length < range[0] || rest.length > range[1] ||
@@ -144,6 +155,8 @@ export async function dbMain(args: string[]): Promise<number> {
         return result(await cb.exportAll({ force: a === "--force" }));
       case "import":
         return result(await cb.importAll(a));
+      case "run":
+        return (await cb.run(a)).code;
     }
     return 2;
   } finally {

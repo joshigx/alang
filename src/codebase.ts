@@ -26,7 +26,7 @@ import { printDefinition, printSignature, printString } from "./printer.ts";
 import { dependencies, mapReferences, type Ref, shortenOwnNames } from "./refs.ts";
 import { matchesFn, namedTypes, parseFnPattern, showTree, treeOfRef, treeOfType, type TypeTree } from "./search.ts";
 import { signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
-import { acceptDefinitions, type Accepted } from "./toolchain.ts";
+import { acceptDefinitions, type Accepted, findMain, run as runBuilt, type RunOptions } from "./toolchain.ts";
 
 // ---- data ----
 
@@ -562,6 +562,28 @@ export class Codebase {
        WHERE r.to_name IN (${targets.map(() => "?").join(", ")}) AND n.name <> ? ORDER BY n.name`,
     ).all(...targets, name) as { name: string }[];
     return rows.map((r) => r.name);
+  }
+
+  // ---- running ----
+
+  // Runs the program the codebase holds (spec, Toolchain): brings the
+  // database in step with the export, accepts the whole program like any
+  // change (6.3), writes it to `out/<main>.ts` with its entry
+  // `out/<main>.run.ts` (both stay, like those of `alang run`), and starts
+  // `main` in its own process with exactly the permissions of its effects.
+  // `name` is the full name of the `main` to start, needed only if there are
+  // several. The program's working directory is the caller's, not the
+  // codebase's. Throws an AlangError and runs nothing if the sync fails
+  // (E0513: the files contradict the database, so neither side is run), if
+  // there is no such `main`, or if the program is not accepted.
+  async run(name?: string, options: Omit<RunOptions, "main"> = {}): Promise<Deno.CommandOutput> {
+    const synced = await this.sync();
+    if (!synced.ok) throw new AlangError(synced.diagnostics);
+    if (name !== undefined && !this.names().has(name)) throw new AlangError(this.unknownName(name, `run(${name})`));
+    const defs = [...this.snapshot().values()].map((c) => c.def);
+    const main = pathText(findMain(defs, name).path);
+    const { built } = await acceptDefinitions(defs, join(this.dir, "out", `${main}.ts`));
+    return await runBuilt(built, { ...options, main });
   }
 
   // ---- changing ----
