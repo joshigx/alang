@@ -4,7 +4,7 @@ Nov 12, 2026 · @Josua Lucas
 
 ## Overview
 
-alang is written and edited by LLMs, read by humans mainly at the contract level, and transpiled to TypeScript. This sketch defines only the language core, organized by six design principles and, for now, without concurrency and asynchronous calls. The semantics are defined independently of the target language, so that further targets remain possible.
+alang is written and edited by LLMs, read by humans mainly at the contract level, and transpiled to TypeScript. This sketch defines only the language core, organized by six design principles and, for now, without concurrency and asynchronous calls. The semantics are defined independently of the target language, so that further targets remain possible. Section 7 states what the implementation accepts today: the gaps the sketch leaves open, the standard library, and what does not exist yet.
 
 There are four kinds of definitions. Each has a full name of the form `module.path.name`.
 
@@ -451,3 +451,280 @@ examples:
 ```
 
 **Body length.** There is no upper limit. The database logs the length of every body; a limit is set only once the error rate measurably rises beyond a certain length.
+
+## 7. Reference for writing alang
+
+Sections 1 to 6 are the design. This section states what the implementation accepts today, in enough detail to write a definition that is accepted on the first try: the gaps the sketch leaves open, the standard library, the codebase tools, and what does not exist yet. The reasons are in `docs/decisions.md`; some of these decisions still await review and may change. A code in brackets is the diagnostic (5.5) that a rule produces.
+
+### 7.1 Not available yet
+
+These forms are common in other languages but do not exist in alang. Write the form in the right column instead.
+
+| Not available | Instead |
+| --- | --- |
+| `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value |
+| List literals | `std.list.append(list: std.list.empty<Int>(), item: 1)`, nested for more items |
+| Functions on `Map` | A `List` of records |
+| `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6), `std.int.min`, `std.int.max`, splitting or searching text | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
+| `if`, `match` or `for` inside another expression, such as an argument (E0303) | Bind it with `let` first, or `return` it |
+| `where` on a variant type (E0225) | A record around it, or a check in the functions |
+| Function types in your own signatures | Only std functions take functions (`with`, `by`, `handler`) |
+| std functions with the effects `time`, `random`, `env` or `log` | The effects exist; nothing in std uses them yet |
+| Static proofs (5.2) and prefix checking (1.6) | Every `requires`, `ensures` and `where` is checked at runtime |
+| The depth limit (4.8) | Not enforced yet; keep to it anyway |
+| Concurrency | Everything runs in order; `std.http.serve` answers one request at a time |
+
+### 7.2 Text
+
+- **Comments.** There are none. `//`, `/*` and `#` are errors (E0006); a definition is described in its `doc`.
+- **Strings.** Double quotes, closed on the same line. The escapes are exactly `\"`, `\\`, `\n`, `\t`, and `\u{1B}` (uppercase hex) for other control characters. Every other character, non-ASCII included, is written as itself: `"é"`, never `"\u{E9}"`. Texts are joined with `std.string.concat`; `+` is for numbers only.
+- **Numbers.** An integer with more than four digits is grouped in threes with `_` (`65_535`, `1_000_000`); `65535`, `1_000` and leading zeros are errors (4.7). A float is written `digits.digits` (`1.0`, `0.25`), never `1.`, `.5` or `1e3`. A negative number is a literal (`-3`, `-0.5`). There is no minus in front of other expressions; write `0 - x`.
+- **Other values.** `true`, `false`, and `Unit`, the one value of the type `Unit`.
+- **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them.
+- **Foreign forms.** `===`, `!==`, `&&`, `||`, `!`, `{`, `}`, `[`, `]`, `?`, `;`, `'`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7).
+- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7).
+
+### 7.3 Definitions and names
+
+- **Every name has a module.** Write `fn hello.main`, never `fn main`. The module `std` is reserved for the standard library (E0215).
+- **Sections.** As in 1.1 and the grammar. `in:` is `none` or one `name: Type` per line. `effects:` is `none` or a list in the order of the effect table (2.2), each effect once: `effects: fs.read, console` (otherwise E0111, with the corrected line).
+- **Types.** `record:` lists fields and `variant:` lists cases; a case carries at most one value (`OutOfRange: Int`, 4.2). `where:` is an invariant over the fields of a record; a variant has `where: none`.
+- **Cases belong to the module.** A case's full name is `module.Case`, not `module.Type.Case`. So two types of one module cannot share a case name, and a case cannot share its name with a type of its module (E0215). Outside its module, a case is written in full: `std.fs.NotFound`, `net.port.OutOfRange`.
+- **The own module is written short (1.2).** Inside `net.port`, write `parse`, `Port` and `OutOfRange`. Names from any other module are written in full, std included: `std.http.Request`, `std.http.AddressInUse`. Enclosing and nested modules count as other modules. An own-module name written in full is E0226; the codebase stores it short by itself and lists it under `fixed`. One exception: a function passed as a value whose short name is also the name of a local is written in full.
+- **Built-ins are always short.** `Int`, `Float`, `Bool`, `String`, `Unit`, `List`, `Map`, `Option` (`Some`, `None`), `Result` (`Ok`, `Err`) and `Order` (`Less`, `Equal`, `Greater`). No type or case may take one of these names (E0215).
+- **Uniqueness.** Definition names, parameters, fields, and case names within a module are unique (E0215).
+
+### 7.4 Bodies
+
+- **Statements.** One per line: a `let`, a `return`, or an expression of type `Unit`, such as `std.console.print_line(...)`. Any other value must be used; dropping a `Result` is an error (E0217).
+- **The end.** The last statement of a body is literally a `return` (E0218). Nothing may follow a `return`, or an `if` or `match` whose branches all return (E0218). So an `if` whose branches all return cannot end a body either. Write `if c then return a end if` and then `return b`, or bind the value with `let` and return that.
+- **`let` (3.2).** `let n: Int = expression`, always with the type. In `let n: Int = std.int.parse(text: s) else return Err(NotANumber)`, the expression is a `Result` or an `Option`. On `Ok` or `Some`, its content is bound. Otherwise the function returns the `else` value, in which `error` is the `Err` value, or `Unit` for `None`.
+- **No shadowing (2.6).** A binding may not reuse a name that is visible at that point: a parameter, an earlier `let`, or a pattern or lambda variable. Sibling branches may use the same name.
+- **`if`.** `if condition then ... else ... end if`. Without `else`, only as a statement (E0110). The value of a branch is its last expression.
+- **`match` (3.3).** `match subject` is followed by `case Pattern then ...` lines and `end match`. Every case is covered, without a catch-all, and no case may be one that earlier cases already cover (E0214).
+  - A case without a value is matched bare: `case None then`.
+  - A case with a value always takes a sub-pattern, either a name or a nested case: `case Some(n) then`, `case Err(OutOfRange(n)) then`, `case Err(std.fs.NotFound) then`.
+  - A `match` on `Int` or `String` can never be exhaustive; use `if`.
+- **`for` (3.4).** `for name: Type in list do ... end for`. As a statement, its body has type `Unit`. As a value, it is the list of the body's values; this is how effects per element are collected.
+- **Where `if`, `match` and `for` stand.** As a statement, as the value of a `let`, or after `return`. Not yet inside another expression (E0303).
+
+### 7.5 Expressions
+
+- **Calls and construction (4.1).** Every argument is named, in declaration order, with none left out and none given twice (E0205 to E0208): `std.string.concat(left: a, right: b)`, `Port(value: 8080)`. A case's value has no name: `Some(n)`, `Err(OutOfRange(n))`. Fields are read with a dot (`request.path`). There are no method calls (`x.f()`, E0220).
+- **Explicit type arguments (1.4).** They are written exactly when a type parameter of the function occurs in no parameter type, and never otherwise (E0209): `std.list.empty<Int>()`, but `std.list.map(list: xs, with: ...)`.
+- **Types flow from left to right (1.4).** `Ok`, `Err` and `None` take their type from what is expected at that point: the type of a `let`, a parameter, `out` at a `return`, or the left side of `==`. Without an expected type they are an error (E0210); `Some(x)` can also take its type from `x`. So the side with a known type comes first: `parse(text: "1") == Ok(...)`, not `None == x`.
+- **Arithmetic.** `+ - * / %` work on two `Int` or two `Float`; nothing is converted implicitly (`std.int.to_float`). `Int` division truncates toward zero, and `%` takes the sign of the dividend (`-7 % 2 == -1`). Division by zero and leaving the `Int` range trap. A `Float` result that is NaN traps (`0.0 / 0.0`); infinities are ordinary values.
+- **Comparison and logic.** `==` and `!=` work on every type without functions, by structure (3.9). `< <= > >=` work only on `Int`, `Float` and `String` (E0222); other types are ordered by a function that returns `Order`. The logical operators are `and`, `or` and `not`. `not` binds more loosely than comparison: `not a == b` means `not (a == b)`. Mixing `+ -` with `* / %`, or `and` with `or`, needs parentheses (3.5).
+- **Lambdas (2.4).** `fn(item: Int): Int => item * factor` has typed parameters, a result type, and one expression as its body: no `let` and no `return` (E0219). It has no effects (E0232) and may read the bindings around it. A lambda used as an operand is put in parentheses.
+- **Function values.** Where a std function takes a function, a function name can be passed instead of a lambda (`by: std.int.compare`, `with: double`). The function must be pure (E0232) and not generic; a generic one needs a lambda (E0210). The exception is the `handler` of `std.http.serve`, which may have effects; the caller then declares them (E0230).
+- **Names.** A plain name means a local first, then a function of the own module.
+
+### 7.6 Contracts and examples
+
+- **Scopes.** `requires` sees the parameters, `ensures` the parameters and `result`, and `where` the fields. Conditions and examples call only pure functions (E0233).
+- **Examples (5.1).** Each line is `call == expected`. The call is to the function itself, by its short name (E0221), and both sides have the same type.
+  - Every function with `effects: none` has at least one example (E0401). A function with effects has `examples: none` (5.4).
+  - An example holds if both sides are equal (3.9). A failing one is reported with the actual value as alang text (E0402). A trapping one is reported with the trap (E0403); this includes a stack overflow from recursion without a base case.
+- **Acceptance.** Every change re-runs every example of the program, so a changed body that breaks a caller's example is rejected too.
+- **Shape of a program.** Logic goes into pure functions with examples. Functions with effects stay thin and call them; see the server in 7.9.
+
+### 7.7 Effects and running
+
+- **Declaration (2.1).** `effects` includes the effects of every function that is called, directly or as a handler (E0230, with the corrected line). Declaring more than needed is allowed.
+- **Running.** `main` runs in its own process with exactly the Deno permissions of its effects (Toolchain); an operation without permission traps. A trap ends the program with exit code 70 and a diagnostic as JSON on stderr.
+- **Values as text.** `std.text.show` gives `42`, `2.5`, `"a\"b"` (quoted), `Some(3)`, `Less`, `Unit`, `["a", "b"]` for a list, and `(x: 1, y: -2)` for a record, without its type name. A whole `Float` shows without its fraction: `2.0` gives `2`.
+
+### 7.8 Standard library
+
+This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound from the arguments. A type such as `(T) -> U` is a function parameter; pass a lambda or a function name (7.5). `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
+
+| Function | Effects | Meaning |
+| --- | --- | --- |
+| `std.console.print_line(text: String): Unit` | console | Writes a line to the console. |
+| `std.fs.read_text(path: String): Result<String, std.fs.ReadError>` | fs.read | Reads a whole file as UTF-8 text. |
+| `std.http.serve(host: String, port: Int, handler: (std.http.Request) -> std.http.Response with effects): Result<Unit, std.http.ServeError>` | net | Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them. |
+| `std.int.parse(text: String): Option<Int>` | none | Reads a decimal integer; `None` if the text is not one. |
+| `std.int.to_float(value: Int): Float` | none | The same number as a Float. |
+| `std.int.compare(left: Int, right: Int): Order` | none | Orders two integers. |
+| `std.float.floor(value: Float): Int` | none | The largest integer not above the value; traps outside the Int range. |
+| `std.string.trim(text: String): String` | none | Removes leading and trailing whitespace. |
+| `std.string.length(text: String): Int` | none | Number of Unicode scalar values. |
+| `std.string.concat(left: String, right: String): String` | none | The two texts joined. |
+| `std.string.join(parts: List<String>, separator: String): String` | none | The parts joined with the separator between them. |
+| `std.string.compare(left: String, right: String): Order` | none | Orders two texts by Unicode scalar values. |
+| `std.list.empty<T>(): List<T>` | none | The empty list. |
+| `std.list.append<T>(list: List<T>, item: T): List<T>` | none | The list with the item added at the end. |
+| `std.list.length<T>(list: List<T>): Int` | none | Number of items. |
+| `std.list.get<T>(list: List<T>, index: Int): Option<T>` | none | The item at the index, counting from 0; `None` outside the list. |
+| `std.list.map<T, U>(list: List<T>, with: (T) -> U): List<U>` | none | Applies the function to every item. |
+| `std.list.filter<T>(list: List<T>, with: (T) -> Bool): List<T>` | none | The items for which the function is true. |
+| `std.list.fold<T, A>(list: List<T>, initial: A, with: (A, T) -> A): A` | none | Combines the items from first to last, starting with `initial`. |
+| `std.list.sort<T>(list: List<T>, by: (T, T) -> Order): List<T>` | none | The items in the order given by the comparison; stable. |
+| `std.text.show<T>(value: T): String` | none | Text representation of any value without functions. |
+
+The std types, written in alang:
+
+```
+type std.fs.ReadError
+  doc: "Why a file could not be read."
+  variant:
+    NotFound
+    PermissionDenied
+    IsADirectory
+    Other: String
+  where: none
+end type std.fs.ReadError
+
+type std.http.Header
+  doc: "One header of a request or response."
+  record:
+    name: String
+    value: String
+  where: none
+end type std.http.Header
+
+type std.http.Request
+  doc: "A request as the server received it: method in capitals, path and query as sent (query without the question mark), header names in lowercase and sorted, content (the body) as UTF-8 text."
+  record:
+    method: String
+    path: String
+    query: String
+    headers: List<Header>
+    content: String
+  where: none
+end type std.http.Request
+
+type std.http.Response
+  doc: "The answer to a request. Statuses 204, 205 and 304 carry no content. Without a content-type header, content is sent as text/plain in UTF-8."
+  record:
+    status: Int
+    headers: List<Header>
+    content: String
+  where: 200 <= status and status <= 599 and (content == "" or (status != 204 and status != 205 and status != 304))
+end type std.http.Response
+
+type std.http.ServeError
+  doc: "Why the server could not start listening."
+  variant:
+    AddressInUse
+    PermissionDenied
+    Other: String
+  where: none
+end type std.http.ServeError
+```
+
+`std.http.serve` returns only when serving ends: with `Ok(Unit)` after SIGINT or SIGTERM, or with `Err` if it cannot listen. Code after it runs after the server has stopped. It prints nothing itself. A request's header names arrive in lowercase and sorted. Without a `content-type` header, content is sent as `text/plain; charset=utf-8`. A trap in a handler ends the whole program; that request gets status 500.
+
+### 7.9 A complete program
+
+An HTTP server in the recommended shape. `route` is pure and has examples, `handle` is a thin function with an effect, and `main` passes `handle` by name. `alang db run server.main` starts it, and Ctrl-C ends it.
+
+```
+fn server.route
+  doc: "Answers / with a greeting and POST /echo with the request's content; anything else is not found."
+  in:
+    request: std.http.Request
+  out: std.http.Response
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    route(request: std.http.Request(method: "GET", path: "/", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: "Hello from alang")
+    route(request: std.http.Request(method: "POST", path: "/echo", query: "", headers: std.list.empty<std.http.Header>(), content: "hi")) == std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: "hi")
+    route(request: std.http.Request(method: "GET", path: "/echo", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 405, headers: std.list.append(list: std.list.empty<std.http.Header>(), item: std.http.Header(name: "allow", value: "POST")), content: "")
+    route(request: std.http.Request(method: "GET", path: "/nope", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 404, headers: std.list.empty<std.http.Header>(), content: "Not found")
+  body:
+    let no_headers: List<std.http.Header> = std.list.empty<std.http.Header>()
+    if request.path == "/" then
+      return std.http.Response(status: 200, headers: no_headers, content: "Hello from alang")
+    end if
+    if request.path == "/echo" then
+      if request.method == "POST" then
+        return std.http.Response(status: 200, headers: no_headers, content: request.content)
+      end if
+      let allow: List<std.http.Header> = std.list.append(list: no_headers, item: std.http.Header(name: "allow", value: "POST"))
+      return std.http.Response(status: 405, headers: allow, content: "")
+    end if
+    return std.http.Response(status: 404, headers: no_headers, content: "Not found")
+end fn server.route
+
+fn server.handle
+  doc: "Answers a request through route and prints one line about it."
+  in:
+    request: std.http.Request
+  out: std.http.Response
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let response: std.http.Response = route(request: request)
+    let line: String = std.string.concat(left: std.string.concat(left: request.method, right: " "), right: request.path)
+    std.console.print_line(text: std.string.concat(left: std.string.concat(left: line, right: " -> "), right: std.text.show(value: response.status)))
+    return response
+end fn server.handle
+
+fn server.main
+  doc: "Serves on http://localhost:8080 until Ctrl-C."
+  in: none
+  out: Unit
+  effects: net, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    std.console.print_line(text: "Serving on http://localhost:8080; Ctrl-C stops.")
+    let served: Result<Unit, std.http.ServeError> = std.http.serve(host: "localhost", port: 8080, handler: handle)
+    let text: String = match served
+      case Ok(done) then
+        "Stopped."
+      case Err(reason) then
+        std.string.concat(left: "Cannot serve: ", right: std.text.show(value: reason))
+    end match
+    std.console.print_line(text: text)
+    return Unit
+end fn server.main
+```
+
+### 7.10 Working with the codebase
+
+Section 6 in practice. `alang mcp` offers the queries and operations as tools for an LLM, and `alang db` offers them on the command line with the same JSON results.
+
+| Query | Result |
+| --- | --- |
+| `list(module)` | The module's definitions (name, hash, kind, doc) and submodules; without a module, the codebase's top level; `std` for the library |
+| `search(text)` | Definitions whose name or `doc` contains the text, std included |
+| `search_type(pattern)` | Functions by signature, such as `String -> Option<Int>`, `Int, Int -> Bool`, or `-> Unit` for none. `_` matches any type; `Port` matches by last segment. The parameter count and the result type must match exactly, so `String -> Int` does not find `std.int.parse` |
+| `context(name)` | The text and hash, and the signatures of everything it uses (std as one line or as alang text). Read this before a change |
+| `definition(name)`, `signature(name)` | The text, or every section but `body` |
+| `callers(name)` | The definitions that use it |
+| `history(name)` | Every version with time and operation (`add`, `replace`, `remove`, `rename`, `follow`, `import`) |
+
+| Operation | Effect |
+| --- | --- |
+| `add(text)` | Adds a definition; E0503 if the name exists |
+| `replace(name, hash, text)` | Replaces the version with this hash |
+| `remove(name, hash)` | Removes it; rejected while callers exist (E0507) |
+| `rename(name, hash, to, text?)` | Renames it and rewrites every caller; with `text`, it also changes the definition |
+| `submit(changes)` | Several of the above as one transaction (6.4) |
+
+- **The hash is a guard (6.7).** Copy it from the last query or change result. A stale hash is rejected (E0501) together with the current version in `current`; redo the change on that version. Never write a hash into code.
+- **Results.** `ok: true` lists `written` (name, new hash, operation), `unchanged`, and, if present, `fixed`. `ok: false` lists `diagnostics` and `current`, and nothing was written.
+- **Interface changes.** Every section of a function except `doc`, `examples` and `body` belongs to its interface; so do a type's shape and `where`. Removing an effect is not an interface change. A change to the interface is rejected while callers outside the transaction exist (E0506). Submit them in the same transaction, adapted or unchanged.
+- **Departures from section 6.** References are stored as names, not hashes, so `rename` rewrites every caller, and each caller gets a new version (6.1). `search(type)` is `search_type`. std can be read but not changed, and has no history.
+- **Export.** `export/<module>.alang` holds each module as canonical text for Git, and it is the source of truth. The database and the export follow each other automatically. If both changed, E0513 is reported, and which side wins is the user's call.
+- **Running.** `alang db run` runs the program the database holds. If there are several `main` functions, name one: `alang db run web.main` (E0304).
+
+### 7.11 Diagnostics
+
+Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (the quoted text), `message`, `expected` and `fix`. `fix` is present when the correction is mechanical. The code says where a diagnostic comes from:
+
+| Codes | Concern |
+| --- | --- |
+| E0001 to E0006 | Characters, names, numbers, strings, foreign forms |
+| E0101 to E0199 | Syntax and section order |
+| E0201 to E0226 | Names, types, calls, patterns, examples' form |
+| E0230 to E0233 | Effects |
+| E0301 to E0305 | Code generation and `main` |
+| E0401 to E0403 | Missing, failing and trapping examples |
+| E0501 to E0513 | Codebase operations |

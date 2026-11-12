@@ -11,7 +11,7 @@ import { dependencies, mapReferences, references } from "../src/refs.ts";
 
 const spec = await Deno.readTextFile(new URL("../alang-specs.md", import.meta.url));
 const specBlock = (firstLine: string): string => {
-  const m = [...spec.matchAll(/^```\n([\s\S]*?)^```$/gm)].find((m) => m[1].startsWith(firstLine + "\n"));
+  const m = [...spec.matchAll(/^```\w*\n([\s\S]*?)^```$/gm)].find((m) => m[1].startsWith(firstLine + "\n"));
   if (!m) throw new Error(`spec block not found: ${firstLine}`);
   return m[1];
 };
