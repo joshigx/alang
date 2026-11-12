@@ -174,6 +174,14 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   answering about the current state. A further step, not built: when a sync imports something, add a block to the
   result naming what changed outside the conversation. That only helps once the model makes a call, and only in the
   server process that did the import (here the import happened in a second process, from a manual check).
+- **With the instruction, it queries.** After reconnecting, the same question got two tool calls and the right
+  answer; the model said it checked instead of repeating itself, found the `import` in `history`, and asked whether
+  the restore was intended. Two flaws remained. It pictured export and database as copies synced by occasional
+  imports ("the export files might restore them on the next import, so you may want to re-export"), so the
+  instructions now say that both directions are automatic and that it never exports or imports. And it guessed the
+  import happened "around when alang was reconnected" (it was a manual check from another process): `history`
+  records `import` but not what triggered it. Recording the source (the sync of a query or submit, `alang db import`,
+  and the file) would let a model explain an import instead of guessing.
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
