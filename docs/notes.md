@@ -3,6 +3,46 @@
 Running log of observations, spec gaps and ideas for later. Decisions that close a gap move to
 [decisions.md](decisions.md); this file is for what is not decided or not done yet.
 
+## Current state (2026-11-12)
+
+Read this first when picking up the work in a new session. Update it when a phase ends.
+
+**Branches.** Work happens on the local branch `effects`, which is not pushed. Its commits sit on top of
+`type-checker` (pushed to `origin/type-checker`). `main` (= `origin/main`) has only the first slice, so do not start
+from `main`. Nothing is merged yet; merging and pushing is the user's call.
+
+**Done** (phases from CLAUDE.md, in order):
+
+1. Thin slice: lexer, parser, canonical printer, TypeScript emitter, runtime.
+2. Type checker (`src/check.ts`), with every accepted test program also checked by TypeScript.
+3. Effects: static checks (2.1, 2.4, 5.4) and runtime enforcement through Deno permissions in `alang run`.
+
+**Next:** mandatory examples for pure functions (5.1), then the database (section 6), then the MCP server around
+its queries and operations. `extern fn` and `const` are still unparsed and need their form decided.
+
+**Checks before every commit:** `deno task test` (71 tests), `deno lint`, `deno fmt --check`.
+
+**Working conventions** agreed with the user:
+
+- Write in English; translate German text you encounter.
+- Each phase on its own branch; commit locally with explicit paths (never `git add -A`); do not push.
+- The user also commits and pushes; check `git log` and `git status` before committing.
+- Decisions go to `decisions.md`, observations and ideas to this file, both as you go.
+
+**Decisions awaiting the user's review.** All are recorded in `decisions.md` and were reported, but not explicitly
+confirmed. Do not build on them as if settled; raise them if a new phase depends on one.
+
+- Slice: section names are reserved words; variant case names are unique per module; `std.int.parse` returns
+  `Option<Int>`; `not` binds looser than comparison; no unary minus except on number literals; `result` and `error`
+  are reserved names.
+- Type checker: explicit type arguments exactly when a type parameter is missing from the parameter types; a body
+  ends with a literal `return`; discarding a non-`Unit` value is an error; sibling branches may reuse a name; `+` is
+  numeric only; an example calls its own function; builtin names and the `std` module are reserved.
+- Effects: over-declaring effects is allowed; functions passed by name must be pure; functions with effects cannot
+  have examples (5.4); a read refused for lack of permission traps; effects are listed in table order (E0111).
+- std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
+  `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
+
 ## Spec observations
 
 - `config.load_port` (section 2) uses `LoadError`, `FileUnreadable`, `InvalidPort` and `std.fs.read_text` /
