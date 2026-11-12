@@ -9,19 +9,23 @@
 //   alang test <file>            build and run all examples, passing or not
 //   alang run <file>             accept, then run main with exactly the Deno
 //                                permissions of its effects
+//   alang db ...                 queries and operations on a codebase database
+//                                (section 6); see db_cli.ts
 //
 // Every command but fmt and test refuses a program that is not accepted:
 // a definition that fails its checks does not exist (5).
 
+import { dbMain } from "./db_cli.ts";
 import { AlangError } from "./diagnostic.ts";
 import { parseProgram } from "./parser.ts";
 import { printProgram } from "./printer.ts";
 import { Trap } from "./runtime.ts";
 import { accept, build, compile, defaultOutPath, run, testExamples } from "./toolchain.ts";
 
-const USAGE = "usage: alang <fmt|check|ts|build|test|run> <file> [--write] [-o out]";
+const USAGE = "usage: alang <fmt|check|ts|build|test|run> <file> [--write] [-o out], or alang db ...";
 
 async function main(args: string[]): Promise<number> {
+  if (args[0] === "db") return await dbMain(args.slice(1));
   const [command, file, ...rest] = args;
   if (!command || !file) {
     console.error(USAGE);
