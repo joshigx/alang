@@ -51,11 +51,24 @@ function fn(
   return lines.join("\n") + (o.extra ? `\n\n${o.extra}` : "");
 }
 
-// Exactly one diagnostic, with the given code; returns it.
+// Exactly one diagnostic, with the given code; returns it. A fix always
+// applies inside the quoted location (5.5).
 function one(source: string, code: string): Diagnostic {
   const ds = check(source);
   assertEquals(ds.map((d) => d.code), [code], JSON.stringify(ds, null, 2));
+  const fix = ds[0].fix;
+  if (fix) assertEquals(ds[0].at.includes(fix.replace), true, `fix outside its location: ${JSON.stringify(ds[0])}`);
   return ds[0];
+}
+
+// Applies a diagnostic's fix the way a tool would: find the quoted location
+// in the line of its section, then replace inside it.
+function applyFix(source: string, d: Diagnostic): string {
+  const lines = source.split("\n");
+  const i = lines.findIndex((l) => l.trimStart().startsWith(`${d.section}:`) && l.includes(d.at));
+  if (i < 0 || !d.fix) throw new Error(`cannot apply ${JSON.stringify(d)}`);
+  lines[i] = lines[i].replace(d.at, d.at.replace(d.fix.replace, d.fix.with));
+  return lines.join("\n");
 }
 
 // Every accepted program with the default std is also emitted and checked by
@@ -434,9 +447,13 @@ const SHOUT = [
 ].join("\n");
 
 Deno.test("effects: a caller declares the effects of its callees (2.1)", () => {
-  const d = one(fn('std.console.print_line(text: "hi")\nreturn 0'), "E0230");
-  assertEquals(d.at, 'std.console.print_line(text: "hi")');
+  const source = fn('std.console.print_line(text: "hi")\nreturn 0').replace('"Test."', '"Has effects: none so far."');
+  const d = one(source, "E0230");
+  assertEquals([d.section, d.at], ["effects", "effects: none"]);
+  assertEquals(d.message.includes('std.console.print_line(text: "hi")'), true);
   assertEquals(d.fix, { replace: "effects: none", with: "effects: console" });
+  // The fix lands on the effects line, not on the doc text, and resolves the diagnostic.
+  clean(applyFix(source, d));
   // Through a user function.
   assertEquals(one(fn('m.shout(text: "hi")\nreturn 0', { extra: SHOUT }), "E0230").fix?.with, "effects: console");
   // Several missing effects: one diagnostic, the whole line fixed, in table order.

@@ -207,7 +207,7 @@ class DefChecker {
   // Effects the body triggers but the signature does not declare, with the
   // first call that triggers them (one diagnostic per definition).
   private missingEffects = new Set<Effect>();
-  private firstMissing: { at: string; callee: string } | null = null;
+  private firstMissing: { at: string } | null = null;
 
   constructor(
     private readonly def: Definition,
@@ -402,12 +402,15 @@ class DefChecker {
       const missing = EFFECTS.filter((e) => this.missingEffects.has(e));
       const line = (effects: readonly string[]) => `effects: ${effects.length === 0 ? "none" : effects.join(", ")}`;
       const fixed = EFFECTS.filter((e) => def.effects.includes(e) || this.missingEffects.has(e));
+      // Located at the effects line, where the fix applies; the message
+      // quotes the call that triggers the effect.
+      this.section = "effects";
       this.report(
         "E0230",
-        this.firstMissing.at,
+        line(def.effects),
         `\`${this.written(this.name)}\` triggers ${
           missing.map((e) => `\`${e}\``).join(", ")
-        } (first through \`${this.firstMissing.callee}\`) but does not declare ${
+        } (first through \`${this.firstMissing.at}\`) but does not declare ${
           missing.length === 1 ? "it" : "them"
         }; a caller declares the effects of everything it calls (2.1).`,
         { expected: line(fixed), fix: { replace: line(def.effects), with: line(fixed) } },
@@ -862,7 +865,7 @@ class DefChecker {
     for (const effect of sig.effects) {
       if (declared.includes(effect)) continue;
       this.missingEffects.add(effect);
-      this.firstMissing ??= { at, callee: written };
+      this.firstMissing ??= { at };
     }
   }
 

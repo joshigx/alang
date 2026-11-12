@@ -96,10 +96,8 @@ export interface RunOptions {
   readonly effects?: readonly Effect[];
 }
 
-// Runs the program's main in a separate Deno process that has exactly the
-// permissions main declares as effects, so that code doing more than its
-// effects (an extern function, rule 2.5) fails at runtime.
-export async function run(built: Built, options: RunOptions = {}): Promise<Deno.CommandOutput> {
+// Writes the entry file that starts main (`out/<name>.run.ts`) and returns its path.
+export async function writeEntry(built: Built): Promise<string> {
   const main = findMain(built.defs);
   const entry = built.outPath.replace(/\.ts$/, ".run.ts");
   const fn = main.path.join("$");
@@ -124,6 +122,15 @@ export async function run(built: Built, options: RunOptions = {}): Promise<Deno.
       "",
     ].join("\n"),
   );
+  return entry;
+}
+
+// Runs the program's main in a separate Deno process that has exactly the
+// permissions main declares as effects, so that code doing more than its
+// effects (an extern function, rule 2.5) fails at runtime.
+export async function run(built: Built, options: RunOptions = {}): Promise<Deno.CommandOutput> {
+  const main = findMain(built.defs);
+  const entry = await writeEntry(built);
   const permissions = permissionsFor(options.effects ?? main.effects);
   const stdio = options.stdio ?? "inherit";
   return await new Deno.Command(Deno.execPath(), {

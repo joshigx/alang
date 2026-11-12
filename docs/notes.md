@@ -82,3 +82,14 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
   (fixed answers, capabilities); with E0233 in place, such examples fail loudly instead of running effects.
 - **The run entry file** (`out/<name>.run.ts`) exits with code 70 on a trap. Node.js would need its own entry if
   programs should be started there too; the generated module itself is runtime-neutral.
+- **Examples run with the tool's permissions.** The checker runs examples in its own process, which has broad
+  permissions. That is safe only while purity is checked; an `extern fn` declared `effects: none` could do IO at
+  every acceptance. Running examples in a subprocess without permissions would close this.
+- **Case names in `std.fs` are taken.** Case names are unique per module, so `std.fs.NotFound` and `std.fs.Other`
+  belong to `ReadError`; a later `WriteError` in `std.fs` cannot reuse them. Either give each error type its own
+  module (`std.fs.read.NotFound`) or revisit the per-module rule for std.
+- **Under-declared effects surface one layer at a time.** When a callee gains an effect, only its direct callers
+  report E0230; their callers report after those are fixed. Transactions (6.4) will want the whole chain at once:
+  the checker could compute the transitive closure and list every definition that needs the effect.
+- **Fix locations.** Every fix now applies inside its quoted `at` within its `section` (asserted in the tests). Worth
+  stating in the spec, since 5.5 leaves open how a tool applies a fix.

@@ -4,7 +4,7 @@
 import { assert_, assertEquals, assertThrows } from "./assert.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import { Trap } from "../src/runtime.ts";
-import { build, type Built, compile, permissionsFor, run, testExamples } from "../src/toolchain.ts";
+import { build, type Built, compile, permissionsFor, run, testExamples, writeEntry } from "../src/toolchain.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
 
@@ -343,7 +343,8 @@ for (const [name, source] of Object.entries(PROGRAMS)) {
 const load = async (name: string): Promise<Record<string, any>> => await import(`file://${built[name].outPath}`);
 
 Deno.test("emit: generated TypeScript passes the TypeScript checker", async () => {
-  const files = Object.values(built).map((b) => b.outPath);
+  const entries = [await writeEntry(built.hello), await writeEntry(built.app)];
+  const files = [...Object.values(built).map((b) => b.outPath), ...entries];
   const result = await new Deno.Command(Deno.execPath(), { args: ["check", ...files], stderr: "piped" }).output();
   const stderr = new TextDecoder().decode(result.stderr);
   assert_(result.success, stderr);
