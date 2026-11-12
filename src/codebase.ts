@@ -10,7 +10,8 @@
 // that is accepted as a whole (6.3, 6.4) or leaves the database untouched.
 // After each transaction the export (`export/<module>.alang`, canonical text
 // for Git and review) of the affected modules is rewritten; `importAll`
-// rebuilds the database from it.
+// rebuilds the database from it, and `sync` keeps the two in step when Git
+// changes the files.
 
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -66,6 +67,20 @@ export type SubmitResult =
     readonly current: readonly Version[];
   };
 
+export type SyncResult =
+  | {
+    readonly ok: true;
+    // Modules whose file was rewritten from the database.
+    readonly exported: readonly string[];
+    // Names the export changed in the database.
+    readonly imported: readonly Written[];
+  }
+  | { readonly ok: false; readonly diagnostics: readonly Diagnostic[] };
+
+export type ExportResult =
+  | { readonly ok: true; readonly files: readonly string[] }
+  | { readonly ok: false; readonly diagnostics: readonly Diagnostic[] };
+
 // A definition as `context` lists what it uses: a signature, or a std entry
 // (hash null).
 export interface Used {
@@ -102,7 +117,10 @@ export function hashText(text: string): string {
 // `definitions`, `names` and `history` are primary; `refs` and
 // `definitions.signature` are derived from the text. `refs.to_name` is the
 // full name a version refers to (a variant case by its own name), inserted in
-// text order so that rowid order is first-use order.
+// text order so that rowid order is first-use order. `export_files` holds,
+// per module, the hash of what its export file held when the codebase last
+// wrote or read it, which tells which side changed when file and database
+// differ (see `sync`).
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS definitions (
   hash TEXT PRIMARY KEY,
@@ -129,6 +147,10 @@ CREATE TABLE IF NOT EXISTS history (
   other_name TEXT
 );
 CREATE INDEX IF NOT EXISTS history_name ON history (name);
+CREATE TABLE IF NOT EXISTS export_files (
+  module TEXT PRIMARY KEY,
+  hash TEXT NOT NULL
+);
 `;
 
 interface Current {
@@ -509,6 +531,11 @@ export class Codebase {
   }
 
   private async apply(changes: readonly Change[], attempt = 1): Promise<SubmitResult> {
+    // 0. The database follows the export first, so that the export written
+    // at the end does not drop what Git brought in. What this imports stays,
+    // even if the transaction is rejected.
+    const synced = await this.syncNow();
+    if (!synced.ok) return rejected(synced.diagnostics);
     const current = this.snapshot();
 
     // 1. Each change on its own: one definition per text, the guards.
@@ -970,12 +997,36 @@ export class Codebase {
     return join(this.dir, "export");
   }
 
-  // Canonical texts of the current definitions of exactly `module`, by name.
-  private moduleTexts(module: string): string[] {
+  // The export file of exactly `module` as the database would write it: its
+  // definitions' canonical texts, sorted by name; null if it has none.
+  private moduleFile(module: string): string | null {
     const rows = this.db.prepare(
       "SELECT n.name, d.text FROM names n JOIN definitions d ON d.hash = n.hash WHERE n.name GLOB ? ORDER BY n.name",
     ).all(`${module}.*`) as { name: string; text: string }[];
-    return rows.filter((r) => r.name.lastIndexOf(".") === module.length).map((r) => r.text);
+    const texts = rows.filter((r) => r.name.lastIndexOf(".") === module.length).map((r) => r.text);
+    return texts.length === 0 ? null : texts.join("\n\n") + "\n";
+  }
+
+  // Notes what the file of `module` holds now that the codebase wrote or
+  // read it (null: no file).
+  private recordFile(module: string, content: string | null): void {
+    if (content === null) this.db.prepare("DELETE FROM export_files WHERE module = ?").run(module);
+    else {
+      this.db.prepare("INSERT OR REPLACE INTO export_files (module, hash) VALUES (?, ?)").run(
+        module,
+        hashText(content),
+      );
+    }
+  }
+
+  private recordedFiles(): Map<string, string> {
+    const rows = this.db.prepare("SELECT module, hash FROM export_files").all() as { module: string; hash: string }[];
+    return new Map(rows.map((r) => [r.module, r.hash]));
+  }
+
+  private currentModules(): Set<string> {
+    const rows = this.db.prepare("SELECT name FROM names").all() as { name: string }[];
+    return new Set(rows.map((r) => moduleName(r.name)));
   }
 
   // Rewrites the export files of `modules` from the current names: one file
@@ -986,33 +1037,120 @@ export class Codebase {
     const files: string[] = [];
     for (const module of new Set(modules)) {
       const path = join(this.exportDir, `${module}.alang`);
-      const texts = this.moduleTexts(module);
-      if (texts.length === 0) {
+      const content = this.moduleFile(module);
+      if (content === null) {
         await Deno.remove(path).catch((e) => {
           if (!(e instanceof Deno.errors.NotFound)) throw e;
         });
+        this.recordFile(module, null);
         continue;
       }
       // Written next to the file and renamed, so a reader never sees half a file.
-      await Deno.writeTextFile(`${path}.tmp`, texts.join("\n\n") + "\n");
+      await Deno.writeTextFile(`${path}.tmp`, content);
       await Deno.rename(`${path}.tmp`, path);
+      this.recordFile(module, content);
       files.push(path);
     }
     return files;
   }
 
   // Writes the whole export and deletes the files of modules that no longer
-  // exist. Returns the paths written.
-  exportAll(): Promise<string[]> {
-    const run = this.queue.then(async () => {
-      const modules = new Set(
-        (this.db.prepare("SELECT name FROM names").all() as { name: string }[]).map((r) => moduleName(r.name)),
-      );
+  // exist. Returns the paths written. It first brings the database in step
+  // with the export (`sync`), so files changed by Git are imported, not
+  // overwritten; `force` skips that and lets the database win.
+  exportAll(options: { readonly force?: boolean } = {}): Promise<ExportResult> {
+    const run = this.queue.then(async (): Promise<ExportResult> => {
+      if (!options.force) {
+        const synced = await this.syncNow();
+        if (!synced.ok) return { ok: false, diagnostics: synced.diagnostics };
+      }
+      const modules = new Set([...this.currentModules(), ...this.recordedFiles().keys()]);
       for (const file of await exportFiles(this.exportDir)) modules.add(file.slice(0, -".alang".length));
-      return await this.exportModules([...modules].sort());
+      return { ok: true, files: await this.exportModules([...modules].sort()) };
     });
     this.queue = run.catch(() => {});
     return run;
+  }
+
+  // Brings database and export in step; the export in Git is the source of
+  // truth (Storage). Per module it compares the file (F), the file the
+  // database would write (D) and what the file held when last written or
+  // read (R):
+  //
+  //   F = D            in step
+  //   F = R, D ≠ R     the database is ahead (a write failed): write the file
+  //   D = R, F ≠ R     the file changed (pull, checkout, edit): import
+  //   otherwise        both changed: refused (E0513)
+  //
+  // A missing export directory has not been written yet; it is not read as
+  // every file deleted. Submits and `exportAll` call this first; queries
+  // read the database as it is, so a caller that wants them fresh calls it
+  // before (the command line does).
+  sync(): Promise<SyncResult> {
+    const run = this.queue.then(() => this.syncNow());
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  private async syncNow(): Promise<SyncResult> {
+    const first = await this.compareExport();
+    if (first.conflicts.length > 0) {
+      return {
+        ok: false,
+        diagnostics: first.conflicts.map((module) =>
+          diagnostic({
+            code: "E0513",
+            at: `export/${module}.alang`,
+            message: `\`export/${module}.alang\` and the database have both changed since the file was last ` +
+              "written or read. Run `alang db import` to take the files (the database's versions stay in its " +
+              "history), or `alang db export --force` to overwrite the files with the database.",
+          })
+        ),
+      };
+    }
+    // Written before the import, which reads every file.
+    await this.exportModules(first.ahead);
+    if (first.changed.length === 0) return { ok: true, exported: first.ahead, imported: [] };
+    const imported = await this.importFrom(this.exportDir);
+    if (!imported.ok) return { ok: false, diagnostics: imported.diagnostics };
+    // Files that are not canonical (order, layout) are rewritten now, so
+    // that the sync ends with every file as the database would write it.
+    const after = await this.compareExport();
+    await this.exportModules(after.ahead);
+    return { ok: true, exported: [...new Set([...first.ahead, ...after.ahead])].sort(), imported: imported.written };
+  }
+
+  // Sorts the modules of database, export and records by which side
+  // changed (see `sync`); records the modules found in step.
+  private async compareExport(): Promise<{ ahead: string[]; changed: string[]; conflicts: string[] }> {
+    let written = true;
+    try {
+      await Deno.stat(this.exportDir);
+    } catch (e) {
+      if (!(e instanceof Deno.errors.NotFound)) throw e;
+      written = false;
+    }
+    const files = new Map<string, string>();
+    for (const file of await exportFiles(this.exportDir)) {
+      files.set(file.slice(0, -".alang".length), hashText(await Deno.readTextFile(join(this.exportDir, file))));
+    }
+    const recorded = this.recordedFiles();
+    const modules = [...new Set([...this.currentModules(), ...files.keys(), ...recorded.keys()])].sort();
+    const ahead: string[] = [];
+    const changed: string[] = [];
+    const conflicts: string[] = [];
+    for (const module of modules) {
+      const content = this.moduleFile(module);
+      const f = files.get(module) ?? null;
+      const d = content === null ? null : hashText(content);
+      const r = recorded.get(module) ?? null;
+      if (f === d) {
+        if (r !== f) this.recordFile(module, content);
+      } else if (!written || f === r) ahead.push(module);
+      else if (d === r) changed.push(module);
+      else conflicts.push(module);
+    }
+    return { ahead, changed, conflicts };
   }
 
   // Rebuilds the current names from the export (`export/*.alang`, or the
@@ -1030,14 +1168,18 @@ export class Codebase {
   private async importFrom(from: string): Promise<SubmitResult> {
     const defs: Definition[] = [];
     const diagnostics: Diagnostic[] = [];
+    const contents = new Map<string, string>();
     for (const file of await exportFiles(from)) {
       const module = file.slice(0, -".alang".length);
+      const content = await Deno.readTextFile(join(from, file));
+      contents.set(module, content);
       let found: Definition[];
       try {
-        found = parseProgram(await Deno.readTextFile(join(from, file)));
+        found = parseProgram(content);
       } catch (e) {
         if (!(e instanceof AlangError)) throw e;
-        diagnostics.push(...e.diagnostics);
+        // A parse error names no definition, so the message names the file.
+        diagnostics.push(...e.diagnostics.map((d) => ({ ...d, message: `In \`${file}\`: ${d.message}` })));
         continue;
       }
       for (const def of found) {
@@ -1108,6 +1250,12 @@ export class Codebase {
     } catch (e) {
       if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw e;
+    }
+    // The database now follows these files; from another directory, the own
+    // export is behind instead, and the next sync writes it.
+    if (from === this.exportDir) {
+      for (const module of this.recordedFiles().keys()) if (!contents.has(module)) this.recordFile(module, null);
+      for (const [module, content] of contents) this.recordFile(module, content);
     }
     return { ok: true, written, unchanged };
   }

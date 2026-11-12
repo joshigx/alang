@@ -82,3 +82,31 @@ Deno.test("db cli: submit, query, a stale guard, export and import", async () =>
   assertEquals((await alang(dir, "definition")).code, 2);
   await Deno.remove(tmp, { recursive: true });
 });
+
+Deno.test("db cli: queries follow the export; export refuses to overwrite changed files", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "alang-db-cli-" });
+  const changes = join(dir, "changes.json");
+  await Deno.writeTextFile(changes, JSON.stringify([PORT, PARSE_ERROR, PARSE].map((text) => ({ op: "add", text }))));
+  assertEquals((await alang(dir, "submit", changes)).code, 0);
+  const file = join(dir, "export", "net.port.alang");
+  const reordered = PARSE.replace("if n < 1 or n > 65_535 then", "if n > 65_535 or n < 1 then");
+
+  // As after a pull: the query answers with the file's version.
+  await Deno.writeTextFile(file, `${PARSE_ERROR}\n\n${PORT}\n\n${reordered}\n`);
+  assertEquals(((await alang(dir, "definition", "net.port.parse")).json as { text: string }).text, reordered);
+
+  // A file that does not parse: the query still answers, with a warning.
+  await Deno.writeTextFile(file, "<<<<<<< HEAD\n");
+  const stale = await alang(dir, "definition", "net.port.parse");
+  assertEquals([stale.code, (stale.json as { text: string }).text], [0, reordered]);
+  assert_(stale.stderr.includes('"warning"') && stale.stderr.includes("net.port.alang"), stale.stderr);
+  const refused = await alang(dir, "export");
+  assertEquals(refused.code, 1);
+  assertEquals(await Deno.readTextFile(file), "<<<<<<< HEAD\n");
+
+  // `--force` lets the database win.
+  assertEquals((await alang(dir, "export", "--force")).code, 0);
+  assertEquals(await Deno.readTextFile(file), `${PARSE_ERROR}\n\n${PORT}\n\n${reordered}\n`);
+  assertEquals((await alang(dir, "export", "--all")).code, 2);
+  await Deno.remove(dir, { recursive: true });
+});

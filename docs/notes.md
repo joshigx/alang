@@ -66,13 +66,9 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   - Case names are unique per module, so moving a variant type renames its cases.
   - Over-declared effects are allowed, which is why removing an effect is compatible.
   - Examples call their own function, so `rename` rewrites them.
-- **A stale database beside a newer export loses work.** After a pull or checkout without `import`, the next submit
-  rewrites the files of the modules it touches from the database and drops what Git brought. Options: import
-  automatically when the export is newer, or refuse to submit while the export differs from the database (compare
-  the files with what the database would write).
-- **Diagnostic codes E0501 to E0512** are in use: stale hash, unknown name, name exists, not one definition, name
+- **Diagnostic codes E0501 to E0513** are in use: stale hash, unknown name, name exists, not one definition, name
   differs, interface change, remove with callers, name touched twice, invalid new name, rename capture, malformed
-  type pattern, definition in the wrong export file.
+  type pattern, definition in the wrong export file, export and database both changed.
 
 ## From the database (2026-11-12)
 
@@ -86,9 +82,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   definitions and their dependents (see "Examples as a regression net").
 - **Queries parse on demand.** `list`, `search` and `context` parse stored texts to read `doc` lines and case lists.
   A `doc` column, or a cache of parsed definitions per hash (texts never change), would remove that.
-- **The export can lag behind the database.** It is written after the commit; if that write fails, the database is
-  ahead until `exportAll` runs. Writing the files first and committing after would invert the risk. With the export
-  as source of truth, a failed write should probably be loud (it throws now) and the CLI should offer `export`.
+- **The export can lag behind the database**, when its write fails after the commit. The sync now redoes the write
+  at the next operation (decisions, Sync), so it is no longer lost; the failed submit still throws.
 - **Import trusts file names for modules only.** A hand-edited export may hold non-canonical text; import accepts it
   and stores the canonical form, so the next export rewrites the file. A check mode ("is the export canonical?") would
   suit CI.
@@ -96,6 +91,25 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   `with: (T) -> U` only matches `_`.
 - **`refs` rows depend on the text alone** once cases are stored by their own name, which is what makes reusing a
   version (revert, remove then add) safe without recomputing anything.
+
+## From the export sync (2026-11-12)
+
+- **Deleting an export file deletes a module.** With the export as source of truth, a file removed by a pull, or by
+  hand, removes its module's definitions at the next sync (history keeps them). Only a missing export directory is
+  read as "not written yet". A typo in `--dir` is therefore harmless, but `rm export/net.port.alang` is not.
+- **The MCP server must sync before queries.** `Codebase` queries are synchronous and read the database as it is; the
+  command line calls `sync()` first. A long-running server has to do the same per request, or its answers go stale
+  after a pull (the guard would still catch the stale hash at submit, one round trip later).
+- **Every operation reads every export file.** Fine for the prototype, like accepting the whole program per submit.
+  A large codebase could compare file modification times first and hash only the files that changed.
+- **A pull during a submit can still be lost.** The submit syncs at its start; a file Git changes while the program is
+  being accepted is overwritten by the export write after the commit. Checking each file against its record just
+  before writing it, and leaving a changed one for the next sync (which then reports E0513), would close this. Another
+  process's import in that window is covered: the submit compares every name with its snapshot before committing.
+- **A rejected submit can still change the database**, through the import of its sync. That is deliberate (the files
+  are the truth), but it means "a rejected transaction changes nothing" holds only for an export in step.
+- **E0513 has no automatic fix.** Which side should win is the user's call; an LLM caller should report it rather than
+  run `import` or `export --force` on its own.
 
 ## Spec observations
 

@@ -16,14 +16,18 @@
 //                                    {"op": "add", "text": ...}, {"op": "replace",
 //                                    "name", "hash", "text"}, {"op": "remove", "name",
 //                                    "hash"}, {"op": "rename", "name", "hash", "to"}
-//   export                           rewrite export/ from the database
+//   export [--force]                 rewrite export/ from the database; without
+//                                    --force, files changed since the last write
+//                                    are imported first, not overwritten
 //   import [<dir>]                   rebuild the database from export/ (or <dir>)
 //
 // Every command prints one JSON value. Operations print the submit result and
 // exit with 1 if it was rejected; a query on an unknown name prints its
-// diagnostics on stderr and exits with 1.
+// diagnostics on stderr and exits with 1. Before a query, the database is
+// brought in step with the export (`Codebase.sync`); if that fails, the query
+// answers from the database and the diagnostics go to stderr.
 
-import { type Change, Codebase, type SubmitResult } from "./codebase.ts";
+import { type Change, Codebase, type ExportResult, type SubmitResult } from "./codebase.ts";
 
 export const DB_USAGE = "usage: alang db [--dir <dir>] <definition|signature|context|callers|list|search|" +
   "search-type|history|add|replace|remove|rename|submit|export|import> ...";
@@ -36,7 +40,7 @@ function print(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
-function result(r: SubmitResult): number {
+function result(r: SubmitResult | ExportResult): number {
   print(r);
   return r.ok ? 0 : 1;
 }
@@ -59,6 +63,8 @@ function changesOf(json: unknown): Change[] {
   });
 }
 
+const QUERIES = new Set(["definition", "signature", "context", "callers", "list", "search", "search-type", "history"]);
+
 export async function dbMain(args: string[]): Promise<number> {
   let dir = ".";
   if (args[0] === "--dir") {
@@ -80,11 +86,13 @@ export async function dbMain(args: string[]): Promise<number> {
     remove: [2, 2],
     rename: [3, 3],
     submit: [1, 1],
-    export: [0, 0],
+    export: [0, 1],
     import: [0, 1],
   };
   const range = arity[command];
-  if (!dir || !range || rest.length < range[0] || rest.length > range[1]) {
+  const usage = !range || rest.length < range[0] || rest.length > range[1] ||
+    (command === "export" && rest.length === 1 && rest[0] !== "--force");
+  if (!dir || usage) {
     console.error(DB_USAGE);
     return 2;
   }
@@ -92,6 +100,19 @@ export async function dbMain(args: string[]): Promise<number> {
   const cb = await Codebase.open(dir);
   try {
     const [a, b, c] = rest;
+    if (QUERIES.has(command)) {
+      const synced = await cb.sync();
+      if (!synced.ok) {
+        console.error(JSON.stringify(
+          {
+            warning: "The database could not be brought in step with the export; answering from the database.",
+            diagnostics: synced.diagnostics,
+          },
+          null,
+          2,
+        ));
+      }
+    }
     switch (command) {
       case "definition":
         print(cb.definition(a));
@@ -128,8 +149,7 @@ export async function dbMain(args: string[]): Promise<number> {
       case "submit":
         return result(await cb.submit(changesOf(JSON.parse(await readText(a)))));
       case "export":
-        print(await cb.exportAll());
-        return 0;
+        return result(await cb.exportAll({ force: a === "--force" }));
       case "import":
         return result(await cb.importAll(a));
     }
