@@ -216,6 +216,9 @@ class DefChecker {
   // Result type for `return`, null outside a body.
   private out: Type | null = null;
   private inLambda = false;
+  // Whether that lambda stands where a function with effects is allowed
+  // (the handler of `std.http.serve`); only the advice of E0232 differs.
+  private lambdaMayAct = false;
   // Effects the body triggers but the signature does not declare, with the
   // first call that triggers them (one diagnostic per definition).
   private missingEffects = new Set<Effect>();
@@ -646,7 +649,7 @@ class DefChecker {
       case "for":
         return this.blockExpr(e, scope, value(expected));
       case "lambda":
-        return this.lambda(e, scope);
+        return this.lambda(e, scope, expected);
     }
   }
 
@@ -884,11 +887,10 @@ class DefChecker {
     if (sig.effects.length === 0) return;
     const list = sig.effects.join(", ");
     if (this.inLambda) {
-      this.report(
-        "E0232",
-        at,
-        `\`${written}\` has effects (${list}); lambdas are pure (2.4). Apply effects per element with \`for\`.`,
-      );
+      const advice = this.lambdaMayAct
+        ? "To give the handler effects, pass a named function instead of a lambda."
+        : "Apply effects per element with `for`.";
+      this.report("E0232", at, `\`${written}\` has effects (${list}); lambdas are pure (2.4). ${advice}`);
       return;
     }
     if (this.section !== "body") {
@@ -1133,7 +1135,7 @@ class DefChecker {
     }
   }
 
-  private lambda(e: Extract<Expr, { kind: "lambda" }>, scope: Scope): Type {
+  private lambda(e: Extract<Expr, { kind: "lambda" }>, scope: Scope, expected: Type | null): Type {
     const inner = scope.child();
     const params = e.params.map((p) => {
       const t = this.resolveType(p.type);
@@ -1141,10 +1143,11 @@ class DefChecker {
       return t;
     });
     const out = this.resolveType(e.out);
-    const saved = this.inLambda;
+    const saved = [this.inLambda, this.lambdaMayAct];
     this.inLambda = true;
+    this.lambdaMayAct = expected?.k === "fn" && expected.effects === "caller";
     this.expr(e.body, inner, out);
-    this.inLambda = saved;
+    [this.inLambda, this.lambdaMayAct] = saved;
     return fnType(params, out);
   }
 

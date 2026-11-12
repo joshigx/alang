@@ -644,6 +644,18 @@ Deno.test("effects: the handler of std.http.serve may have effects; the caller d
   // Passing the handler counts like calling it: its effects are missing here.
   const d = one(fn(SERVE + "\nreturn 0", { effects: "net", extra: loud }), "E0230");
   assertEquals(d.fix, { replace: "effects: net", with: "effects: net, console" });
+  // A lambda stays pure there; the advice is a named function, not `for`.
+  const lambda = one(
+    fn(
+      SERVE.replace(
+        "handler: handle",
+        "handler: fn(request: std.http.Request): std.http.Response => handle(request: request)",
+      ) + "\nreturn 0",
+      { effects: "net, console", extra: loud },
+    ),
+    "E0232",
+  );
+  assertEquals(lambda.message.includes("pass a named function instead of a lambda"), true, lambda.message);
   // Only this parameter takes a function with effects; elsewhere function values stay pure.
   const xs = "let xs: List<std.http.Request> = std.list.empty<std.http.Request>()\n";
   one(
