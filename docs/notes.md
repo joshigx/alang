@@ -23,11 +23,14 @@ is the user's call.
    rename, the guard, the interface, remove and capture rules, the queries, export and import), `src/refs.ts`
    (references by full name, rewriting for rename), `src/interface.ts` (caller-facing interface), `src/search.ts`
    (type patterns), `src/db_cli.ts` (`alang db ...`, JSON output). Decisions in `decisions.md`, section Database.
+6. Fixes from the database phase, on `database`: the checker enforces 1.2 for the own module (E0226); database and
+   export stay in step when Git changes the files (`sync`, table `export_files`, E0513, `export --force`); `rename`
+   takes an optional text, so a rename and an edit share one transaction.
 
 **Next:** the MCP server around the queries and operations of `Codebase` (its own phase, see CLAUDE.md). `extern fn`
 and `const` are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (136 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (152 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -50,7 +53,12 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
 - Examples: no fix for a failing example (the body may be wrong, not the example); every failing example is
   reported; a stack overflow in an example is a trap; `check`, `ts`, `build` and `run` refuse programs whose examples
   fail or are missing.
-- Database: everything in `decisions.md`, section Database. Above all, references stay names, so `rename` rewrites
+- Own-module names: the long form is an error (E0226), reported only for a name that exists.
+- Database: everything in `decisions.md`, section Database. The user chose (2026-11-12) automatic sync with the
+  export and an optional text on `rename`; the details within them are still open for review: a conflict is
+  refused (E0513) rather than resolved; a missing export directory is written, never read as every file deleted;
+  library queries read the database as is while `alang db` syncs first; a submit's sync import stays when the submit
+  is rejected. Above all, references stay names, so `rename` rewrites
   callers instead of changing only a pointer (departs from 6.1); see "Database phase: open points".
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
