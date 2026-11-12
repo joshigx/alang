@@ -30,9 +30,12 @@ merged yet; merging and pushing is the user's call.
    as tools over stdio, hand-written protocol for both MCP eras (`initialize` and the stateless 2026-07-28).
    Decisions in `decisions.md`, section MCP server; registration in the README.
 
-**Next:** use the MCP server from Claude Code on a real alang project and record what goes wrong (CLAUDE.md: the
-language gets tested on its actual user). Not yet checked against an official MCP client (see "From the MCP
-server"). `extern fn` and `const` are still unparsed and need their form decided.
+**Next:** a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
+is done; see "From the MCP server". Claude Code connected and used every kind of tool, so the protocol works with a
+real client (the official SDK client was not run). Open from that round, each the user's call: normalize E0226
+instead of rejecting; `alang db run` (and later an MCP `run` tool); recording what triggered an `import` in
+`history`; a tool operation for renaming a parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`.
+`extern fn` and `const` are still unparsed and need their form decided.
 
 **Checks before every commit:** `deno task test` (163 tests), `deno lint`, `deno fmt --check`.
 
@@ -109,9 +112,10 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 
 ## From the MCP server (2026-11-12)
 
-- **Not yet run against an official client.** The tests drive the server with my own reading of the protocol, in
-  process and over stdio. A pass with the official TypeScript SDK client (or Claude Code itself) is still open; it
-  was not run here because downloading the SDK was not permitted in the session.
+- **Run against Claude Code, not the official SDK client.** The tests drive the server with my own reading of the
+  protocol, in process and over stdio. Claude Code connected and used queries, `add`, `replace`, `rename`, `remove`
+  and `submit` in the playground, which settles the protocol for that client. The official TypeScript SDK client was
+  not run, since downloading it was not permitted in the session.
 - **MCP changed shape in 2026-07-28.** The `initialize` handshake is gone; each request names its version in
   `_meta`, and `server/discover` replaces the handshake. The server serves both eras, so it works with clients from
   before and after. When the old era is dropped by clients, `initialize` and the legacy result shapes can go.
@@ -187,6 +191,11 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   `String -> Int` misses `Option<Int>` and the model searched again; matching through `Option`/`Result` (as Hoogle
   does) would find it at once. The freshness instruction showed up in the answer ("these signatures come from that
   fresh search"); watch whether that persists in a session without a stale answer to correct.
+- **Playground, task "stale hash".** The user edited `doc` in `export/math.alang` by hand after the model had read
+  `math.clamp`. The model's `replace` (with the old hash) first synced, importing the edit, and was rejected with
+  E0501; it rebuilt the change on `current` without another query, kept the user's doc line, and asked before
+  fixing two typos in it. It did not re-read before writing despite the freshness instruction, and needed not to:
+  the instruction keeps answers current, the guard (6.7) keeps writes safe.
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
