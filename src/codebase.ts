@@ -13,13 +13,15 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Definition, Effect } from "./ast.ts";
-import { pathText } from "./ast.ts";
+import { moduleOf, pathText } from "./ast.ts";
 import { closest } from "./check.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { casesOf, interfaceChange } from "./interface.ts";
 import { parseProgram } from "./parser.ts";
-import { printDefinition, printSignature } from "./printer.ts";
+import { printDefinition, printSignature, printString } from "./printer.ts";
 import { dependencies } from "./refs.ts";
+import { matchesFn, namedTypes, parseFnPattern, showTree, treeOfRef, treeOfType, type TypeTree } from "./search.ts";
+import { signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
 import { acceptDefinitions, type Accepted } from "./toolchain.ts";
 
 // ---- data ----
@@ -59,6 +61,32 @@ export type SubmitResult =
     // (E0503), so the caller can retry without another query (6.7).
     readonly current: readonly Version[];
   };
+
+// A definition as `context` lists what it uses: a signature, or a std entry
+// (hash null).
+export interface Used {
+  readonly name: string;
+  readonly hash: string | null;
+  readonly text: string;
+}
+
+// An entry of `list` and `search`; std entries have no hash.
+export interface Hit {
+  readonly name: string;
+  readonly hash: string | null;
+  readonly kind: "fn" | "type";
+  readonly doc: string;
+}
+
+export interface HistoryEntry {
+  readonly name: string;
+  // Null for a removal, and for the old name of a rename.
+  readonly hash: string | null;
+  readonly changed_at: string;
+  readonly operation: Operation;
+  // The other name of a rename.
+  readonly other_name: string | null;
+}
 
 export const HASH_LENGTH = 16;
 
@@ -126,6 +154,25 @@ interface Row {
   readonly text: string;
   readonly signature: string;
   readonly refs: readonly string[];
+}
+
+// A current definition as read from the tables.
+interface Stored {
+  readonly name: string;
+  readonly hash: string;
+  readonly kind: "fn" | "type";
+  readonly text: string;
+  readonly signature: string;
+  readonly def: Definition;
+}
+
+// The types in the caller-facing part of a definition's signature: `in` and
+// `out` of a function, the fields or case payloads of a type.
+function signatureTypes(def: Definition): TypeTree[] {
+  const module = moduleOf(def.path);
+  if (def.kind === "fn") return [...def.params.map((p) => treeOfRef(p.type, module)), treeOfRef(def.out, module)];
+  if (def.shape.kind === "record") return def.shape.fields.map((f) => treeOfRef(f.type, module));
+  return def.shape.cases.flatMap((c) => (c.payload ? [treeOfRef(c.payload, module)] : []));
 }
 
 export interface OpenOptions {
@@ -211,19 +258,198 @@ export class Codebase {
     });
   }
 
-  // The current version of `name`; throws E0502 if there is none.
-  definition(name: string): Version {
+  // The current row of `name`; throws E0502, located at the query, if there is none.
+  private row(name: string, query: string): Stored {
     const row = this.db.prepare(
-      "SELECT n.hash, d.text FROM names n JOIN definitions d ON d.hash = n.hash WHERE n.name = ?",
-    ).get(name) as { hash: string; text: string } | undefined;
-    if (!row) throw new AlangError(this.unknownName(name, `definition(${name})`));
-    return { name, hash: row.hash, text: row.text };
+      "SELECT n.hash, d.kind, d.text, d.signature FROM names n JOIN definitions d ON d.hash = n.hash WHERE n.name = ?",
+    ).get(name) as { hash: string; kind: "fn" | "type"; text: string; signature: string } | undefined;
+    if (!row) throw new AlangError(this.unknownName(name, `${query}(${name})`));
+    return { name, ...row, def: parseProgram(row.text)[0] };
   }
 
-  // The definitions that use `name`, sorted, with the hash of `name` read.
+  // Current rows whose name starts with `prefix` (all for ""), sorted by name.
+  private rowsUnder(prefix: string): Stored[] {
+    const rows = this.db.prepare(
+      `SELECT n.name, n.hash, d.kind, d.text, d.signature FROM names n JOIN definitions d ON d.hash = n.hash
+       WHERE n.name GLOB ? ORDER BY n.name`,
+    ).all(`${prefix}*`) as { name: string; hash: string; kind: "fn" | "type"; text: string; signature: string }[];
+    return rows.map((r) => ({ ...r, def: parseProgram(r.text)[0] }));
+  }
+
+  // ---- queries (section 6); each returns the hash it read ----
+
+  // The complete canonical text.
+  definition(name: string): Version {
+    const { hash, text } = this.row(name, "definition");
+    return { name, hash, text };
+  }
+
+  // Every section except `body`.
+  signature(name: string): { name: string; hash: string; signature: string } {
+    const { hash, signature } = this.row(name, "signature");
+    return { name, hash, signature };
+  }
+
+  // The definitions that use `name`, sorted.
   callers(name: string): { name: string; hash: string; callers: string[] } {
-    const { hash, text } = this.definition(name);
-    return { name, hash, callers: this.callersOf(name, parseProgram(text)[0]) };
+    const { hash, def } = this.row(name, "callers");
+    return { name, hash, callers: this.callersOf(name, def) };
+  }
+
+  // The text of `name` and the signatures of everything it uses (6.5), in
+  // order of first use: functions, types, and the type of each case used. Then
+  // the types that appear in those signatures, one level deep, since calling
+  // a function means building its arguments. std functions come as one line
+  // (`signatureLine`), std types as alang text; both have no hash.
+  context(name: string): { name: string; hash: string; text: string; uses: Used[] } {
+    const { hash, text } = this.row(name, "context");
+    const refs = this.db.prepare("SELECT to_name FROM refs WHERE from_hash = ? ORDER BY rowid").all(hash) as {
+      to_name: string;
+    }[];
+    const uses: Used[] = [];
+    const seen = new Set([name]);
+    const include = (full: string): TypeTree[] | null => {
+      const owner = this.ownerOfCase(full) ?? full;
+      if (seen.has(owner)) return null;
+      seen.add(owner);
+      const std = STD_BY_NAME.get(owner);
+      if (std) {
+        uses.push({ name: owner, hash: null, text: signatureLine(std) });
+        return [...std.params.map((p) => treeOfType(p.type)), treeOfType(std.out)];
+      }
+      const stdType = STD_TYPES.find((d) => pathText(d.path) === owner);
+      if (stdType) {
+        uses.push({ name: owner, hash: null, text: printDefinition(stdType) });
+        return signatureTypes(stdType);
+      }
+      const row = this.db.prepare(
+        "SELECT n.hash, d.text, d.signature FROM names n JOIN definitions d ON d.hash = n.hash WHERE n.name = ?",
+      ).get(owner) as { hash: string; text: string; signature: string } | undefined;
+      if (!row) return null;
+      uses.push({ name: owner, hash: row.hash, text: row.signature });
+      return signatureTypes(parseProgram(row.text)[0]);
+    };
+    const level2: string[] = [];
+    for (const r of refs) for (const t of include(r.to_name) ?? []) namedTypes(t, level2);
+    for (const t of level2) include(t);
+    return { name, hash, text, uses };
+  }
+
+  // The type a case belongs to, among the current and std types of the
+  // case's module; null if `full` is not a case.
+  private ownerOfCase(full: string): string | null {
+    const module = full.slice(0, full.lastIndexOf("."));
+    const types = [
+      ...STD_TYPES.filter((d) => pathText(d.path.slice(0, -1)) === module),
+      ...this.rowsUnder(`${module}.`).filter((r) => r.kind === "type" && r.name.lastIndexOf(".") === module.length)
+        .map((r) => r.def),
+    ];
+    const owner = types.find((d) => casesOf(d).includes(full));
+    return owner ? pathText(owner.path) : null;
+  }
+
+  // The definitions of `module` itself (name, hash, kind, doc) and the names
+  // of its direct submodules. `list("")` gives the top-level modules.
+  list(module: string): { module: string; definitions: Hit[]; submodules: string[] } {
+    const prefix = module === "" ? "" : `${module}.`;
+    const definitions: Hit[] = [];
+    const submodules = new Set<string>();
+    for (const r of this.rowsUnder(prefix)) {
+      const rest = r.name.slice(prefix.length);
+      if (rest.includes(".")) submodules.add(prefix + rest.slice(0, rest.indexOf(".")));
+      else definitions.push({ name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc });
+    }
+    if (definitions.length === 0 && submodules.size === 0) {
+      const modules = new Set(
+        this.rowsUnder("").flatMap((r) => {
+          const segments = r.name.split(".");
+          return segments.slice(1).map((_, i) => segments.slice(0, i + 1).join("."));
+        }),
+      );
+      const near = closest(module, modules);
+      throw new AlangError(diagnostic({
+        code: "E0502",
+        at: `list(${module})`,
+        message: `There is no module \`${module}\`.` + (near ? ` Did you mean \`${near}\`?` : ""),
+        fix: near ? { replace: module, with: near } : null,
+      }));
+    }
+    return { module, definitions, submodules: [...submodules] };
+  }
+
+  // Definitions and std entries whose name or `doc` contains `text`, ignoring
+  // case, sorted by name.
+  searchText(text: string): Hit[] {
+    const needle = text.toLowerCase();
+    const hit = (h: Hit) => h.name.toLowerCase().includes(needle) || h.doc.toLowerCase().includes(needle);
+    return [
+      ...this.rowsUnder("").map((r): Hit => ({ name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc })),
+      ...STD.map((s): Hit => ({ name: s.name, hash: null, kind: "fn", doc: s.doc })),
+      ...STD_TYPES.map((d): Hit => ({ name: pathText(d.path), hash: null, kind: "type", doc: d.doc })),
+    ].filter(hit).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  }
+
+  // Functions, std included, whose signature matches a type pattern such as
+  // `String -> Result<Int, _>` (see search.ts), sorted by name. Each comes
+  // with its signature on one line.
+  searchType(pattern: string): { name: string; hash: string | null; line: string }[] {
+    const p = parseFnPattern(pattern);
+    const found: { name: string; hash: string | null; line: string }[] = [];
+    for (const r of this.rowsUnder("")) {
+      if (r.def.kind !== "fn") continue;
+      const module = r.def.path.slice(0, -1);
+      const params = r.def.params.map((q) => treeOfRef(q.type, module));
+      const out = treeOfRef(r.def.out, module);
+      if (!matchesFn(p, params, out)) continue;
+      const effects = r.def.effects.length === 0 ? "none" : r.def.effects.join(", ");
+      const shown = r.def.params.map((q, i) => `${q.name}: ${showTree(params[i])}`).join(", ");
+      found.push({
+        name: r.name,
+        hash: r.hash,
+        line: `fn ${r.name}(${shown}): ${showTree(out)}, effects: ${effects}, doc: ${printString(r.def.doc)}`,
+      });
+    }
+    for (const s of STD) {
+      if (!matchesFn(p, s.params.map((q) => treeOfType(q.type)), treeOfType(s.out))) continue;
+      found.push({ name: s.name, hash: null, line: signatureLine(s) });
+    }
+    return found.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  }
+
+  // Every version `name` had, oldest first, with the current hash (null if
+  // removed). A name that came from a rename continues with the history of
+  // its old name before the rename.
+  history(name: string): { name: string; hash: string | null; entries: HistoryEntry[] } {
+    const entries = this.historyOf(name, Number.MAX_SAFE_INTEGER);
+    if (entries.length === 0) {
+      const known = this.db.prepare("SELECT DISTINCT name FROM history").all() as { name: string }[];
+      const near = closest(name, known.map((k) => k.name));
+      throw new AlangError(diagnostic({
+        code: "E0502",
+        definition: name,
+        at: `history(${name})`,
+        message: `\`${name}\` never existed.` + (near ? ` Did you mean \`${near}\`?` : ""),
+        fix: near ? { replace: name, with: near } : null,
+      }));
+    }
+    const current = this.db.prepare("SELECT hash FROM names WHERE name = ?").get(name) as { hash: string } | undefined;
+    return { name, hash: current?.hash ?? null, entries };
+  }
+
+  private historyOf(name: string, before: number): HistoryEntry[] {
+    return this.historyRows(name, before).sort((a, b) => a.id - b.id).map(({ id: _, ...e }) => e);
+  }
+
+  // Rows of `name` before row `before`, and for each rename that brought the
+  // name, the rows of the old name before that rename.
+  private historyRows(name: string, before: number): (HistoryEntry & { id: number })[] {
+    const rows = this.db.prepare(
+      "SELECT id, name, hash, changed_at, operation, other_name FROM history WHERE name = ? AND id < ? ORDER BY id",
+    ).all(name, before) as unknown as (HistoryEntry & { id: number })[];
+    const earlier = rows
+      .filter((r) => r.operation === "rename" && r.hash !== null && r.other_name !== null)
+      .flatMap((r) => this.historyRows(r.other_name!, r.id));
+    return [...earlier, ...rows];
   }
 
   // Current definitions that refer to `name` (or, for a variant type, to one

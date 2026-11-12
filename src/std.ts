@@ -4,7 +4,23 @@
 
 import type { Definition, Effect } from "./ast.ts";
 import { parseProgram } from "./parser.ts";
-import { BOOL, con, FLOAT, fnType, INT, list, option, ORDER, result, STRING, tvar, type Type, UNIT } from "./types.ts";
+import { printString } from "./printer.ts";
+import {
+  BOOL,
+  con,
+  FLOAT,
+  fnType,
+  INT,
+  list,
+  option,
+  ORDER,
+  result,
+  showType,
+  STRING,
+  tvar,
+  type Type,
+  UNIT,
+} from "./types.ts";
 
 // Types of the standard library, written in alang. runtime.ts has the
 // matching TypeScript type under the mangled name (`std$fs$ReadError`).
@@ -107,3 +123,13 @@ export const STD: readonly Signature[] = [
 ];
 
 export const STD_BY_NAME: ReadonlyMap<string, Signature> = new Map(STD.map((s) => [s.name, s]));
+
+// A std function on one line, for queries (`context`, `search`). Not alang
+// syntax: std signatures have type parameters and function types, which the
+// surface language cannot write yet.
+export function signatureLine(s: Signature): string {
+  const typeParams = s.typeParams.length === 0 ? "" : `<${s.typeParams.join(", ")}>`;
+  const params = s.params.map((p) => `${p.name}: ${showType(p.type)}`).join(", ");
+  const effects = s.effects.length === 0 ? "none" : s.effects.join(", ");
+  return `fn ${s.name}${typeParams}(${params}): ${showType(s.out)}, effects: ${effects}, doc: ${printString(s.doc)}`;
+}

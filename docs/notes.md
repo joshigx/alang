@@ -25,12 +25,14 @@ is the user's call.
 - Step 1 done: `src/codebase.ts` (`Codebase.open`, `submit` with add / replace / remove, the guard, the interface
   and remove rules, `definition` and `callers`), `src/interface.ts` (caller-facing interface), `src/refs.ts`
   (references by full name). Decisions are in `decisions.md`, section Database.
-- Next: step 2, the remaining queries (`signature`, `context`, `list`, both `search`es, `history`).
+- Step 2 done: the queries `signature`, `context`, `list`, `searchText`, `searchType` (patterns in `src/search.ts`),
+  `history`.
+- Next: step 3, export and import.
 
 **After the database:** the MCP server around its queries and operations (its own phase). `extern fn` and `const`
 are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (105 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (113 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -139,6 +141,7 @@ report the first one (rename) prominently, since it departs from the wording of 
   - E0508 name touched twice
   - E0509 invalid new name
   - E0510 rename changes what a reference denotes
+  - E0511 malformed type pattern in `search(type)` (added in step 2)
   - `at` quotes the operation, e.g. `replace(net.port.parse, <hash>)`.
 
 **Queries.**
@@ -203,6 +206,10 @@ Stop after the database. The MCP server is its own phase.
 - **Every submit loads, parses and accepts the whole program**, and the write compares every name with the snapshot.
   Fine for the prototype; a large codebase wants a cached parsed program and acceptance limited to the changed
   definitions and their dependents (see "Examples as a regression net").
+- **Queries parse on demand.** `list`, `search` and `context` parse stored texts to read `doc` lines and case lists.
+  A `doc` column, or a cache of parsed definitions per hash (texts never change), would remove that.
+- **`search(type)` cannot express function types**, since alang has none (open question). A std parameter like
+  `with: (T) -> U` only matches `_`.
 - **`refs` rows depend on the text alone** once cases are stored by their own name, which is what makes reusing a
   version (revert, remove then add) safe without recomputing anything.
 

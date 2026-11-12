@@ -115,6 +115,13 @@ numbers refer to the spec. Open points are listed at the end.
 | Remove | Rejected while callers outside the transaction exist (E0507). Recursion and a function's own examples do not count, nor callers removed in the same transaction. Removing the last definition leaves an empty, accepted program. | 6 |
 | No-op replace | A replace whose canonical text equals the current one is accepted and writes nothing; the result lists it under `unchanged`, not `written`. | 6.6 |
 | Concurrency | Submits of one process run one at a time. The write runs in `BEGIN IMMEDIATE` and first compares all names with the snapshot that was accepted; if another process wrote in between, the submit starts over (up to three times), so its guards report what changed. | 6.3 |
+| Queries | Every query returns the hash of each definition it read (std entries have none). An unknown name throws E0502 with a closest-name fix, located at the query (`context(net.port.pars)`). | 6.7, 5.5 |
+| `signature` | Every section except `body`; for a type, its whole text. | 6 |
+| `context` | The text, then what it uses in order of first use: functions and types as their signature, the type of each case used, std functions as one line (`fn std.fs.read_text(path: String): Result<String, std.fs.ReadError>, effects: fs.read, doc: "..."`, not alang syntax, since std has type parameters and function types), std types as alang text. Then the types in those signatures, one level deep: calling a function means building its arguments. The definition itself is not among its uses. | 6.5, 2 |
+| `list` | The definitions whose module is exactly the given one (name, hash, kind, doc) and the names of its direct submodules; `list("")` gives the top-level modules. An unknown module is E0502. | 6.2 |
+| `search(text)` | Case-insensitive substring match in full names and `doc`, std included, sorted by name. | 6 |
+| `search(type)` | Pattern `T1, T2 -> R`, `-> R` without parameters; a malformed pattern is E0511 with the expected form. `_` matches any type; a one-segment name matches by last segment (`Port`), a qualified one exactly. A std type variable matches any type but the same one at each occurrence; a function-typed std parameter matches only `_`. Parameters match by position, not name. Each hit comes with a one-line signature. | 6 |
+| `history` | Every version, oldest first, removals included (hash null), with the current hash or null if removed. A name that came from a rename continues with the old name's entries before the rename. A name that never existed is E0502. | 6.6 |
 
 ## Temporary limits
 
