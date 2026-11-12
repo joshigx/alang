@@ -244,6 +244,9 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   command that works from any directory and needs no reinstall after changes (README). `alang run` then writes
   `out/` into the current directory; a temporary directory would leave no trace, but the generated TypeScript is
   useful to look at.
+- **The playground now knows `db run`.** Its `CLAUDE.md` names `alang db run` (the user installed `alang`). Watch in
+  the next round whether the model runs a program after writing a `main`, and whether it reads the JSON on stderr
+  when a run is refused.
 
 ## From the export sync (2026-11-12)
 
