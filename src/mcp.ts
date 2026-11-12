@@ -69,7 +69,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export const INSTRUCTIONS = `An alang codebase, stored as a database of definitions (spec section 6). Read and change \
 definitions only through these tools, never by editing files. export/*.alang is the database's copy for Git, one \
 file per module: every change is written there, and what Git or a person changes there is read back before the next \
-tool call. out/ is generated.
+tool call. out/ is generated. So the codebase can change between your calls (a pull, a checkout, the user's own \
+edit): answer questions about its current state from a fresh query, not from earlier results.
 
 1. Find: \`list\` (modules), \`search\` (names and doc lines), \`search_type\` (signatures such as \
 \`String -> Result<Int, _>\`).

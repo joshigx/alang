@@ -167,6 +167,13 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   `PortError` was unused and asked again rather than tidying up. Then the export file was restored from Git (as a
   pull would): the next query's sync imported both definitions with their old hashes (texts byte-identical, so the
   stored versions are reused) and history operation `import`. Undo through Git works without any tool support.
+- **The model answers from memory after the codebase changed.** After the restore through Git, asked "which
+  functions in net.port can turn text into a Port?", the model made no tool call and answered "none", from its own
+  removal a minute earlier; it also called `PortError` unused although `parse` used it again. Nothing had told it
+  that the codebase changes outside the conversation. The instructions now say so and ask for a fresh query when
+  answering about the current state. A further step, not built: when a sync imports something, add a block to the
+  result naming what changed outside the conversation. That only helps once the model makes a call, and only in the
+  server process that did the import (here the import happened in a second process, from a manual check).
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
