@@ -30,7 +30,7 @@ is the user's call.
 **Next:** the MCP server around the queries and operations of `Codebase` (its own phase, see CLAUDE.md). `extern fn`
 and `const` are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (152 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (154 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -58,7 +58,9 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   export and an optional text on `rename`; the details within them are still open for review: a conflict is
   refused (E0513) rather than resolved; a missing export directory is written, never read as every file deleted;
   library queries read the database as is while `alang db` syncs first; a submit's sync import stays when the submit
-  is rejected. Above all, references stay names, so `rename` rewrites
+  is rejected. Two consequences to confirm: every `alang db` command, a plain query included, can now change the
+  database (a deleted export file removes its module's definitions); and a pull that lands while a submit is being
+  accepted is still overwritten by that submit's export write (see "From the export sync"). Above all, references stay names, so `rename` rewrites
   callers instead of changing only a pointer (departs from 6.1); see "Database phase: open points".
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
   `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.

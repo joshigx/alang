@@ -304,6 +304,17 @@ Deno.test("check: names of the own module are written short (1.2)", () => {
   one(fn("return m.gg()", { extra: G }), "E0201");
 });
 
+Deno.test("check: a local built from a case is matched on every case, also of a std type", () => {
+  // The emitter must not let TypeScript narrow such a local to the one case.
+  const match = (subject: string, cases: string[]) =>
+    `let n: Int = match ${subject}\n` + cases.map((c) => `  case ${c} then\n    0\n`).join("") + "end match\nreturn n";
+  clean(fn("let s: Shape = Dot\n" + match("s", ["Circle(v)", "Square(v)", "Dot"]), { extra: SHAPE }));
+  clean(fn(
+    'let e: std.fs.ReadError = std.fs.Other("disk")\n' +
+      match("e", ["std.fs.NotFound", "std.fs.PermissionDenied", "std.fs.IsADirectory", "std.fs.Other(why)"]),
+  ));
+});
+
 Deno.test("check: uniqueness of definitions, cases, fields and params", () => {
   one(fn("return 1", { extra: G + "\n\n" + G }), "E0215");
   one(

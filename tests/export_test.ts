@@ -254,6 +254,24 @@ Deno.test("sync: a write that failed after the commit is redone, not undone", as
   await done(cb);
 });
 
+Deno.test("sync: one module ahead in the database, another changed on disk", async () => {
+  // The file the database is ahead on is written before the import reads
+  // every file; otherwise the import would undo the committed replace.
+  const cb = await withPort();
+  await failedWrite(cb, [
+    { op: "replace", name: "net.port.parse", hash: hashOf(cb, "net.port.parse"), text: PARSE_REORDERED },
+  ]);
+  const loadPort = LOAD_PORT.replace("from a configuration file.", "from a config file.");
+  await Deno.writeTextFile(join(cb.dir, "export", "config.alang"), `${LOAD_ERROR}\n\n${loadPort}\n`);
+  const r = await synced(cb);
+  assertEquals([r.exported, r.imported.map((w) => w.name)], [["net.port"], ["config.load_port"]]);
+  assertEquals(cb.definition("net.port.parse").text, PARSE_REORDERED);
+  assertEquals(cb.definition("config.load_port").text, loadPort);
+  assertEquals(cb.history("net.port.parse").entries.map((e) => e.operation), ["add", "replace"]);
+  assertEquals((await files(cb))["net.port.alang"], `${PARSE_ERROR}\n\n${PORT}\n\n${PARSE_REORDERED}\n`);
+  await done(cb);
+});
+
 Deno.test("sync: file and database both changed is refused until the files are imported", async () => {
   const cb = await withPort();
   await failedWrite(cb, [
