@@ -256,6 +256,19 @@ class DefChecker {
     return path.length === 1 ? `${this.module}.${path[0]}` : pathText(path);
   }
 
+  // Rule 1.2: a name of this module is written short. Called once the name
+  // is known to exist; the long form is reported with the short one as fix
+  // and otherwise resolved as usual, so nothing follows from it (5.6).
+  private shortForm(path: Path, at: string): void {
+    if (path.length === 1 || pathText(moduleOf(path)) !== this.module) return;
+    const written = pathText(path);
+    const short = path[path.length - 1];
+    this.report("E0226", at, `\`${written}\` is in this module, so it is written short: \`${short}\` (1.2).`, {
+      expected: short,
+      fix: { replace: written, with: short },
+    });
+  }
+
   // ---- declarations ----
 
   declare(): void {
@@ -348,6 +361,7 @@ class DefChecker {
       });
       return ERROR;
     }
+    this.shortForm(ref.path, printTypeRef(ref));
     if (args.length > 0) {
       this.report("E0209", printTypeRef(ref), `\`${pathText(ref.path)}\` takes no type arguments.`);
       return ERROR;
@@ -637,6 +651,7 @@ class DefChecker {
     const full = this.resolvePath(e.path);
     const fn = this.env.fns.get(full);
     if (fn) {
+      this.shortForm(e.path, pathText(e.path));
       if (fn.typeParams.length > 0) {
         this.report(
           "E0210",
@@ -779,6 +794,7 @@ class DefChecker {
       return ERROR;
     }
     this.info.calls.set(e, full);
+    this.shortForm(e.path, at);
     this.effectsOfCall(sig, pathText(e.path), at);
 
     // Type arguments are written exactly when a type parameter does not
@@ -900,6 +916,7 @@ class DefChecker {
 
     const full = this.resolvePath(e.path);
     const ut = this.env.types.get(full);
+    if (ut || this.env.cases.has(full)) this.shortForm(e.path, at);
     if (ut?.kind === "record") {
       this.info.constructs.set(e, { kind: "record", type: full });
       if (p?.kind !== "args") {
@@ -1263,7 +1280,13 @@ class DefChecker {
           return;
         }
         const written = pathText(p.path);
-        const c = cases.find((c) => c.written === written);
+        let c = cases.find((c) => c.written === written);
+        // A case of this module written in full: reported, then matched as
+        // its short form.
+        if (!c && p.path.length > 1 && pathText(moduleOf(p.path)) === this.module) {
+          c = cases.find((c) => c.written === p.path[p.path.length - 1]);
+          if (c) this.shortForm(p.path, at);
+        }
         if (!c) {
           const byName = cases.find((c) => c.name === p.path[p.path.length - 1]);
           this.report("E0214", at, `\`${written}\` is not a case of \`${this.show(t)}\`.`, {

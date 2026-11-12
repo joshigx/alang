@@ -76,11 +76,6 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 
 ## From the database (2026-11-12)
 
-- **1.2 is not enforced for the own module, and inconsistently.** The checker accepts `net.port.Port` written as a type
-  inside `net.port`, but rejects `geo.Empty` as a pattern inside `geo` (E0214, "not a case of `Shape`"). 1.2 says names
-  of the same module are written short. Two spellings give two texts and two hashes for one meaning. The interface
-  rule compares full names, so it is not fooled, and `rename` always writes the short form. The checker should
-  reject the long form everywhere, with the short form as fix.
 - **Renaming and editing one definition takes two transactions** (E0508 counts both names of a rename). Allowing
   `replace(new_name, ...)` after `rename` in one transaction would need a guard for a name that does not exist yet.
 - **Capture is only possible through locals.** A call path always means a module function, and a new name that
@@ -155,7 +150,9 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **Diagnostics for the 4.8 depth limit** would naturally live in the checker's block walk.
 - **Checked output is a real guard.** Emitting every accepted test program and running `deno check` over all of them
   found three emitter bugs the hand-picked end-to-end programs missed (literal `===` rejected by TypeScript, `error`
-  typed `E | Unit`, `for` inside a branch typed `unknown[]`). Keep adding every new `clean(...)` case there; a
+  typed `E | Unit`, `for` inside a branch typed `unknown[]`). A fourth surfaced later: a local initialized with a
+  variant case was narrowed by TypeScript to that case, so a `match` on it failed to type-check (fixed by emitting
+  cases as `({ tag: ... } satisfies T as T)`). Keep adding every new `clean(...)` case there; a
   generator of random well-typed programs would push this further.
 - **The std library is provisional.** Rule 3.8 freezes published signatures, so names and parameter names in
   `src/std.ts` (`with:`, `left:`/`right:`, `std.string.concat`, ...) should be reviewed before anything is

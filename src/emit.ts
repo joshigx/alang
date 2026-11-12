@@ -485,8 +485,15 @@ class DefinitionEmitter {
         if (builtin) {
           return p === null ? `${RT}.${last}` : `${RT}.${last}(${this.expr(p.value, scope)})`;
         }
-        const tag = `tag: ${JSON.stringify(last)} as const`;
-        return p === null ? `{ ${tag} }` : `{ ${tag}, value: ${this.expr(p.value, scope)} }`;
+        const tag = `tag: ${JSON.stringify(last)}`;
+        const value = p === null ? `{ ${tag} }` : `{ ${tag}, value: ${this.expr(p.value, scope)} }`;
+        // A case has its variant type, not its own: a local of the type must
+        // not be narrowed to the case by TypeScript, or a `match` on it would
+        // not type-check. `satisfies` keeps the check, `as` widens.
+        const construct = this.info.constructs.get(e);
+        if (construct?.kind !== "case") throw new Error(`unresolved case: ${pathText(e.path)}`);
+        const type = this.globalRef(construct.type.split("."));
+        return `(${value} satisfies ${type} as ${type})`;
       }
       case "binary":
         return this.binary(e, scope);

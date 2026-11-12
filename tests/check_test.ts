@@ -265,6 +265,45 @@ Deno.test("check: construction forms (4.2)", () => {
   one(fn("let s: Shape = Triangle(1)\nreturn 0", { extra: SHAPE }), "E0203");
 });
 
+Deno.test("check: names of the own module are written short (1.2)", () => {
+  const H = 'fn m.h\n  doc: "H."\n  in:\n    x: Int\n  out: Int\n  effects: none\n  requires: none\n' +
+    "  ensures: none\n  examples:\n    h(x: 1) == 1\n  body:\n    return x\nend fn m.h";
+  const match = "let n: Int = match s\n  case Circle(v) then\n    v\n  case Square(v) then\n    v\n  case Dot then\n" +
+    "    0\nend match\nreturn n";
+  const sites: [string, Parameters<typeof fn>[1], string][] = [
+    ["return p.x", { params: ["p: m.Point"], extra: POINT }, "m.Point"],
+    ["let p: m.Point = Point(x: 1, y: 2)\nreturn p.x", { extra: POINT }, "m.Point"],
+    ["let p: Point = m.Point(x: 1, y: 2)\nreturn p.x", { extra: POINT }, "m.Point(x: 1, y: 2)"],
+    ["let s: Shape = m.Circle(1)\n" + match, { extra: SHAPE }, "m.Circle(1)"],
+    ["let s: Shape = Dot\n" + match.replace("case Dot", "case m.Dot"), { extra: SHAPE }, "m.Dot"],
+    ["return m.g()", { extra: G }, "m.g()"],
+    [
+      "let xs: List<Int> = std.list.empty<Int>()\nlet ys: List<Int> = std.list.map(list: xs, with: m.h)\nreturn 0",
+      { extra: H },
+      "m.h",
+    ],
+    ["return 1", { examples: ["m.f() == 1"] }, "m.f()"],
+  ];
+  for (const [body, options, at] of sites) {
+    const source = fn(body, options);
+    const d = one(source, "E0226");
+    assertEquals(d.at, at);
+    const short = d.fix!.replace.slice("m.".length);
+    assertEquals([d.fix, d.expected], [{ replace: d.fix!.replace, with: short }, short]);
+    clean(source.replace(d.at, d.at.replace(d.fix!.replace, d.fix!.with)));
+  }
+  // Each long name is one diagnostic, also nested in a type.
+  const twice = check(fn("let p: Result<m.Point, m.Point> = Ok(Point(x: 1, y: 2))\nreturn 0", { extra: POINT }));
+  assertEquals(twice.map((d) => d.code), ["E0226", "E0226"]);
+  // Another module, also a nested or an enclosing one, is written in full.
+  clean(fn("return n.g() + m.k.g()", {
+    extra: [G.replaceAll("m.g", "n.g"), G.replaceAll("m.g", "m.k.g")].join("\n\n"),
+  }));
+  clean(fn("return m.g()", { extra: G }).replaceAll("fn m.f", "fn m.k.f"));
+  // A long name that does not exist is an unknown name, nothing more.
+  one(fn("return m.gg()", { extra: G }), "E0201");
+});
+
 Deno.test("check: uniqueness of definitions, cases, fields and params", () => {
   one(fn("return 1", { extra: G + "\n\n" + G }), "E0215");
   one(
@@ -455,7 +494,7 @@ Deno.test("effects: a caller declares the effects of its callees (2.1)", () => {
   // The fix lands on the effects line, not on the doc text, and resolves the diagnostic.
   clean(applyFix(source, d));
   // Through a user function.
-  assertEquals(one(fn('m.shout(text: "hi")\nreturn 0', { extra: SHOUT }), "E0230").fix?.with, "effects: console");
+  assertEquals(one(fn('shout(text: "hi")\nreturn 0', { extra: SHOUT }), "E0230").fix?.with, "effects: console");
   // Several missing effects: one diagnostic, the whole line fixed, in table order.
   const both = one(
     fn(

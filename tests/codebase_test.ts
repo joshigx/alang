@@ -125,13 +125,19 @@ Deno.test("codebase: an interface change with callers outside the transaction is
   await done(cb);
 });
 
-Deno.test("codebase: doc, examples and full spelling of a type are not interface changes", async () => {
+Deno.test("codebase: doc and examples are not interface changes", async () => {
   const cb = await withPort();
   const parse = PARSE
     .replace("Reads a TCP port number", "Parses a TCP port number")
-    .replace("  examples:\n", '  examples:\n    parse(text: "1") == Ok(Port(value: 1))\n')
-    .replace("out: Result<Port, ParseError>", "out: Result<net.port.Port, ParseError>");
-  await ok(cb, [{ op: "replace", name: "net.port.parse", hash: hashOf(cb, "net.port.parse"), text: parse }]);
+    .replace("  examples:\n", '  examples:\n    parse(text: "1") == Ok(Port(value: 1))\n');
+  // A name of the own module has one spelling, the short one (1.2), so a
+  // full spelling cannot pose as a changed type.
+  const long = parse.replace("out: Result<Port, ParseError>", "out: Result<net.port.Port, ParseError>");
+  const hash = hashOf(cb, "net.port.parse");
+  assertEquals(codes((await fails(cb, [{ op: "replace", name: "net.port.parse", hash, text: long }])).diagnostics), [
+    "E0226",
+  ]);
+  await ok(cb, [{ op: "replace", name: "net.port.parse", hash, text: parse }]);
   const error = PARSE_ERROR.replace("Reasons why", "Why");
   await ok(cb, [{ op: "replace", name: "net.port.ParseError", hash: hashOf(cb, "net.port.ParseError"), text: error }]);
   await done(cb);
