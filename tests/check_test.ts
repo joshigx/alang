@@ -9,7 +9,7 @@ import { parseProgram } from "../src/parser.ts";
 import { STD } from "../src/std.ts";
 import { build } from "../src/toolchain.ts";
 import * as runtime from "../src/runtime.ts";
-import { con, list, result, STRING } from "../src/types.ts";
+import { list, STRING } from "../src/types.ts";
 
 const spec = await Deno.readTextFile(new URL("../alang-specs.md", import.meta.url));
 const specBlock = (firstLine: string): string => {
@@ -25,14 +25,22 @@ function check(source: string, options?: CheckOptions): Diagnostic[] {
 // A function `m.f` around the given body, plus extra definitions.
 function fn(
   body: string,
-  o: { params?: string[]; out?: string; extra?: string; requires?: string; ensures?: string; examples?: string[] } = {},
+  o: {
+    params?: string[];
+    out?: string;
+    effects?: string;
+    extra?: string;
+    requires?: string;
+    ensures?: string;
+    examples?: string[];
+  } = {},
 ): string {
   const lines = [
     "fn m.f",
     '  doc: "Test."',
     o.params ? ["  in:", ...o.params.map((p) => `    ${p}`)].join("\n") : "  in: none",
     `  out: ${o.out ?? "Int"}`,
-    "  effects: none",
+    `  effects: ${o.effects ?? "none"}`,
     `  requires: ${o.requires ?? "none"}`,
     `  ensures: ${o.ensures ?? "none"}`,
     o.examples ? ["  examples:", ...o.examples.map((e) => `    ${e}`)].join("\n") : "  examples: none",
@@ -75,49 +83,38 @@ Deno.test("check: spec programs are accepted", () => {
   clean(specBlock("fn math.clamp"));
 });
 
-// The declarations config.load_port relies on, which the spec leaves out.
-const LOAD_PORT_CONTEXT = {
-  std: [...STD, {
-    name: "std.fs.read_text",
-    doc: "Reads a file as text.",
-    typeParams: [],
-    params: [{ name: "path", type: STRING }],
-    out: result(STRING, con("std.fs.ReadError")),
-    effects: ["fs.read" as const],
-  }],
-  declarations: parseProgram(`
-type std.fs.ReadError
-  doc: "Why a file could not be read."
-  variant:
-    NotFound
-    PermissionDenied
-  where: none
-end type std.fs.ReadError
-
-type config.LoadError
+// The type config.load_port relies on, which the spec leaves out, plus the
+// port module it calls. Ordinary source, so these programs also reach the
+// checked-output test at the end.
+const LOAD_PORT_CONTEXT = `type config.LoadError
   doc: "Why the configuration could not be loaded."
   variant:
     FileUnreadable: std.fs.ReadError
     InvalidPort: net.port.ParseError
   where: none
 end type config.LoadError
-`).concat(parseProgram(specBlock("type net.port.Port"))),
-};
+
+${specBlock("type net.port.Port")}`;
 
 Deno.test("check: config.load_port is accepted given its missing declarations", () => {
-  clean(specBlock("fn config.load_port"), LOAD_PORT_CONTEXT);
-  const ds = check(specBlock("fn config.load_port"));
-  assertEquals(ds.length > 0, true);
+  clean(specBlock("fn config.load_port") + "\n\n" + LOAD_PORT_CONTEXT);
+  // Without its context: each missing name is reported once, however often it is used (5.6).
+  assertEquals(check(specBlock("fn config.load_port")).map((d) => d.message), [
+    "Unknown type `net.port.Port`.",
+    "Unknown type `LoadError`.",
+    "Unknown type or case `FileUnreadable`.",
+    "Unknown function `net.port.parse`.",
+    "Unknown type or case `InvalidPort`.",
+  ]);
 });
 
 Deno.test("check: the spec's let fragments are accepted inside a function", () => {
-  const indent = (s: string) => s.split("\n").join("\n");
   clean(
-    fn(indent(specBlock("let contents")) + "\nreturn contents", {
+    fn(specBlock("let contents") + "\nreturn contents", {
       params: ["paths: List<String>"],
       out: "List<Result<String, std.fs.ReadError>>",
+      effects: "fs.read",
     }),
-    LOAD_PORT_CONTEXT,
   );
   clean(fn(specBlock("let lengths") + "\nreturn total", { params: ["names: List<String>"] }));
 });
@@ -358,7 +355,7 @@ Deno.test("check: no shadowing (2.6)", () => {
 
 Deno.test("check: discarded values must be Unit", () => {
   one(fn('std.int.parse(text: "1")\nreturn 0'), "E0217");
-  clean(fn('std.console.print_line(text: "hi")\nreturn 0'));
+  clean(fn('std.console.print_line(text: "hi")\nreturn 0', { effects: "console" }));
 });
 
 Deno.test("check: a body ends with return; nothing follows a return (3.4)", () => {
@@ -376,7 +373,12 @@ Deno.test("check: let ... else", () => {
 
 Deno.test("check: if and for", () => {
   one(fn('let x: Int = if true then\n  1\nelse\n  "a"\nend if\nreturn x'), "E0204");
-  one(fn("for x: Int in 5 do\n  std.console.print_line(text: std.text.show(value: x))\nend for\nreturn 0"), "E0204");
+  one(
+    fn("for x: Int in 5 do\n  std.console.print_line(text: std.text.show(value: x))\nend for\nreturn 0", {
+      effects: "console",
+    }),
+    "E0204",
+  );
   const d = one(
     fn(
       "let xs: List<String> = std.list.empty<String>()\nlet ys: List<Int> = for x: Int in xs do\n  1\nend for\nreturn 0",
@@ -411,6 +413,114 @@ Deno.test("check: the std table can be given explicitly", () => {
   const ds = check(fn('return std.string.length(text: "a")'), { std: [] });
   assertEquals(ds.map((d) => d.code), ["E0201"]);
   assertEquals(list(STRING).k, "con");
+});
+
+// ---- effects ----
+
+const SHOUT = [
+  "fn m.shout",
+  '  doc: "Prints the text."',
+  "  in:",
+  "    text: String",
+  "  out: Unit",
+  "  effects: console",
+  "  requires: none",
+  "  ensures: none",
+  "  examples: none",
+  "  body:",
+  "    std.console.print_line(text: text)",
+  "    return Unit",
+  "end fn m.shout",
+].join("\n");
+
+Deno.test("effects: a caller declares the effects of its callees (2.1)", () => {
+  const d = one(fn('std.console.print_line(text: "hi")\nreturn 0'), "E0230");
+  assertEquals(d.at, 'std.console.print_line(text: "hi")');
+  assertEquals(d.fix, { replace: "effects: none", with: "effects: console" });
+  // Through a user function.
+  assertEquals(one(fn('m.shout(text: "hi")\nreturn 0', { extra: SHOUT }), "E0230").fix?.with, "effects: console");
+  // Several missing effects: one diagnostic, the whole line fixed, in table order.
+  const both = one(
+    fn(
+      'std.console.print_line(text: "a")\nlet r: Result<String, std.fs.ReadError> = std.fs.read_text(path: "x")\nreturn 0',
+    ),
+    "E0230",
+  );
+  assertEquals(both.fix, { replace: "effects: none", with: "effects: fs.read, console" });
+  const partial = one(
+    fn('let r: Result<String, std.fs.ReadError> = std.fs.read_text(path: "x")\nreturn 0', { effects: "console" }),
+    "E0230",
+  );
+  assertEquals(partial.fix, { replace: "effects: console", with: "effects: fs.read, console" });
+});
+
+Deno.test("effects: accepted forms", () => {
+  clean(fn('std.console.print_line(text: "hi")\nreturn 0', { effects: "console" }));
+  // Effects per element go through `for` (2.4).
+  clean(
+    fn("for x: String in xs do\n  std.console.print_line(text: x)\nend for\nreturn 0", {
+      params: ["xs: List<String>"],
+      effects: "console",
+    }),
+  );
+  // Declaring more than the body triggers is allowed (2.1 asks for "include").
+  clean(fn("return 0", { effects: "console" }));
+  // Recursion.
+  clean(
+    [
+      "fn m.count",
+      '  doc: "Prints n, n - 1, ..., 1."',
+      "  in:",
+      "    n: Int",
+      "  out: Unit",
+      "  effects: console",
+      "  requires: none",
+      "  ensures: none",
+      "  examples: none",
+      "  body:",
+      "    if n > 0 then",
+      "      std.console.print_line(text: std.text.show(value: n))",
+      "      count(n: n - 1)",
+      "    end if",
+      "    return Unit",
+      "end fn m.count",
+    ].join("\n"),
+  );
+});
+
+Deno.test("effects: lambdas and function values are pure (2.4)", () => {
+  const xs = "let xs: List<String> = std.list.empty<String>()\n";
+  one(
+    fn(
+      xs +
+        "let ys: List<Unit> = std.list.map(list: xs, with: fn(x: String): Unit => std.console.print_line(text: x))\nreturn 0",
+      {
+        effects: "console",
+      },
+    ),
+    "E0232",
+  );
+  one(
+    fn(xs + "let ys: List<Unit> = std.list.map(list: xs, with: shout)\nreturn 0", { effects: "console", extra: SHOUT }),
+    "E0232",
+  );
+});
+
+Deno.test("effects: conditions and examples are pure (5.4)", () => {
+  const loud = SHOUT.replace("out: Unit", "out: Int").replace("return Unit", "return 1");
+  one(fn("return a", { params: ["a: Int"], requires: 'a > shout(text: "x")', extra: loud }), "E0233");
+  one(fn("return a", { params: ["a: Int"], ensures: 'result > shout(text: "x")', extra: loud }), "E0233");
+  one(
+    fn("return 0", {
+      extra: loud + '\n\ntype m.P\n  doc: "P."\n  record:\n    v: Int\n  where: v > shout(text: "x")\nend type m.P',
+    }),
+    "E0233",
+  );
+  // An example of a function with effects would run them at every acceptance.
+  one(
+    fn('std.console.print_line(text: "hi")\nreturn 0', { effects: "console", examples: ["f() == 0"] }),
+    "E0233",
+  );
 });
 
 Deno.test("check: programs that stress the emitter's TypeScript", () => {

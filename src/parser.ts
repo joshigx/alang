@@ -19,7 +19,7 @@ import type {
   TypeDef,
   TypeRef,
 } from "./ast.ts";
-import { EFFECTS, pathText } from "./ast.ts";
+import { type Effect, EFFECTS, pathText } from "./ast.ts";
 import { AlangError, diagnostic, type Fix } from "./diagnostic.ts";
 import { lex, type Token } from "./lexer.ts";
 
@@ -284,7 +284,7 @@ class Parser {
     this.expectNewline();
 
     this.sectionHeader("effects");
-    const effects: string[] = [];
+    const effects: Effect[] = [];
     if (this.isKeyword("none")) {
       this.next();
     } else {
@@ -292,6 +292,16 @@ class Parser {
       while (this.isSymbol(",")) {
         this.next();
         effects.push(this.effect());
+      }
+      // One spelling per set of effects: the order of the effect table, each once.
+      const canonical = EFFECTS.filter((e) => effects.includes(e));
+      if (canonical.join(", ") !== effects.join(", ")) {
+        this.fail("Effects are listed once each, in the order of the effect table.", {
+          code: "E0111",
+          at: `effects: ${effects.join(", ")}`,
+          expected: canonical.join(", "),
+          fix: { replace: `effects: ${effects.join(", ")}`, with: `effects: ${canonical.join(", ")}` },
+        });
       }
     }
     this.expectNewline();
@@ -315,7 +325,7 @@ class Parser {
     return { kind: "fn", path, doc, params, out, effects, requires, ensures, examples, body };
   }
 
-  private effect(): string {
+  private effect(): Effect {
     const written = pathText(this.valuePath());
     if (!(EFFECTS as readonly string[]).includes(written)) {
       this.fail(`Unknown effect \`${written}\`. The effects are: ${EFFECTS.join(", ")}.`, {
@@ -323,7 +333,7 @@ class Parser {
         at: written,
       });
     }
-    return written;
+    return written as Effect;
   }
 
   private example(): Expr {

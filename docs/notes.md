@@ -16,8 +16,6 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
 
 ## Not enforced yet (planned phases)
 
-- Effect checking (2.1, 2.2), pure lambdas (2.4), pure conditions (5.4). The std table already carries effects and
-  the checker sees every call site, so this is a small step on top of the type checker.
 - Mandatory examples for pure functions (5.1).
 - Nesting depth limit (4.8).
 - Static proof of conditions (5.2) and prefix checkability (1.6) — separate projects.
@@ -64,3 +62,23 @@ Running log of observations, spec gaps and ideas for later. Decisions that close
 - **The std library is provisional.** Rule 3.8 freezes published signatures, so names and parameter names in
   `src/std.ts` (`with:`, `left:`/`right:`, `std.string.concat`, ...) should be reviewed before anything is
   "published".
+
+## From the effect checker (2026-11-12)
+
+- **std covers two of eight effects.** Only `console` (`std.console.print_line`) and `fs.read` (`std.fs.read_text`)
+  have functions. `fs.write`, `net`, `time`, `random`, `env`, `log` need std functions, and each needs a host
+  function in `runtime.ts` that works on Deno and Node.js alike.
+- **`time`, `random`, `log`, `console` are not enforced at runtime.** Deno has no permission for them, so only the
+  checker guards them. An `extern fn` that reads the clock without declaring `time` goes unnoticed.
+- **`log` vs `console`.** Both end up on the process output. The spec should say what `log` writes to (stderr?
+  structured lines?) so the two stay distinguishable.
+- **Over-declared effects are allowed** (decision). A linter-style hint ("`console` is declared but nothing triggers
+  it") would still help readers; it is not an error because of signature stability.
+- **Permissions are all-or-nothing per effect.** `--allow-read` grants every path. The recorded capability
+  alternative in the spec would allow `--allow-read=<dir>`; effect labels cannot express that.
+- **`extern fn`** is the place where 2.5 matters most and where the runtime enforcement is the only guard. It needs
+  its form decided (open since the slice) before it can be tested.
+- **Examples for effectful functions** are now rejected by 5.4. The spec's "To revisit later" has two alternatives
+  (fixed answers, capabilities); with E0233 in place, such examples fail loudly instead of running effects.
+- **The run entry file** (`out/<name>.run.ts`) exits with code 70 on a trap. Node.js would need its own entry if
+  programs should be started there too; the generated module itself is runtime-neutral.

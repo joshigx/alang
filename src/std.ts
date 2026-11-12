@@ -2,8 +2,24 @@
 // runtime.ts under its mangled name (`std.int.parse` -> `std$int$parse`);
 // a test keeps the two in sync.
 
-import type { Effect } from "./ast.ts";
-import { BOOL, FLOAT, fnType, INT, list, option, ORDER, STRING, tvar, type Type, UNIT } from "./types.ts";
+import type { Definition, Effect } from "./ast.ts";
+import { parseProgram } from "./parser.ts";
+import { BOOL, con, FLOAT, fnType, INT, list, option, ORDER, result, STRING, tvar, type Type, UNIT } from "./types.ts";
+
+// Types of the standard library, written in alang. runtime.ts has the
+// matching TypeScript type under the mangled name (`std$fs$ReadError`).
+export const STD_TYPES_SOURCE = `type std.fs.ReadError
+  doc: "Why a file could not be read."
+  variant:
+    NotFound
+    PermissionDenied
+    IsADirectory
+    Other: String
+  where: none
+end type std.fs.ReadError
+`;
+
+export const STD_TYPES: readonly Definition[] = parseProgram(STD_TYPES_SOURCE);
 
 export interface Signature {
   readonly name: string;
@@ -31,6 +47,15 @@ function sig(
 
 export const STD: readonly Signature[] = [
   sig("std.console.print_line", "Writes a line to the console.", [], [["text", STRING]], UNIT, ["console"]),
+
+  sig(
+    "std.fs.read_text",
+    "Reads a whole file as UTF-8 text.",
+    [],
+    [["path", STRING]],
+    result(STRING, con("std.fs.ReadError")),
+    ["fs.read"],
+  ),
 
   sig("std.int.parse", "Reads a decimal integer; `None` if the text is not one.", [], [["text", STRING]], option(INT)),
   sig("std.int.to_float", "The same number as a Float.", [], [["value", INT]], FLOAT),

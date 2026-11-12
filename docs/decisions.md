@@ -71,6 +71,20 @@ numbers refer to the spec. Open points are listed at the end.
 | Diagnostics             | All causes are reported, one diagnostic each. An expression that failed has an error type that fits everywhere, which suppresses follow-ups; a broken pattern suppresses the exhaustiveness check of its `match` (5.6). Unknown names get a "did you mean" fix within a small edit distance. | 5.5, 5.6                                   |
 | std signatures          | Kept in `src/std.ts` with function types and type variables, which the surface language cannot express yet. A test keeps them in sync with `runtime.ts`.                                                                                                  | —                                          |
 
+## Effects
+
+| Topic                  | Decision                                                                                                                                                                                                                                   | Principle |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| Spelling               | Effects are listed once each, in the order of the effect table (`effects: fs.read, console`); anything else is a parse error with the reordered line as fix (E0111).                                                                     | 3         |
+| Calls                  | A function declares every effect of every function it calls; checking direct calls is enough, since each callee's list is checked in turn (E0230). One diagnostic per definition, at the first offending call, with the complete corrected `effects:` line as fix. | 2.1, 5.6  |
+| Over-declaration       | Allowed. 2.1 asks that the caller's effects *include* the callee's. Requiring an exact list would make removing the last effectful call a signature change that ripples up to `main`, against "signature unchanged, callers follow" (6). | 2.1, 6    |
+| Lambdas                | Pure: a call with effects inside a lambda is an error (E0232). Effects per element go through `for`.                                                                                                                                      | 2.4       |
+| Function values        | A function passed by name (`by: compare`) must have `effects: none`, like a lambda, since function types carry no effects (E0232).                                                                                                       | 2.4       |
+| Conditions, examples   | `requires`, `ensures`, `where` and examples call only pure functions (E0233). An example of a function with effects is therefore an error: it would run the effects at every acceptance.                                                 | 5.4       |
+| Runtime                | `alang run` starts `main` in its own Deno process with `--no-prompt` and exactly the permissions of its effects (`fs.read` → `--allow-read`, ...). A refused operation traps (`effect`); it is not an ordinary error value.              | 2.5       |
+| `std.fs.read_text`     | `String -> Result<String, std.fs.ReadError>` with cases `NotFound`, `PermissionDenied` (by the OS), `IsADirectory`, `Other: String`. std types are written in alang (`STD_TYPES_SOURCE` in `src/std.ts`).                                 | 2.3       |
+| Diagnostics            | An unknown name, type or function is reported once per definition, however often it is used (5.6).                                                                                                                                       | 5.6       |
+
 ## Temporary limits
 
 These are not language decisions, only what the implementation does not do yet.
@@ -78,7 +92,7 @@ These are not language decisions, only what the implementation does not do yet.
 - `if`, `match` and `for` are compiled only as a statement, as the value of `let`, and after `return`.
 - `where` on a variant type is rejected (E0225); it is open which name refers to the value.
 - `const` and `extern fn` are not parsed yet.
-- Effects, purity of lambdas and conditions, and mandatory examples are not checked yet.
+- Mandatory examples (5.1) are not checked yet.
 
 ## Open questions
 

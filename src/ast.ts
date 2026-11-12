@@ -101,7 +101,7 @@ export interface FnDef {
   readonly doc: string;
   readonly params: readonly Param[];
   readonly out: TypeRef;
-  readonly effects: readonly string[];
+  readonly effects: readonly Effect[];
   readonly requires: Expr | null;
   readonly ensures: Expr | null;
   readonly examples: readonly Expr[];

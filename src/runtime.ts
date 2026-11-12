@@ -183,6 +183,46 @@ export function std$console$print_line(text: string): Unit {
 }
 
 // Decimal digits with an optional leading minus, inside the Int range.
+// The one place where the runtime touches the host. Deno and Node.js (and
+// Bun) are detected by their globals; the error codes are shared.
+type Host = {
+  Deno?: { readTextFileSync(path: string): string };
+  process?: { getBuiltinModule(name: string): { readFileSync(path: string, encoding: "utf8"): string } };
+};
+
+export type std$fs$ReadError =
+  | { readonly tag: "NotFound" }
+  | { readonly tag: "PermissionDenied" }
+  | { readonly tag: "IsADirectory" }
+  | { readonly tag: "Other"; readonly value: string };
+
+export function std$fs$read_text(path: string): Result<string, std$fs$ReadError> {
+  const host = globalThis as Host;
+  try {
+    if (host.Deno) return Ok(host.Deno.readTextFileSync(path));
+    if (host.process) return Ok(host.process.getBuiltinModule("node:fs").readFileSync(path, "utf8"));
+    return trap("effect", "std.fs.read_text", path, "This runtime has no file system.");
+  } catch (e) {
+    if (e instanceof Trap) throw e;
+    const err = e as { name?: string; code?: string; message?: string };
+    // A read the host refused because the program lacks the permission:
+    // the program does more than its `main` declares (2.5).
+    if (err.name === "NotCapable") {
+      return trap("effect", "std.fs.read_text", path, "Reading files needs the effect `fs.read` on `main`.");
+    }
+    switch (err.code) {
+      case "ENOENT":
+        return Err<std$fs$ReadError>({ tag: "NotFound" });
+      case "EACCES":
+      case "EPERM":
+        return Err<std$fs$ReadError>({ tag: "PermissionDenied" });
+      case "EISDIR":
+        return Err<std$fs$ReadError>({ tag: "IsADirectory" });
+    }
+    return Err<std$fs$ReadError>({ tag: "Other", value: String(err.message ?? e) });
+  }
+}
+
 export function std$int$parse(text: string): Option<number> {
   if (!/^-?[0-9]+$/.test(text)) return None;
   const n = Number(text);

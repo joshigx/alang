@@ -4,7 +4,7 @@
 import { assert_, assertEquals, assertThrows } from "./assert.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import { Trap } from "../src/runtime.ts";
-import { build, type Built, compile, testExamples } from "../src/toolchain.ts";
+import { build, type Built, compile, permissionsFor, run, testExamples } from "../src/toolchain.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
 
@@ -288,6 +288,42 @@ fn net.port.value_of
 end fn net.port.value_of
 `;
 
+// The spec's effect example (config.load_port) as a whole program, with the
+// error type the spec leaves out.
+const APP = specBlock("fn config.load_port") + "\n\n" + specBlock("type net.port.Port") + `
+
+type config.LoadError
+  doc: "Why the configuration could not be loaded."
+  variant:
+    FileUnreadable: std.fs.ReadError
+    InvalidPort: net.port.ParseError
+  where: none
+end type config.LoadError
+
+fn app.main
+  doc: "Prints the port configured in port.txt."
+  in: none
+  out: Unit
+  effects: fs.read, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let text: String = match config.load_port(path: "port.txt")
+      case Ok(port) then
+        std.string.concat(left: "port ", right: std.text.show(value: port.value))
+      case Err(config.FileUnreadable(std.fs.NotFound)) then
+        "no port.txt"
+      case Err(config.FileUnreadable(reason)) then
+        "port.txt is unreadable"
+      case Err(config.InvalidPort(reason)) then
+        "port.txt holds no valid port"
+    end match
+    std.console.print_line(text: text)
+    return Unit
+end fn app.main
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
@@ -295,6 +331,7 @@ const PROGRAMS: Record<string, string> = {
   blocks: BLOCKS,
   calc: CALC,
   port_plus: PORT_PLUS,
+  app: APP,
 };
 
 const built: Record<string, Built> = {};
@@ -393,8 +430,55 @@ Deno.test("emit: output runs on Node.js without Deno", async () => {
     .catch(() => null);
   if (!node?.success) return; // Node.js not installed.
   const script = `const m = await import(${JSON.stringify(`file://${built.port.outPath}`)});` +
-    `process.exit(m.$examples.every((e) => e.run()) ? 0 : 1);`;
+    `const fs = await import(${JSON.stringify(`file://${built.app.outPath}`)});` +
+    `const r = fs.config$load_port(${JSON.stringify(new URL("../deno.json", import.meta.url).pathname)});` +
+    // deno.json is not a port number: the file was read, then rejected.
+    `const read = r.tag === "Err" && r.value.tag === "InvalidPort";` +
+    `const missing = fs.config$load_port("/does/not/exist").value.value.tag === "NotFound";` +
+    `process.exit(m.$examples.every((e) => e.run()) && read && missing ? 0 : 1);`;
   const result = await new Deno.Command("node", { args: ["--input-type=module", "-e", script], stderr: "piped" })
     .output();
   assert_(result.success, new TextDecoder().decode(result.stderr));
+});
+
+// ---- effects at runtime ----
+
+Deno.test("run: effects map to Deno permissions", () => {
+  assertEquals(permissionsFor([]), []);
+  assertEquals(permissionsFor(["console", "log", "time", "random"]), []);
+  assertEquals(permissionsFor(["fs.read", "console"]), ["--allow-read"]);
+  assertEquals(permissionsFor(["fs.read", "fs.write", "net", "env"]), [
+    "--allow-read",
+    "--allow-write",
+    "--allow-net",
+    "--allow-env",
+  ]);
+});
+
+const text = (b: Uint8Array) => new TextDecoder().decode(b).trim();
+
+Deno.test("run: main runs with exactly the permissions of its effects", async () => {
+  const dir = await Deno.makeTempDir({ dir: OUT });
+  await Deno.writeTextFile(`${dir}/port.txt`, "8080\n");
+  const ok = await run(built.app, { stdio: "piped", cwd: dir });
+  assertEquals([ok.code, text(ok.stdout)], [0, "port 8080"], text(ok.stderr));
+
+  await Deno.writeTextFile(`${dir}/port.txt`, "99999");
+  assertEquals(text((await run(built.app, { stdio: "piped", cwd: dir })).stdout), "port.txt holds no valid port");
+  await Deno.remove(`${dir}/port.txt`);
+  assertEquals(text((await run(built.app, { stdio: "piped", cwd: dir })).stdout), "no port.txt");
+
+  const hello = await run(built.hello, { stdio: "piped" });
+  assertEquals([hello.code, text(hello.stdout)], [0, "Hello, world"]);
+});
+
+Deno.test("run: reading without the fs.read permission traps", async () => {
+  const dir = await Deno.makeTempDir({ dir: OUT });
+  await Deno.writeTextFile(`${dir}/port.txt`, "8080");
+  // As if main had declared only `console`: the read is refused by Deno and
+  // the program ends with a trap instead of treating it as a missing file.
+  const denied = await run(built.app, { stdio: "piped", cwd: dir, effects: ["console"] });
+  assertEquals(denied.code, 70);
+  assertEquals(JSON.parse(text(denied.stderr)).trap, "effect");
+  assertEquals(text(denied.stdout), "");
 });

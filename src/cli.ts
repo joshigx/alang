@@ -5,7 +5,8 @@
 //   alang ts <file>              print the generated TypeScript
 //   alang build <file> [-o out]  write the generated TypeScript (default out/<name>.ts)
 //   alang test <file>            build and run all examples
-//   alang run <file>             build, then run the program's main
+//   alang run <file>             build, then run main with exactly the Deno
+//                                permissions of its effects
 
 import { AlangError } from "./diagnostic.ts";
 import { checkProgram } from "./check.ts";
@@ -56,8 +57,7 @@ async function main(args: string[]): Promise<number> {
       return failed === 0 ? 0 : 1;
     }
     case "run":
-      await run(await build(source, outPath));
-      return 0;
+      return (await run(await build(source, outPath))).code;
     default:
       console.error(USAGE);
       return 2;

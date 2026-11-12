@@ -1,15 +1,17 @@
-// Type checker. Types flow forward only (rule 1.4): the type of an
+// Type and effect checker. Types flow forward only (rule 1.4): the type of an
 // expression follows from the expected type and the text to its left.
+// Effects (2.1) are checked per call: a caller declares the effects of every
+// function it calls; lambdas, function values and conditions are pure.
 //
 // The checker does not change the syntax tree. What later stages need
 // (expression types, how names resolved) goes into side tables keyed by
 // tree node, so the tree stays pure for equality and hashing (6.1).
 
 import type { Arg, Definition, Expr, FnDef, Literal, Path, Pattern, Stmt, TypeDef, TypeRef } from "./ast.ts";
-import { moduleOf, pathText } from "./ast.ts";
+import { type Effect, EFFECTS, moduleOf, pathText } from "./ast.ts";
 import { type Diagnostic, diagnostic, type Fix } from "./diagnostic.ts";
 import { printExpr, printStmts, printTypeRef } from "./printer.ts";
-import { type Signature, STD } from "./std.ts";
+import { type Signature, STD, STD_TYPES } from "./std.ts";
 import {
   BOOL,
   BUILTIN_TYPES,
@@ -82,6 +84,7 @@ interface FnSig {
   readonly typeParams: readonly string[];
   readonly params: readonly Param[];
   readonly out: Type;
+  readonly effects: readonly Effect[];
 }
 
 type UserType =
@@ -120,7 +123,7 @@ export function checkProgram(defs: readonly Definition[], options: CheckOptions 
   const env = new Env();
   for (const s of options.std ?? STD) env.fns.set(s.name, s);
 
-  const all = [...(options.declarations ?? []), ...defs];
+  const all = [...STD_TYPES, ...(options.declarations ?? []), ...defs];
   const checkers = new Map<Definition, DefChecker>();
   const seen = new Set<string>();
 
@@ -201,6 +204,10 @@ class DefChecker {
   // Result type for `return`, null outside a body.
   private out: Type | null = null;
   private inLambda = false;
+  // Effects the body triggers but the signature does not declare, with the
+  // first call that triggers them (one diagnostic per definition).
+  private missingEffects = new Set<Effect>();
+  private firstMissing: { at: string; callee: string } | null = null;
 
   constructor(
     private readonly def: Definition,
@@ -213,6 +220,14 @@ class DefChecker {
   }
 
   report(code: string, at: string, message: string, extra: { expected?: string; fix?: Fix } = {}): void {
+    // An unknown name used several times is one cause (5.6).
+    const unknownName = code === "E0201" || code === "E0202" || code === "E0203";
+    if (
+      unknownName &&
+      this.diagnostics.some((d) => d.definition === this.name && d.code === code && d.message === message)
+    ) {
+      return;
+    }
     this.diagnostics.push(diagnostic({
       code,
       definition: this.name,
@@ -254,7 +269,7 @@ class DefChecker {
       this.section = "out";
       const out = this.resolveType(def.out);
       this.section = null;
-      this.env.fns.set(this.name, { name: this.name, typeParams: [], params, out });
+      this.env.fns.set(this.name, { name: this.name, typeParams: [], params, out, effects: def.effects });
       return;
     }
     const t = this.env.types.get(this.name);
@@ -382,6 +397,21 @@ class DefChecker {
     const last = def.body[def.body.length - 1];
     if (last.kind !== "return") {
       this.report("E0218", firstLine(printStmts([last], "")), "A function ends with an explicit `return` (3.4).");
+    }
+    if (this.firstMissing) {
+      const missing = EFFECTS.filter((e) => this.missingEffects.has(e));
+      const line = (effects: readonly string[]) => `effects: ${effects.length === 0 ? "none" : effects.join(", ")}`;
+      const fixed = EFFECTS.filter((e) => def.effects.includes(e) || this.missingEffects.has(e));
+      this.report(
+        "E0230",
+        this.firstMissing.at,
+        `\`${this.written(this.name)}\` triggers ${
+          missing.map((e) => `\`${e}\``).join(", ")
+        } (first through \`${this.firstMissing.callee}\`) but does not declare ${
+          missing.length === 1 ? "it" : "them"
+        }; a caller declares the effects of everything it calls (2.1).`,
+        { expected: line(fixed), fix: { replace: line(def.effects), with: line(fixed) } },
+      );
     }
     this.out = null;
     this.section = null;
@@ -609,6 +639,15 @@ class DefChecker {
         );
         return ERROR;
       }
+      if (fn.effects.length > 0) {
+        this.report(
+          "E0232",
+          pathText(e.path),
+          `\`${pathText(e.path)}\` has effects (${
+            fn.effects.join(", ")
+          }); a function passed as a value is pure, like a lambda (2.4). Apply effects per element with \`for\`.`,
+        );
+      }
       this.info.names.set(e, { kind: "fn", name: full });
       return fnType(fn.params.map((p) => p.type), fn.out);
     }
@@ -734,6 +773,7 @@ class DefChecker {
       return ERROR;
     }
     this.info.calls.set(e, full);
+    this.effectsOfCall(sig, pathText(e.path), at);
 
     // Type arguments are written exactly when a type parameter does not
     // occur in any parameter type, i.e. when the arguments cannot determine
@@ -797,6 +837,33 @@ class DefChecker {
     }
     const out = substitute(sig.out, subst);
     return freeVars(out).size === 0 ? out : ERROR;
+  }
+
+  private effectsOfCall(sig: FnSig, written: string, at: string): void {
+    if (sig.effects.length === 0) return;
+    const list = sig.effects.join(", ");
+    if (this.inLambda) {
+      this.report(
+        "E0232",
+        at,
+        `\`${written}\` has effects (${list}); lambdas are pure (2.4). Apply effects per element with \`for\`.`,
+      );
+      return;
+    }
+    if (this.section !== "body") {
+      this.report(
+        "E0233",
+        at,
+        `\`${written}\` has effects (${list}); \`requires\`, \`ensures\`, \`where\` and examples call only functions with \`effects: none\` (5.4).`,
+      );
+      return;
+    }
+    const declared = this.def.kind === "fn" ? this.def.effects : [];
+    for (const effect of sig.effects) {
+      if (declared.includes(effect)) continue;
+      this.missingEffects.add(effect);
+      this.firstMissing ??= { at, callee: written };
+    }
   }
 
   // For an explicit-type-argument call, the type arguments implied by the

@@ -135,6 +135,10 @@ Deno.test("definitions: section order, end names and effects", () => {
   assertEquals(printProgram(parseProgram(fn({ effects: "fs.read, net" }))), fn({ effects: "fs.read, net" }) + "\n");
   assertEquals(code(() => parseProgram(fn({ end: "m.g" }))), "E0103");
   assertEquals(code(() => parseProgram(fn({ effects: "disk" }))), "E0104");
+  assertEquals(code(() => parseProgram(fn({ effects: "net, fs.read" }))), "E0111");
+  assertEquals(code(() => parseProgram(fn({ effects: "console, console" }))), "E0111");
+  const d = assertThrows(() => parseProgram(fn({ effects: "console, fs.read" })), AlangError).diagnostic;
+  assertEquals(d.fix, { replace: "effects: console, fs.read", with: "effects: fs.read, console" });
   assertEquals(code(() => parseProgram(fn({}).replace("  in: none\n  out: Unit", "  out: Unit\n  in: none"))), "E0101");
   assertEquals(code(() => parseProgram(fn({}).replace("fn m.f", "fn f").replace("end fn m.f", "end fn f"))), "E0101");
 });
