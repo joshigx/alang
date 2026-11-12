@@ -162,6 +162,11 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   file, so a `main` that uses several modules cannot be run from the database at all. Options: `alang db run`
   (assemble the program from the database, run `main` with the permissions of its effects), and later an MCP `run`
   tool, which would be the first tool with real effects.
+- **Playground, task "remove with a caller".** The model checked first, then asked the user what should happen to
+  `parse_or_default` (inline or remove too) instead of deciding; both went in one transaction. Afterwards it noticed
+  `PortError` was unused and asked again rather than tidying up. Then the export file was restored from Git (as a
+  pull would): the next query's sync imported both definitions with their old hashes (texts byte-identical, so the
+  stored versions are reused) and history operation `import`. Undo through Git works without any tool support.
 - **The model reports hashes to the user.** Both answers ended with "Its new hash is ...". Harmless, but the hash is
   for the model's next call, not for the user; the instructions could say so if it gets noisy.
 - **E0513's message names commands** (`alang db import`, `export --force`) that the server's instructions tell the
