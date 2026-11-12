@@ -121,6 +121,44 @@ Deno.test("rename: a variant type that changes module takes its cases along", as
   await done(cb);
 });
 
+Deno.test("rename: a caller whose text does not change is not rewritten", async () => {
+  // n.is_red uses only a case of m.Color, which keeps its name when the type is
+  // renamed within its module.
+  const cb = await fresh();
+  const color = `type m.Color
+  doc: "A color."
+  variant:
+    Red
+    Green
+  where: none
+end type m.Color`;
+  const nameOf = fn("m.name_of", {
+    params: ["c: Color"],
+    out: "String",
+    examples: ['name_of(c: Red) == "red"'],
+    body:
+      'let text: String = match c\n  case Red then\n    "red"\n  case Green then\n    "green"\nend match\nreturn text',
+  });
+  const isRed = fn("n.is_red", {
+    out: "Bool",
+    examples: ["is_red() == true"],
+    body: 'return m.name_of(c: m.Red) == "red"',
+  });
+  await ok(cb, [add(color), add(nameOf), add(isRed)]);
+  const hash = hashOf(cb, "n.is_red");
+  assertEquals(cb.callers("m.Color").callers, ["m.name_of", "n.is_red"]);
+  const r = await ok(cb, [rename(cb, "m.Color", "m.Colour")]);
+  assertEquals(r.written.map((w) => [w.name, w.operation]), [
+    ["m.Color", "rename"],
+    ["m.Colour", "rename"],
+    ["m.name_of", "follow"],
+  ]);
+  assertEquals(hashOf(cb, "n.is_red"), hash);
+  assertEquals(cb.history("n.is_red").entries.map((e) => e.operation), ["add"]);
+  assertEquals(cb.callers("m.Colour").callers, ["m.name_of", "n.is_red"]);
+  await done(cb);
+});
+
 // geo: every kind of reference a rename has to rewrite.
 const GEO = [
   `type geo.Point

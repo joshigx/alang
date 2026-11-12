@@ -3,10 +3,14 @@
 
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { type Change, Codebase, type SubmitResult } from "../src/codebase.ts";
+import { assertEquals } from "./assert.ts";
+import type { Definition } from "../src/ast.ts";
+import { checkProgram } from "../src/check.ts";
+import { type Change, Codebase, hashText, type SubmitResult } from "../src/codebase.ts";
 import type { Diagnostic } from "../src/diagnostic.ts";
 import { parseProgram } from "../src/parser.ts";
-import { printDefinition } from "../src/printer.ts";
+import { printDefinition, printSignature } from "../src/printer.ts";
+import { dependencies } from "../src/refs.ts";
 
 const spec = await Deno.readTextFile(new URL("../alang-specs.md", import.meta.url));
 const specBlock = (firstLine: string): string => {
@@ -54,7 +58,9 @@ export async function fresh(): Promise<Codebase> {
   return await Codebase.open(await Deno.makeTempDir({ prefix: "alang-db-" }), { clock: CLOCK });
 }
 
+// Closes a test codebase after checking what it stored (see `invariants`).
 export async function done(cb: Codebase): Promise<void> {
+  invariants(cb);
   cb.close();
   await Deno.remove(cb.dir, { recursive: true });
 }
@@ -100,3 +106,33 @@ export async function withPort(): Promise<Codebase> {
 
 // The body of net.port.parse with its condition reordered: same behaviour.
 export const PARSE_REORDERED = PARSE.replace("if n < 1 or n > 65_535 then", "if n > 65_535 or n < 1 then");
+
+// What every database must satisfy, whatever happened to it:
+// - every stored version is canonical text, and its hash, kind and
+//   signature follow from that text;
+// - the current program checks, and each current version's `refs` rows are
+//   its dependencies in that program, in order of first use.
+export function invariants(cb: Codebase): void {
+  const t = dump(cb) as {
+    definitions: { hash: string; kind: string; text: string; signature: string }[];
+    names: { name: string; hash: string }[];
+    refs: { from_hash: string; to_name: string }[];
+  };
+  const byHash = new Map<string, Definition>();
+  for (const row of t.definitions) {
+    const defs = parseProgram(row.text);
+    assertEquals(defs.length, 1, row.text);
+    assertEquals(printDefinition(defs[0]), row.text);
+    assertEquals(hashText(row.text), row.hash);
+    assertEquals(defs[0].kind, row.kind);
+    assertEquals(printSignature(defs[0]), row.signature);
+    byHash.set(row.hash, defs[0]);
+  }
+  const current = t.names.map((n) => byHash.get(n.hash)!);
+  const { diagnostics, info } = checkProgram(current);
+  assertEquals(diagnostics, []);
+  for (const n of t.names) {
+    const stored = t.refs.filter((r) => r.from_hash === n.hash).map((r) => r.to_name);
+    assertEquals(stored, dependencies(byHash.get(n.hash)!, info), `refs of ${n.name}`);
+  }
+}

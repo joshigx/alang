@@ -218,7 +218,8 @@ Deno.test("queries: history lists every version, removals included", async () =>
 Deno.test("queries: an empty codebase", async () => {
   const cb = await fresh();
   assertEquals(cb.searchText("x").every((h) => h.hash === null), true);
-  throwsCode(() => cb.list(""), "E0502");
+  assertEquals(cb.list(""), { module: "", definitions: [], submodules: [] });
+  throwsCode(() => cb.list("m"), "E0502");
   assertEquals((await fails(cb, [{ op: "remove", name: "m.a", hash: "0".repeat(16) }])).diagnostics[0].code, "E0502");
   await done(cb);
 });

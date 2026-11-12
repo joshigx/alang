@@ -202,6 +202,9 @@ export interface OpenOptions {
 
 const RETRIES = 3;
 
+// Codebases opened by this process, for unique acceptance files.
+let opened = 0;
+
 function operationText(change: Change, name: string | null): string {
   switch (change.op) {
     case "add":
@@ -232,7 +235,9 @@ export class Codebase {
     readonly dir: string,
     private readonly db: DatabaseSync,
     private readonly clock: () => Date,
-  ) {}
+  ) {
+    this.acceptPath = join(dir, "out", `accept-${Deno.pid}-${++opened}.ts`);
+  }
 
   // Opens (or creates) the codebase in `dir`: `dir/alang.db`, the export in
   // `dir/export/`, generated TypeScript in `dir/out/`.
@@ -246,11 +251,17 @@ export class Codebase {
 
   close(): void {
     this.db.close();
+    try {
+      Deno.removeSync(this.acceptPath);
+    } catch (e) {
+      if (!(e instanceof Deno.errors.NotFound)) throw e;
+    }
   }
 
-  private get acceptPath(): string {
-    return join(this.dir, "out", "accept.ts");
-  }
+  // Acceptance writes the program here and runs its examples from it. One
+  // file per open codebase, so that two processes (or two instances) on one
+  // directory never run each other's program.
+  private readonly acceptPath: string;
 
   // ---- reading ----
 
@@ -371,7 +382,8 @@ export class Codebase {
   }
 
   // The definitions of `module` itself (name, hash, kind, doc) and the names
-  // of its direct submodules. `list("")` gives the top-level modules.
+  // of its direct submodules. `list("")` gives the top-level modules, and
+  // works on an empty codebase too; any other unknown module is E0502.
   list(module: string): { module: string; definitions: Hit[]; submodules: string[] } {
     const prefix = module === "" ? "" : `${module}.`;
     const definitions: Hit[] = [];
@@ -381,7 +393,7 @@ export class Codebase {
       if (rest.includes(".")) submodules.add(prefix + rest.slice(0, rest.indexOf(".")));
       else definitions.push({ name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc });
     }
-    if (definitions.length === 0 && submodules.size === 0) {
+    if (definitions.length === 0 && submodules.size === 0 && module !== "") {
       const modules = new Set(
         this.rowsUnder("").flatMap((r) => {
           const segments = r.name.split(".");

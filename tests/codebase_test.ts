@@ -4,6 +4,7 @@
 import { assert_, assertEquals } from "./assert.ts";
 import {
   add,
+  CLOCK,
   codes,
   done,
   dump,
@@ -11,14 +12,18 @@ import {
   fn,
   fresh,
   hashOf,
+  LOAD_ERROR,
   LOAD_PORT,
   ok,
   PARSE,
   PARSE_ERROR,
   PARSE_REORDERED,
+  PORT,
   withPort,
 } from "./db_helpers.ts";
-import { hashText } from "../src/codebase.ts";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { Codebase, hashText } from "../src/codebase.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printDefinition, printSignature } from "../src/printer.ts";
@@ -129,6 +134,43 @@ Deno.test("codebase: doc, examples and full spelling of a type are not interface
   await ok(cb, [{ op: "replace", name: "net.port.parse", hash: hashOf(cb, "net.port.parse"), text: parse }]);
   const error = PARSE_ERROR.replace("Reasons why", "Why");
   await ok(cb, [{ op: "replace", name: "net.port.ParseError", hash: hashOf(cb, "net.port.ParseError"), text: error }]);
+  await done(cb);
+});
+
+Deno.test("codebase: a changed contract is an interface change", async () => {
+  // m.c has effects, so it has no examples (5.4): only the rule protects it
+  // from a tightened `requires`, which would trap at runtime.
+  const cb = await fresh();
+  const b = fn("m.b", { params: ["n: Int"], out: "Int", examples: ["b(n: 1) == 1"], body: "return n" });
+  const c = fn("m.c", {
+    out: "Unit",
+    effects: "console",
+    body: 'let x: Int = b(n: -1)\nstd.console.print_line(text: "c")\nreturn Unit',
+  });
+  await ok(cb, [add(b), add(c)]);
+  const tightened = b.replace("  requires: none", "  requires: n >= 0");
+  const r = await fails(cb, [{ op: "replace", name: "m.b", hash: hashOf(cb, "m.b"), text: tightened }]);
+  assertEquals(codes(r.diagnostics), ["E0506"]);
+  assert_(r.diagnostics[0].message.includes("`requires`") && r.diagnostics[0].message.includes("`m.c`"));
+  const ensures = b.replace("  ensures: none", "  ensures: result == n");
+  assertEquals(
+    codes((await fails(cb, [{ op: "replace", name: "m.b", hash: hashOf(cb, "m.b"), text: ensures }])).diagnostics),
+    [
+      "E0506",
+    ],
+  );
+  // A type's `where` counts too.
+  await ok(cb, [add(PORT), add(PARSE_ERROR), add(PARSE)]);
+  const wider = PORT.replace("where: 1 <= value and value <= 65_535", "where: 0 <= value and value <= 65_535");
+  const w = await fails(cb, [{ op: "replace", name: "net.port.Port", hash: hashOf(cb, "net.port.Port"), text: wider }]);
+  assertEquals(codes(w.diagnostics), ["E0506"]);
+  assert_(w.diagnostics[0].message.includes("`where`"), w.diagnostics[0].message);
+  // Submitting the callers unchanged in the same transaction is the way through (6.4).
+  const through = await ok(cb, [
+    { op: "replace", name: "m.b", hash: hashOf(cb, "m.b"), text: tightened },
+    { op: "replace", name: "m.c", hash: hashOf(cb, "m.c"), text: c },
+  ]);
+  assertEquals(through.unchanged, ["m.c"]);
   await done(cb);
 });
 
@@ -359,6 +401,58 @@ Deno.test("codebase: queries on unknown names throw E0502", async () => {
     assertEquals(e.diagnostic.code, "E0502");
     assertEquals(e.diagnostic.fix, { replace: "net.port.Prt", with: "net.port.Port" });
   }
+  await done(cb);
+});
+
+Deno.test("codebase: a write by another connection during acceptance restarts the submit", async () => {
+  // The clock is read once per attempt, after acceptance and before the
+  // write; `during` runs there once, as another process would.
+  let during: (() => void) | null = null;
+  let attempts = 0;
+  const clock = () => {
+    attempts++;
+    const f = during;
+    during = null;
+    f?.();
+    return CLOCK();
+  };
+  const dir = await Deno.makeTempDir({ prefix: "alang-db-" });
+  const cb = await Codebase.open(dir, { clock });
+  await ok(cb, [PORT, PARSE_ERROR, PARSE, LOAD_PORT, LOAD_ERROR].map(add));
+  const other = () => new DatabaseSync(join(dir, "alang.db"));
+
+  // Another process adds an unrelated definition: the submit starts over and
+  // succeeds on top of it.
+  const one = printDefinition(parseProgram(fn("m.one", { out: "Int", examples: ["one() == 1"], body: "return 1" }))[0]);
+  during = () => {
+    const db = other();
+    db.prepare("INSERT INTO definitions (hash, kind, text, signature) VALUES (?, 'fn', ?, ?)")
+      .run(hashText(one), one, printSignature(parseProgram(one)[0]));
+    db.prepare("INSERT INTO refs (from_hash, to_name) VALUES (?, 'm.one')").run(hashText(one));
+    db.prepare("INSERT INTO names (name, hash) VALUES ('m.one', ?)").run(hashText(one));
+    db.close();
+  };
+  attempts = 0;
+  await ok(cb, [{ op: "replace", name: "net.port.parse", hash: hashOf(cb, "net.port.parse"), text: PARSE_REORDERED }]);
+  assertEquals(attempts, 2);
+  assertEquals(cb.definition("m.one").text, one);
+  assertEquals(cb.definition("net.port.parse").text, PARSE_REORDERED);
+
+  // Another process replaces the very definition: the restart reports the stale guard.
+  const h = hashOf(cb, "net.port.parse");
+  during = () => {
+    const db = other();
+    db.prepare("UPDATE names SET hash = ? WHERE name = 'net.port.parse'").run(hashText(PARSE));
+    db.close();
+  };
+  const r = await fails(cb, [{
+    op: "replace",
+    name: "net.port.parse",
+    hash: h,
+    text: PARSE.replace("Reads", "Parses"),
+  }]);
+  assertEquals(codes(r.diagnostics), ["E0501"]);
+  assertEquals(r.current.map((v) => v.hash), [hashText(PARSE)]);
   await done(cb);
 });
 

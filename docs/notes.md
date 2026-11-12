@@ -27,7 +27,7 @@ is the user's call.
 **Next:** the MCP server around the queries and operations of `Codebase` (its own phase, see CLAUDE.md). `extern fn`
 and `const` are still unparsed and need their form decided.
 
-**Checks before every commit:** `deno task test` (133 tests), `deno lint`, `deno fmt --check`.
+**Checks before every commit:** `deno task test` (136 tests), `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
 
@@ -66,6 +66,10 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   - Case names are unique per module, so moving a variant type renames its cases.
   - Over-declared effects are allowed, which is why removing an effect is compatible.
   - Examples call their own function, so `rename` rewrites them.
+- **A stale database beside a newer export loses work.** After a pull or checkout without `import`, the next submit
+  rewrites the files of the modules it touches from the database and drops what Git brought. Options: import
+  automatically when the export is newer, or refuse to submit while the export differs from the database (compare
+  the files with what the database would write).
 - **Diagnostic codes E0501 to E0512** are in use: stale hash, unknown name, name exists, not one definition, name
   differs, interface change, remove with callers, name touched twice, invalid new name, rename capture, malformed
   type pattern, definition in the wrong export file.
