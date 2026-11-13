@@ -1179,6 +1179,67 @@ export function std$string$to_lower(text: string): string {
   return text.toLowerCase();
 }
 
+// A result too long for the host ends with the host's RangeError, not a
+// trap, as `std.list.range` running out of memory does.
+export function std$string$repeat(text: string, count: number): string {
+  countAtLeastZero("std.string.repeat", count);
+  return text.repeat(count);
+}
+
+const FILL_CONDITION = "std.string.length(text: fill) == 1";
+
+// The fill is checked first, so a bad one traps even where nothing would be
+// added (P1); a width at or below the length leaves the text as it is.
+function pad(name: string, text: string, width: number, fill: string, before: boolean): string {
+  if (std$string$length(fill) !== 1) {
+    trap("requires", name, FILL_CONDITION, `Precondition of ${name} violated: ${FILL_CONDITION}`);
+  }
+  const length = std$string$length(text);
+  if (length >= width) return text;
+  const padding = fill.repeat(width - length);
+  return before ? padding + text : text + padding;
+}
+
+export function std$string$pad_left(text: string, width: number, fill: string): string {
+  return pad("std.string.pad_left", text, width, fill, true);
+}
+
+export function std$string$pad_right(text: string, width: number, fill: string): string {
+  return pad("std.string.pad_right", text, width, fill, false);
+}
+
+export function std$string$trim_characters(text: string, characters: string): string {
+  const strip = new Set(Array.from(characters));
+  const scalars = Array.from(text);
+  let start = 0;
+  let end = scalars.length;
+  while (start < end && strip.has(scalars[start])) start++;
+  while (end > start && strip.has(scalars[end - 1])) end--;
+  return scalars.slice(start, end).join("");
+}
+
+export function std$string$code_points(text: string): readonly number[] {
+  return Array.from(text, (c) => c.codePointAt(0)!);
+}
+
+// Every number is checked before any text is built. The text is built in
+// chunks, since one spread of a long list overflows the host's stack.
+export function std$string$from_code_points(code_points: readonly number[]): string {
+  for (const n of code_points) {
+    if (n < 0 || n > 1_114_111 || (n >= 55_296 && n <= 57_343)) {
+      trap(
+        "requires",
+        "std.string.from_code_points",
+        String(n),
+        `Precondition of std.string.from_code_points violated: ${n} is not a Unicode scalar value.`,
+      );
+    }
+  }
+  let text = "";
+  for (let i = 0; i < code_points.length; i += 4096) text += String.fromCodePoint(...code_points.slice(i, i + 4096));
+  return text;
+}
+
 export function std$list$empty<T>(): readonly T[] {
   return [];
 }

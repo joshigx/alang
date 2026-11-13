@@ -595,6 +595,12 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | `std.string.replace(text: String, part: String, with: String): String` | none | The text with every occurrence of the part replaced, found from left to right without overlap. An empty part traps. |
 | `std.string.to_upper(text: String): String` | none | The text in upper case by Unicode's rules, the same on every system. |
 | `std.string.to_lower(text: String): String` | none | The text in lower case by Unicode's rules, the same on every system. |
+| `std.string.repeat(text: String, count: Int): String` | none | The text `count` times in a row; `""` for 0. A negative count traps. |
+| `std.string.pad_left(text: String, width: Int, fill: String): String` | none | The text with `fill` added before it until it is `width` Unicode scalar values long, to align text in columns; unchanged if it is that long already. A `fill` that is not exactly one Unicode scalar value traps. |
+| `std.string.pad_right(text: String, width: Int, fill: String): String` | none | The text with `fill` added after it until it is `width` Unicode scalar values long, to align text in columns; unchanged if it is that long already. A `fill` that is not exactly one Unicode scalar value traps. |
+| `std.string.trim_characters(text: String, characters: String): String` | none | Strips every character that occurs in `characters` from both ends of the text, such as quotes or punctuation; `std.string.trim` strips whitespace. |
+| `std.string.code_points(text: String): List<Int>` | none | The character codes (code points) of the text: every Unicode scalar value as its number, such as 97 for `a`. |
+| `std.string.from_code_points(code_points: List<Int>): String` | none | The text with the given character codes (code points). A number that is not a Unicode scalar value (below 0, above 1_114_111, or from 55_296 to 57_343) traps. |
 | `std.list.empty<T>(): List<T>` | none | The empty list. A list with items is written as a literal, such as `[1, 2, 3]`. |
 | `std.list.append<T>(list: List<T>, item: T): List<T>` | none | The list with the item added at the end; copies the list, so appending item by item in a loop is quadratic. |
 | `std.list.length<T>(list: List<T>): Int` | none | Number of items. |

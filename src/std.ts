@@ -384,6 +384,48 @@ export const STD: readonly Signature[] = [
     [["text", STRING]],
     STRING,
   ),
+  sig(
+    "std.string.repeat",
+    'The text `count` times in a row; `""` for 0. A negative count traps.',
+    [],
+    [["text", STRING], ["count", INT]],
+    STRING,
+  ),
+  sig(
+    "std.string.pad_left",
+    "The text with `fill` added before it until it is `width` Unicode scalar values long, to align text in columns; unchanged if it is that long already. A `fill` that is not exactly one Unicode scalar value traps.",
+    [],
+    [["text", STRING], ["width", INT], ["fill", STRING]],
+    STRING,
+  ),
+  sig(
+    "std.string.pad_right",
+    "The text with `fill` added after it until it is `width` Unicode scalar values long, to align text in columns; unchanged if it is that long already. A `fill` that is not exactly one Unicode scalar value traps.",
+    [],
+    [["text", STRING], ["width", INT], ["fill", STRING]],
+    STRING,
+  ),
+  sig(
+    "std.string.trim_characters",
+    "Strips every character that occurs in `characters` from both ends of the text, such as quotes or punctuation; `std.string.trim` strips whitespace.",
+    [],
+    [["text", STRING], ["characters", STRING]],
+    STRING,
+  ),
+  sig(
+    "std.string.code_points",
+    "The character codes (code points) of the text: every Unicode scalar value as its number, such as 97 for `a`.",
+    [],
+    [["text", STRING]],
+    list(INT),
+  ),
+  sig(
+    "std.string.from_code_points",
+    "The text with the given character codes (code points). A number that is not a Unicode scalar value (below 0, above 1_114_111, or from 55_296 to 57_343) traps.",
+    [],
+    [["code_points", list(INT)]],
+    STRING,
+  ),
 
   sig(
     "std.list.empty",

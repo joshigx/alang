@@ -675,6 +675,35 @@ fn maps.numbers
     let large: Int = std.option.with_default(option: std.list.find(list: all, with: fn(n: Int): Bool => n > 9), default: 0)
     return [all, small, rest, [any, every, large]]
 end fn maps.numbers
+
+fn maps.texts
+  doc: "The word repeated, padded on both sides, stripped of punctuation, and through its code points."
+  in:
+    word: String
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    texts(word: "\\"ab!\\"") == ["\\"ab!\\"\\"ab!\\"", "  \\"ab!\\"", "\\"ab!\\"..", "ab", "\\"ab!\\""]
+  body:
+    let codes: List<Int> = std.string.code_points(text: word)
+    return [std.string.repeat(text: word, count: 2), std.string.pad_left(text: word, width: 7, fill: " "), std.string.pad_right(text: word, width: 7, fill: "."), std.string.trim_characters(text: word, characters: "\\"!"), std.string.from_code_points(code_points: codes)]
+end fn maps.texts
+
+fn maps.codes
+  doc: "The character codes of the text."
+  in:
+    text: String
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    codes(text: "a😀") == [97, 128_512]
+  body:
+    return std.string.code_points(text: text)
+end fn maps.codes
 `;
 
 Deno.test("std: the map functions are accepted from alang, and their calls type-check", async () => {
@@ -682,7 +711,7 @@ Deno.test("std: the map functions are accepted from alang, and their calls type-
   const out = new URL("../out/test/std/maps.ts", import.meta.url).pathname;
   const { built, examples } = await accept(MAPS_PROGRAM, out);
   assertEquals(examples.filter((e) => !e.passed), []);
-  assertEquals(examples.length, 12);
+  assertEquals(examples.length, 14);
   const checked = await new Deno.Command(Deno.execPath(), { args: ["check", built.outPath], stderr: "piped" }).output();
   assert_(checked.success, new TextDecoder().decode(checked.stderr));
 });
@@ -739,4 +768,57 @@ Deno.test("std.option and std.order: with_default, map, then_by", () => {
       assertEquals(rt.std$order$then_by(first, second), first.tag === "Equal" ? second : first);
     }
   }
+});
+
+// ---- text ----
+
+Deno.test("std.string: repeat, pad_left and pad_right", () => {
+  assertEquals([rt.std$string$repeat("ab", 0), rt.std$string$repeat("ab", 3), rt.std$string$repeat("", 5)], [
+    "",
+    "ababab",
+    "",
+  ]);
+  assertEquals(trapOf(() => rt.std$string$repeat("ab", -1)), ["requires", "std.string.repeat", "count >= 0"]);
+  // Widths below, at and above the length; a negative width changes nothing either.
+  assertEquals([1, 2, 5, -3].map((w) => rt.std$string$pad_left("ab", w, " ")), ["ab", "ab", "   ab", "ab"]);
+  assertEquals([1, 2, 5].map((w) => rt.std$string$pad_right("ab", w, ".")), ["ab", "ab", "ab..."]);
+  // Lengths and the fill are in Unicode scalar values.
+  assertEquals(rt.std$string$pad_left("😀", 3, "0"), "00😀");
+  assertEquals(rt.std$string$pad_right("a", 3, "😀"), "a😀😀");
+  // The fill is one scalar value, checked even where nothing is added.
+  const condition = "std.string.length(text: fill) == 1";
+  for (const fill of ["ab", ""]) {
+    assertEquals(trapOf(() => rt.std$string$pad_left("abc", 0, fill)), ["requires", "std.string.pad_left", condition]);
+    assertEquals(trapOf(() => rt.std$string$pad_right("a", 5, fill)), ["requires", "std.string.pad_right", condition]);
+  }
+  const trap = assertThrows(() => rt.std$string$pad_left("a", 2, "ab"), rt.Trap);
+  assertEquals(trap.message, `Precondition of std.string.pad_left violated: ${condition}`);
+});
+
+Deno.test("std.string: trim_characters, code_points and from_code_points", () => {
+  assertEquals(rt.std$string$trim_characters('"hi!"', '"!'), "hi");
+  assertEquals(rt.std$string$trim_characters("..a.b..", "."), "a.b");
+  assertEquals(rt.std$string$trim_characters(" a ", ""), " a ");
+  assertEquals(rt.std$string$trim_characters("!?!", "?!"), "");
+  assertEquals(rt.std$string$trim_characters("😀a😀", "😀"), "a");
+  assertEquals(rt.std$string$code_points("a😀"), [97, 128_512]);
+  assertEquals(rt.std$string$code_points(""), []);
+  assertEquals(rt.std$string$from_code_points([97, 128_512, 0, 1_114_111]), "a😀\u0000\u{10FFFF}");
+  const text = "Grüße, 😀 \u{FFFF}";
+  assertEquals(rt.std$string$from_code_points(rt.std$string$code_points(text)), text);
+  for (const n of [-1, 1_114_112, 55_296, 57_343]) {
+    assertEquals(trapOf(() => rt.std$string$from_code_points([97, n])), [
+      "requires",
+      "std.string.from_code_points",
+      String(n),
+    ]);
+  }
+  const trap = assertThrows(() => rt.std$string$from_code_points([56_000]), rt.Trap);
+  assertEquals(
+    trap.message,
+    "Precondition of std.string.from_code_points violated: 56000 is not a Unicode scalar value.",
+  );
+  // A long list is built in chunks, not with one spread that overflows the stack.
+  const many = Array(200_000).fill(128_512);
+  assertEquals(rt.std$string$length(rt.std$string$from_code_points(many)), 200_000);
 });
