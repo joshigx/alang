@@ -103,7 +103,7 @@ on `std-maps` and fast-forwarded into `main` too. The fixes after its playground
     instructions and the tool descriptions say so and leave `context` for examples, the body and uses. Decision in
     `decisions.md`, MCP server, Hits.
 
-**Next:** the main session reviews `logstat-fixes` and decides on merging it. Then a playground round from an empty
+**Next:** `logstat-fixes` is merged into `main` (2026-11-13). A playground round from an empty
 codebase (the logstat round's was not, see "From the logstat round"), to check that std `context` calls drop from 21
 to near zero now that hits carry signatures, that the card alone teaches `main` and fs errors, and to try `search` and
 `search_type`, which no round has used yet. The logstat round itself (plan of `std-maps`, section 6) is done. Then the
