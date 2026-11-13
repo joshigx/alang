@@ -3,14 +3,13 @@
 Running log of observations, spec gaps and ideas for later. Decisions that close a gap move to
 [decisions.md](decisions.md); this file is for what is not decided or not done yet.
 
-## Current state (2026-11-12)
+## Current state (2026-11-13)
 
 Read this first when picking up the work in a new session. Update it when a phase ends.
 
-**Branches.** Work happens on the local branch `spec`, branched from `async` at `22f6ce9`; `async` was branched from `mcp` at `2837853`; `mcp` was branched from `database` at `f5dde7e`, which
-sits on `examples` (local, phase 4 committed), which sits on `effects` (local), which sits on `type-checker` (pushed
-to `origin/type-checker`). `main` (= `origin/main`) has only the first slice, so do not start from `main`. Nothing is
-merged yet; merging and pushing is the user's call.
+**Branches.** `main` holds everything below (2026-11-13: the user chose to merge; `spec` was fast-forwarded into
+`main`, which contains the whole chain `type-checker`, `effects`, `examples`, `database`, `mcp`, `async`, `spec`). The
+phase branches are kept as they are. Start each new phase on its own branch from `main`; pushing is the user's call.
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -50,9 +49,18 @@ merged yet; merging and pushing is the user's call.
     `src/std.ts`), the server example (accepted in the tests), the codebase tools and the diagnostic ranges. Section
     7 restates decisions from `decisions.md`; when one changes, change both.
 
-**Next:** phase 3 of the HTTP work, an HTTP client (`std.http.fetch` or similar, on fetch), was postponed by the
-user (2026-11-12); async output makes it possible now. Reconnect the playground's MCP server to pick up branch
-`spec`, and watch whether the model reads std through `context` instead of the sources. Earlier: a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
+**Next:** proposed order for the user's six goals (2026-11-13; the merge is done, the rest awaits the user's
+choice): file and program I/O in std (fs write/list/exists/remove, arguments, env, clock, console input), then std
+breadth (text splitting and searching, `int.min`/`max`, Map functions, list helpers, the HTTP client) and the
+language forms libraries need (`extern fn`, `const`, function types, list literals, generic definitions), then the
+spec served by the MCP server (card plus `explain(code)`, generated from the spec), then the plan/build/test agent
+loop (needs an example time limit, a scored task suite, a gate for language decisions), then shipping (JSR package,
+`alang init`, quickstart, CI; std names freeze per 3.8), and self-hosting last. Suggested first step: goal 4 as one
+hand-run round of the loop.
+
+Phase 3 of the HTTP work, an HTTP client (`std.http.fetch` or similar, on fetch), was postponed by the
+user (2026-11-12); async output makes it possible now. Reconnect the playground's MCP server to pick up the merged
+`main`, and watch whether the model reads std through `context` instead of the sources. Earlier: a first round with Claude Code in a playground project (`~/coding_projects/alang-playground`, ten tasks)
 is done; see "From the MCP server". Claude Code connected and used every kind of tool, so the protocol works with a
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
