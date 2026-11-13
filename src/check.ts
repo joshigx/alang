@@ -953,7 +953,8 @@ class DefChecker {
     const s: Subst = new Map();
     if (!unify(sig.out, expected, s)) return null;
     const types = sig.typeParams.map((tp) => s.get(tp));
-    if (types.some((t) => t === undefined || containsError(t))) return null;
+    // A type argument cannot name a function type yet (H5).
+    if (types.some((t) => t === undefined || !writable(t))) return null;
     return types.map((t) => toTypeRef(t!, this.module));
   }
 
@@ -1318,8 +1319,11 @@ class DefChecker {
       case "match":
         return this.match(e, scope, mode);
       case "for": {
-        const it = this.expr(e.iterable, scope, null);
         const declared = this.resolveType(e.type);
+        // The declared type stands to the left of a literal, so the literal
+        // takes it as its item type (1.4, H4); any other iterable is checked
+        // against it below.
+        const it = this.expr(e.iterable, scope, e.iterable.kind === "list" ? list(declared) : null);
         if (isCon(it, "List")) {
           if (!fits(it.args[0], declared)) {
             this.report("E0204", printTypeRef(e.type), `The list holds \`${this.show(it.args[0])}\`.`, {
@@ -1623,7 +1627,7 @@ function badMapKey(t: Type): Type | null {
 
 // Whether `toTypeRef` writes the type: built from named types only, without
 // function types, type variables or the error type.
-function writable(t: Type): boolean {
+export function writable(t: Type): boolean {
   return t.k === "con" && t.args.every(writable);
 }
 

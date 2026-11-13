@@ -71,6 +71,8 @@ from it. The standard library is not on it; find it with the tools.
   left side of \`==\`), so the known side comes first: \`f(x: 1) == None\`, not \`None == f(x: 1)\` (E0210).
 - Lists: \`[a, b, c]\`; the empty list is \`std.list.empty<T>()\`, never \`[]\` (E0228). No \`xs[0]\` and no \`Int[]\`:
   \`std.list.get\` gives an \`Option\`, the type is \`List<Int>\`.
+- Maps: \`["a": 1, "b": 2]\` is a \`Map<String, Int>\`; keys are \`Int\` or \`String\` (E0229), each written once (E0234);
+  the empty map is \`std.map.empty<K, V>()\`, never \`[:]\` (E0228). No \`m["a"]\`: \`std.map.get\` gives an \`Option\`.
 - \`+ - * / %\` take two \`Int\` or two \`Float\`; nothing converts implicitly. \`==\` and \`!=\` work on every type without
   functions, \`< <= > >=\` on \`Int\`, \`Float\` and \`String\`; logic is \`and\`, \`or\`, \`not\`. Mixing \`+ -\` with \`* / %\`, or
   \`and\` with \`or\`, needs parentheses: \`(c * 9 / 5) + 32\`. Only a literal takes a minus (\`-3\`); write \`0 - x\`.
@@ -97,8 +99,7 @@ from it. The standard library is not on it; find it with the tools.
 
 No comments (the \`doc\` describes), \`const\`, \`extern fn\`, imports, \`var\`, assignment, \`null\`, exceptions, \`while\`
 (use recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, generic definitions, function types in your
-own signatures, Map functions (use a \`List\` of records; to count, sort and count runs), waiting, concurrency. Most
-of these get E0006, which names the alang form.
+own signatures, waiting, concurrency. Most of these get E0006, which names the alang form.
 
 ## A complete program
 

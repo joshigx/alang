@@ -7,13 +7,13 @@
 // is deliberately no fix: replacing the expected value with the actual one
 // would write a bug into the example.
 
-import type { Definition, Expr, FnDef, Path } from "./ast.ts";
+import type { Definition, Expr, FnDef, MapEntry, Path } from "./ast.ts";
 import { moduleOf, pathText } from "./ast.ts";
 import type { CheckInfo, TypeShape } from "./check.ts";
-import { toTypeRef } from "./check.ts";
+import { toTypeRef, writable } from "./check.ts";
 import { type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { printExpr, printTypeRef } from "./printer.ts";
-import { type ExampleResult, std$text$show, type TrapInfo } from "./runtime.ts";
+import { type ExampleResult, map_entries, type SortedMap, std$text$show, type TrapInfo } from "./runtime.ts";
 import type { Type } from "./types.ts";
 
 // ---- presence ----
@@ -102,8 +102,9 @@ export function exampleDiagnostics(outcomes: readonly ExampleOutcome[]): Diagnos
 // ---- values as alang text ----
 
 // A runtime value of type `t` as canonical alang text, written as it would
-// be in `module` (rule 1.2). Values without an alang form (maps, for which
-// std has no constructor yet) fall back to std.text.show.
+// be in `module` (rule 1.2). Values without an alang form (function values,
+// and empty lists and maps whose type holds a function type, which a type
+// argument cannot name yet) fall back to std.text.show.
 export function showValue(value: unknown, t: Type, shapes: ReadonlyMap<string, TypeShape>, module: string): string {
   const e = valueExpr(value, t, shapes, module);
   return e ? printExpr(e, "") : std$text$show(value);
@@ -155,9 +156,7 @@ export function valueExpr(
     case "List": {
       // A literal; the empty list has its one spelling with the item type (E0228).
       const values = value as readonly unknown[];
-      if (values.length === 0) {
-        return { kind: "call", path: ["std", "list", "empty"], typeArgs: [toTypeRef(t.args[0], module)], args: [] };
-      }
+      if (values.length === 0) return empty(["std", "list", "empty"], t.args, module);
       const items: Expr[] = [];
       for (const item of values) {
         const v = go(item, t.args[0]);
@@ -166,8 +165,20 @@ export function valueExpr(
       }
       return { kind: "list", items };
     }
-    case "Map":
-      return null;
+    case "Map": {
+      // A literal in key order, so equal maps print alike; the empty map has
+      // its one spelling with its types (E0228).
+      const m = value as SortedMap<unknown, unknown>;
+      if (m.size === 0) return empty(["std", "map", "empty"], t.args, module);
+      const entries: MapEntry[] = [];
+      for (const [k, v] of map_entries(m)) {
+        const key = go(k, t.args[0]);
+        const val = go(v, t.args[1]);
+        if (!key || !val) return null;
+        entries.push({ key, value: val });
+      }
+      return { kind: "map", entries };
+    }
   }
   const shape = shapes.get(t.name);
   if (!shape) return null;
@@ -187,6 +198,13 @@ export function valueExpr(
   if (!c.payload) return construct(path);
   const inner = go(tagged.value, c.payload);
   return inner && construct(path, inner);
+}
+
+// `std.list.empty<T>()` or `std.map.empty<K, V>()`; null if a type
+// argument cannot be written (H5), so that the value falls back to `show`.
+function empty(path: Path, types: readonly Type[], module: string): Expr | null {
+  if (!types.every(writable)) return null;
+  return { kind: "call", path, typeArgs: types.map((a) => toTypeRef(a, module)), args: [] };
 }
 
 // A full name as written in `module`: short inside it, full elsewhere (1.2).

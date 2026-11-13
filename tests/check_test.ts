@@ -600,6 +600,32 @@ Deno.test("check: std.list.contains and std.text.show need a type without functi
   clean(fn('return std.text.show(value: ["a"])', { out: "String" }));
 });
 
+Deno.test("check: a for passes its declared type to a list literal (1.4)", () => {
+  const loop = (iterable: string, declared: string) =>
+    fn(
+      `for x: ${declared} in ${iterable} do\n  std.console.print_line(text: std.text.show(value: x))\nend for\nreturn 0`,
+      {
+        effects: "console",
+      },
+    );
+  clean(loop("[None, Some(1)]", "Option<Int>"));
+  clean(loop("[[1], std.list.empty<Int>()]", "List<Int>"));
+  const float = one(loop("[1]", "Float"), "E0204");
+  assertEquals([float.at, float.fix], ["1", { replace: "1", with: "1.0" }]);
+  const empty = one(loop("[]", "Int"), "E0228");
+  assertEquals(empty.fix, { replace: "[]", with: "std.list.empty<Int>()" });
+  assertEquals(one(loop('["a"]', "Int"), "E0204").at, '"a"');
+});
+
+Deno.test("check: the E0209 guess offers no type argument it cannot write (H5)", () => {
+  // The expected type holds a function type, which a type argument cannot name yet.
+  const d = one(
+    fn("return std.list.length(list: std.list.concat(left: [g], right: std.list.empty()))", { extra: G }),
+    "E0209",
+  );
+  assertEquals([d.expected, d.fix], ["std.list.empty<T>", null]);
+});
+
 // ---- maps ----
 
 const keyMessage = (found: string) =>

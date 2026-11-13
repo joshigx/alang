@@ -8,9 +8,10 @@ import { AlangError, type Diagnostic } from "../src/diagnostic.ts";
 import { showValue } from "../src/examples.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
-import { std$map$empty, std$map$insert } from "../src/runtime.ts";
+import { Some, std$map$empty, std$map$insert } from "../src/runtime.ts";
 import { accept, build, testExamples } from "../src/toolchain.ts";
-import { con, FLOAT, INT, list, option, ORDER, STRING, UNIT } from "../src/types.ts";
+import { con, FLOAT, fnType, INT, list, option, ORDER, STRING, UNIT } from "../src/types.ts";
+import { checkProgram } from "../src/check.ts";
 
 const OUT = new URL("../out/test/accept/", import.meta.url).pathname;
 const spec = await Deno.readTextFile(new URL("../alang-specs.md", import.meta.url));
@@ -250,6 +251,19 @@ end type vals.Pair`,
     examples: ["read_error(n: 1) == Ok(true)"],
     body: 'if n > 0 then\n  return Err(std.fs.Other("disk"))\nend if\nreturn Err(std.fs.NotFound)',
   }),
+  fn("vals.counts", {
+    params: ["words: List<String>"],
+    out: "Map<String, Int>",
+    examples: ['counts(words: ["b", "a", "b"]) == ["b": 1]', 'counts(words: ["c"]) == ["c": 1]'],
+    body: 'if words == ["c"] then\n  return std.map.empty<String, Int>()\nend if\n' +
+      'return std.map.insert(map: ["b": std.list.length(list: words) - 1], key: "a", value: 1)',
+  }),
+  fn("vals.places", {
+    params: ["n: Int"],
+    out: "Map<Int, net.port.Port>",
+    examples: ["places(n: 1) == [1: net.port.Port(value: 1)]"],
+    body: "return [n: net.port.Port(value: 80), 0 - n: net.port.Port(value: 443)]",
+  }),
 ].join("\n\n");
 
 Deno.test("accept: actual values print as alang text written from the example's module", async () => {
@@ -262,7 +276,11 @@ Deno.test("accept: actual values print as alang text written from the example's 
     "vals.order": "Some(Less)",
     "vals.ports": "[Ok(net.port.Port(value: 80)), Err(net.port.OutOfRange(0)), Err(net.port.NotANumber)]",
     "vals.read_error": 'Err(std.fs.Other("disk"))',
+    // In key order, whatever order built the map; the empty map with its types.
+    "vals.counts": "std.map.empty<String, Int>()",
+    "vals.places": "[-1: net.port.Port(value: 443), 1: net.port.Port(value: 80)]",
   });
+  assertEquals(failed.find((o) => o.text.startsWith('counts(words: ["b"'))?.actual, '["a": 1, "b": 2]');
 
   let fixed = VALUES;
   for (const o of failed) fixed = fixed.replace(o.text, `${o.call} == ${o.actual}`);
@@ -284,9 +302,33 @@ Deno.test("accept: values without a failing example print canonically too", () =
   assertEquals(showValue([], list(FLOAT), shapes, "m"), "std.list.empty<Float>()");
   assertEquals(showValue([[1, 2], []], list(list(INT)), shapes, "m"), "[[1, 2], std.list.empty<Int>()]");
   assertEquals(showValue(["a"], list(STRING), shapes, "m"), '["a"]');
-  // Maps have no literal yet; they fall back to std.text.show.
-  const map = std$map$insert(std$map$empty<number, number>(), 1, 2);
-  assertEquals(showValue(map, con("Map", INT, INT), shapes, "m"), "[1: 2]");
+  // Maps print as literals in key order, written from the module.
+  const shapesOf = checkProgram(parseProgram(PORT)).info.shapes;
+  const ports = std$map$insert(std$map$insert(std$map$empty<string, unknown>(), "web", { value: 80 }), "", {
+    value: 1,
+  });
+  const portType = con("Map", STRING, con("net.port.Port"));
+  assertEquals(
+    showValue(ports, portType, shapesOf, "m"),
+    '["": net.port.Port(value: 1), "web": net.port.Port(value: 80)]',
+  );
+  assertEquals(showValue(ports, portType, shapesOf, "net.port"), '["": Port(value: 1), "web": Port(value: 80)]');
+  assertEquals(showValue(std$map$empty(), con("Map", INT, list(INT)), shapes, "m"), "std.map.empty<Int, List<Int>>()");
+  assertEquals(
+    showValue(
+      std$map$insert(std$map$empty<number, unknown>(), 1, std$map$empty()),
+      con("Map", INT, con("Map", INT, INT)),
+      shapes,
+      "m",
+    ),
+    "[1: std.map.empty<Int, Int>()]",
+  );
+  // An empty list or map whose type holds a function type cannot be written
+  // with type arguments yet; it falls back to std.text.show (H5).
+  const fnType_ = fnType([INT], INT);
+  assertEquals(showValue([], list(fnType_), shapes, "m"), "[]");
+  assertEquals(showValue(std$map$empty(), con("Map", STRING, fnType_), shapes, "m"), "[:]");
+  assertEquals(showValue(Some([]), option(list(fnType_)), shapes, "m"), "Some([])");
 });
 
 // ---- the command line ----
