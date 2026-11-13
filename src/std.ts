@@ -384,7 +384,13 @@ export const STD: readonly Signature[] = [
   ),
 
   sig("std.list.empty", "The empty list.", ["T"], [], list(T)),
-  sig("std.list.append", "The list with the item added at the end.", ["T"], [["list", list(T)], ["item", T]], list(T)),
+  sig(
+    "std.list.append",
+    "The list with the item added at the end; copies the list, so appending item by item in a loop is quadratic.",
+    ["T"],
+    [["list", list(T)], ["item", T]],
+    list(T),
+  ),
   sig("std.list.length", "Number of items.", ["T"], [["list", list(T)]], INT),
   sig("std.list.get", "The item at the index, counting from 0; `None` outside the list.", ["T"], [
     ["list", list(T)],
@@ -433,7 +439,7 @@ export const STD: readonly Signature[] = [
   sig("std.list.reverse", "The items from last to first.", ["T"], [["list", list(T)]], list(T)),
   sig(
     "std.list.concat",
-    "The items of the left list followed by those of the right.",
+    "The items of the left list followed by those of the right; copies both lists, so growing a list piece by piece in a loop is quadratic.",
     ["T"],
     [["left", list(T)], ["right", list(T)]],
     list(T),

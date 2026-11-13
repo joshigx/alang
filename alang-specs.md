@@ -594,7 +594,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`) are bou
 | `std.string.to_upper(text: String): String` | none | The text in upper case by Unicode's rules, the same on every system. |
 | `std.string.to_lower(text: String): String` | none | The text in lower case by Unicode's rules, the same on every system. |
 | `std.list.empty<T>(): List<T>` | none | The empty list. |
-| `std.list.append<T>(list: List<T>, item: T): List<T>` | none | The list with the item added at the end. |
+| `std.list.append<T>(list: List<T>, item: T): List<T>` | none | The list with the item added at the end; copies the list, so appending item by item in a loop is quadratic. |
 | `std.list.length<T>(list: List<T>): Int` | none | Number of items. |
 | `std.list.get<T>(list: List<T>, index: Int): Option<T>` | none | The item at the index, counting from 0; `None` outside the list. |
 | `std.list.map<T, U>(list: List<T>, with: (T) -> U): List<U>` | none | Applies the function to every item. |
@@ -606,7 +606,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`) are bou
 | `std.list.take<T>(list: List<T>, count: Int): List<T>` | none | The first `count` items, or the whole list if it is shorter. A negative count traps. |
 | `std.list.drop<T>(list: List<T>, count: Int): List<T>` | none | The list without its first `count` items; empty if it is shorter. A negative count traps. |
 | `std.list.reverse<T>(list: List<T>): List<T>` | none | The items from last to first. |
-| `std.list.concat<T>(left: List<T>, right: List<T>): List<T>` | none | The items of the left list followed by those of the right. |
+| `std.list.concat<T>(left: List<T>, right: List<T>): List<T>` | none | The items of the left list followed by those of the right; copies both lists, so growing a list piece by piece in a loop is quadratic. |
 | `std.list.flatten<T>(lists: List<List<T>>): List<T>` | none | The items of all the lists, in order. |
 | `std.list.contains<T>(list: List<T>, item: T): Bool` | none | Whether the list holds an item equal to the given one. |
 | `std.list.range(low: Int, high: Int): List<Int>` | none | The integers from `low` to `high`, both included, in ascending order; empty if `low > high`. |
@@ -689,6 +689,8 @@ Every `std.fs` function reports a failure the same way. Nothing at the path, a m
 `std.console.read_line` ends a line at a line feed and drops a carriage return right before it. An empty line is `Some("")`, and a last line without a line break is returned too; after that, every call is `None`. Invalid UTF-8 reads as U+FFFD. `std.env.get` is `None` for a variable that is not set and for a name no variable can have (empty, or with `=`), and `Some("")` for one set to the empty text. `std.random.int` traps if `low > high` and if the range holds more than 2^53 − 1 values. `std.string.split(text: "a,b,,c", separator: ",")` gives `"a"`, `"b"`, `""`, `"c"`; the empty text gives one empty part, and a text that ends in the separator ends in an empty part (`"x\n"` split at `"\n"` gives `"x"` and `""`).
 
 Positions and counts in text are in Unicode scalar values, as `std.string.length` counts them: `std.string.find(text: "a😀b", part: "b")` is `Some(2)`. A count above the length takes or drops everything (`take` and `drop` of `std.string` and `std.list`), and a negative count traps. The empty part occurs in every text: `contains`, `starts_with` and `ends_with` are `true`, `find` is `Some(0)`, and `cut` gives `before: ""` and the whole text as `after`; `replace` with an empty part traps, as `split` with an empty separator does. `cut` cuts at the first occurrence: `"a=b=c"` gives `"a"` and `"b=c"`. `std.string.lines` reads lines as `std.console.read_line` does: unlike `split` at `"\n"`, a final line break adds no empty line, and a carriage return is dropped only before a line feed (`"a\r\nb\r\n"` gives `"a"` and `"b"`, `"a\r"` gives `"a\r"`, the empty text no lines). `to_upper` and `to_lower` follow Unicode's default case mapping, without a locale: `"straße"` gives `"STRASSE"`. `std.int.checked_add`, `checked_subtract` and `checked_multiply` give `None` where `+`, `-` and `*` trap. `std.list.zip` traps on lists of different lengths. `std.list.range` includes both ends and traps above 4_294_967_295 items, the most a list holds; memory usually runs out long before. `std.list.window` with a size above the length gives the empty list, with the length one run, and traps below 1. `std.list.contains` compares like `==` and, like `std.text.show`, needs a type without function values (E0222).
+
+A `List` is an immutable array. `std.list.get`, `length`, `first` and `last` take constant time. `append`, `concat`, `take`, `drop`, `reverse`, `sort`, `map` and `filter` leave their list unchanged and build a new one; `append` and `concat` copy every item of their lists. So a `fold` or a recursion that calls `append` (or `concat` with one item) once per item takes time quadratic in the length of the list, and so does walking a list by dropping one item at a time. Build a list in one pass instead: with `map`, `filter`, a `for` used as a value, `flatten`, `range`, or `concat` of whole lists.
 
 ### 7.9 A complete program
 
