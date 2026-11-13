@@ -159,14 +159,21 @@ Deno.test("queries: list gives a module's definitions and submodules", async () 
     ["net.port.Port", "type"],
     ["net.port.parse", "fn"],
   ]);
+  // Each hit shows its signature on one line. A type's mirrors its sections,
+  // with the where unless it is none; types in full, cases joined by `|`.
   assertEquals(l.definitions[1], {
     name: "net.port.Port",
     hash: hashOf(cb, "net.port.Port"),
     kind: "type",
+    signature: "type net.port.Port, record: value: Int, where: 1 <= value and value <= 65_535",
     doc: "A valid TCP port number.",
   });
-  // A function also shows its signature, types in full: search_type's line up
-  // to the doc.
+  assertEquals(l.definitions[0].signature, "type net.port.ParseError, variant: NotANumber | OutOfRange: Int");
+  assertEquals(
+    cb.list("config").definitions.find((d) => d.name === "config.LoadError")?.signature,
+    "type config.LoadError, variant: FileUnreadable: std.fs.Error | InvalidPort: net.port.ParseError",
+  );
+  // A function's is search_type's line up to the doc.
   assertEquals(l.definitions[2], {
     name: "net.port.parse",
     hash: hashOf(cb, "net.port.parse"),
@@ -237,13 +244,32 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
   ]);
   // Every std function's hit shows its signature: the line of context and
   // search_type without the doc, which the hit has as a field of its own.
-  // Types show none.
   const stdHits = cb.searchText("");
   for (const s of STD) {
     const hit = stdHits.find((h) => h.name === s.name)!;
     assertEquals(`${hit.signature}, doc: ${printString(hit.doc)}`, signatureLine(s));
   }
-  for (const t of STD_TYPES) assert_(!("signature" in stdHits.find((h) => h.name === pathText(t.path))!));
+  // A std type's hit shows its fields or cases, as a stored type's does; the
+  // two the tasks round needed a context call for.
+  for (const t of STD_TYPES) assert_(stdHits.find((h) => h.name === pathText(t.path))!.signature.startsWith("type "));
+  const typeLine = (name: string) => stdHits.find((h) => h.name === name)!.signature;
+  assertEquals(
+    typeLine("std.fs.Error"),
+    "type std.fs.Error, variant: NotFound | PermissionDenied | IsADirectory | Other: String",
+  );
+  assertEquals(typeLine("std.string.Cut"), "type std.string.Cut, record: before: String, after: String");
+  // Own-module types in full; the where as written.
+  assertEquals(
+    typeLine("std.http.Request"),
+    "type std.http.Request, record: method: String, path: String, query: String, " +
+      "headers: List<std.http.Header>, content: String",
+  );
+  assert_(
+    typeLine("std.http.Response").endsWith(
+      ', where: 200 <= status and status <= 599 and (content == "" or ' +
+        "(status != 204 and status != 205 and status != 304))",
+    ),
+  );
   assertEquals(
     cb.list("std.option").definitions.find((d) => d.name === "std.option.with_default")!.signature,
     "fn std.option.with_default<T>(option: Option<T>, default: T): T, effects: none",
@@ -288,6 +314,8 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
     cb.list("net.port").definitions[2],
   );
   assertEquals(cb.searchText("effects: none"), []);
+  assertEquals(cb.searchText("record:"), []);
+  assertEquals(cb.searchText("OutOfRange"), []);
   await done(cb);
 });
 

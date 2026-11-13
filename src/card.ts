@@ -2,7 +2,7 @@
 // accepted program, on one page. The MCP server serves it through the tool
 // `card` (mcp.ts), and its instructions send the model there first; the
 // standard library is left to the tools (`list`, `search`, `search_type`,
-// whose hits carry each function's signature).
+// whose hits carry each function's and type's signature).
 //
 // The card restates section 7 of alang-specs.md in short. When a rule there
 // changes, change it here too. tests/card_test.ts parses its code, accepts
@@ -16,11 +16,11 @@ from it. The standard library is not on it; find it with the tools.
 ## Working through the tools
 
 - \`list("std")\` gives the std modules, \`list("std.string")\` a module's definitions. \`search("split")\` finds names
-  and docs containing a text. Each function hit holds its signature (parameters, result, effects) and its doc.
+  and docs containing a text. Each hit holds its signature (parameters, result, effects; fields or cases) and doc.
 - \`search_type("String, String -> List<String>")\` finds functions by signature: parameter types in order, \`_\` for
   any type; the count and the result must match.
 - \`context(name)\` gives a definition's text (examples, body) and hash and the signatures of what it uses: read code
-  this way, not from \`export/\`. To call a std function its hit is enough; its \`context\` adds the types it mentions.
+  this way, not from \`export/\`. To use a std function or type its hit is enough; \`context\` adds the types it mentions.
 - \`add(text)\` adds a definition, \`replace(name, hash, text)\` replaces the version whose hash a query returned, and
   \`submit(changes)\` sends several as one transaction: definitions that use each other, or an interface change with
   its callers. Nothing is written unless all of it is accepted.

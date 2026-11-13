@@ -85,7 +85,8 @@ tools do not answer.`
 // first; tests/mcp_test.ts keeps them short.
 export const INSTRUCTIONS = `Before writing alang, call \`card\`, and again when its text is no longer in your \
 context: the rules every definition needs and a complete accepted program. The standard library is not on it; find it with \`list("std")\`, \`search\` and \
-\`search_type\`: each function they list comes with its signature (parameters, result, effects) and doc, enough to call it.${SPEC_LINE}
+\`search_type\`: each function and type they list comes with its signature (parameters, result, effects; fields or \
+cases) and doc, enough to use it.${SPEC_LINE}
 
 An alang codebase, stored as a database of definitions (spec section 6). \
 Read and change definitions only through these tools, never by editing files. export/*.alang is the database's \
@@ -156,7 +157,7 @@ export const TOOLS: readonly Tool[] = [
     title: "The language card",
     description: "The rules every alang definition needs and a complete accepted program, as Markdown: call it " +
       "before writing alang, and again when its text is no longer in your context. The standard library is not on it; find it with `list`, `search` " +
-      "and `search_type`, which give each function's signature.",
+      "and `search_type`, which give each function's and type's signature.",
     params: {},
     query: true,
     plain: true,
@@ -169,7 +170,7 @@ export const TOOLS: readonly Tool[] = [
       "and type it uses, in order of first use, and of the types in those signatures (std functions as one " +
       "line). Everything needed to change the definition: read this before `replace`. For a std name (hash " +
       "null), its signature line with the doc and the types it mentions, such as the fields of `std.http.Request`; " +
-      "to call a std function, its `signature` in a `list` or `search` hit is enough.",
+      "to call a std function or use a std type, its `signature` in a `list` or `search` hit is enough.",
     params: { name: NAME },
     query: true,
     run: (cb, a) => cb.context(s(a.name)),
@@ -204,9 +205,10 @@ export const TOOLS: readonly Tool[] = [
   {
     name: "list",
     title: "List a module",
-    description: "The definitions of a module (name, hash, kind, doc; a function also its `signature`, such as " +
-      "`fn std.string.split(text: String, separator: String): List<String>, effects: none`) and the names of its " +
-      "direct submodules. " +
+    description: "The definitions of a module (name, hash, kind, `signature` on one line, doc) and the names of " +
+      "its direct submodules. A signature is like `fn std.string.split(text: String, separator: String): " +
+      "List<String>, effects: none` for a function and `type std.string.Cut, record: before: String, after: " +
+      "String` or `type std.fs.Kind, variant: File | Directory` for a type, with `, where: ...` unless it is none. " +
       "Without `module`, the top-level modules of the codebase; `std` and its submodules (`std.http`) list the " +
       "standard library.",
     params: { module: { description: "A module such as `net.port`; leave it out for the top level.", optional: true } },
@@ -217,7 +219,7 @@ export const TOOLS: readonly Tool[] = [
     name: "search",
     title: "Search names and docs",
     description: "Definitions and std entries whose full name or `doc` line contains `text`, ignoring case, " +
-      "sorted by name, each as `list` gives it: a function with its `signature`.",
+      "sorted by name, each as `list` gives it, with its `signature`.",
     params: { text: { description: "The text to look for." } },
     query: true,
     run: (cb, a) => cb.searchText(s(a.text)),

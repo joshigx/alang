@@ -16,13 +16,13 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Definition, Effect, FnDef } from "./ast.ts";
+import type { Definition, Effect, FnDef, TypeDef, TypeRef } from "./ast.ts";
 import { moduleOf, pathText } from "./ast.ts";
 import { checkProgram, type CheckResult, closest } from "./check.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { casesOf, interfaceChange } from "./interface.ts";
 import { parseProgram } from "./parser.ts";
-import { printDefinition, printSignature, printString } from "./printer.ts";
+import { printDefinition, printExpr, printSignature, printString } from "./printer.ts";
 import { dependencies, mapReferences, type Ref, shortenOwnNames } from "./refs.ts";
 import { matchesFn, namedTypes, parseFnPattern, showTree, treeOfRef, treeOfType, type TypeTree } from "./search.ts";
 import { signatureHead, signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
@@ -129,15 +129,18 @@ export interface Used {
   readonly text: string;
 }
 
-// An entry of `list` and `search`; std entries have no hash. A function's
-// entry carries its signature on one line without the doc (`fn name(params):
-// Out, effects: ...`, the line `search_type` gives up to its doc), so that a
-// listing shows how to call each function without a `context` call per name.
+// An entry of `list` and `search`; std entries have no hash. Each carries its
+// signature on one line without the doc, so that a listing shows how to call
+// each function and build or match each type without a `context` call per
+// name: a function's line is `fn name(params): Out, effects: ...`, the line
+// `search_type` gives up to its doc; a type's mirrors its sections, `type
+// name, record: field: T, ...` or `type name, variant: A | B: T`, and adds
+// `, where: ...` unless the where is `none`.
 export interface Hit {
   readonly name: string;
   readonly hash: string | null;
   readonly kind: "fn" | "type";
-  readonly signature?: string;
+  readonly signature: string;
   readonly doc: string;
 }
 
@@ -271,11 +274,23 @@ function storedHead(name: string, def: FnDef): string {
   return `fn ${name}(${params}): ${showTree(treeOfRef(def.out, module))}, effects: ${effects}`;
 }
 
+// A type's signature on one line without the doc, std and stored alike: its
+// sections in order, field and case types in full as in `storedHead`, cases
+// separated by `|`, and the where as the definition writes it (it reads the
+// fields), left out when it is `none`. Types have no type parameters.
+function typeHead(name: string, def: TypeDef): string {
+  const module = moduleOf(def.path);
+  const full = (t: TypeRef) => showTree(treeOfRef(t, module));
+  const shape = def.shape.kind === "record"
+    ? `record: ${def.shape.fields.map((f) => `${f.name}: ${full(f.type)}`).join(", ")}`
+    : `variant: ${def.shape.cases.map((c) => (c.payload ? `${c.name}: ${full(c.payload)}` : c.name)).join(" | ")}`;
+  return `type ${name}, ${shape}${def.where ? `, where: ${printExpr(def.where, "")}` : ""}`;
+}
+
 // The `list` and `search` entry of a stored definition.
 function storedHit(r: Stored): Hit {
-  return r.def.kind === "fn"
-    ? { name: r.name, hash: r.hash, kind: "fn", signature: storedHead(r.name, r.def), doc: r.def.doc }
-    : { name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc };
+  const signature = r.def.kind === "fn" ? storedHead(r.name, r.def) : typeHead(r.name, r.def);
+  return { name: r.name, hash: r.hash, kind: r.kind, signature, doc: r.def.doc };
 }
 
 // ---- the standard library in queries ----
@@ -289,7 +304,10 @@ const STD_TYPE_BY_NAME: ReadonlyMap<string, Definition> = new Map(STD_TYPES.map(
 
 const STD_HITS: readonly Hit[] = [
   ...STD.map((s): Hit => ({ name: s.name, hash: null, kind: "fn", signature: signatureHead(s), doc: s.doc })),
-  ...STD_TYPES.map((d): Hit => ({ name: pathText(d.path), hash: null, kind: "type", doc: d.doc })),
+  ...STD_TYPES.map((d): Hit => {
+    const name = pathText(d.path);
+    return { name, hash: null, kind: "type", signature: typeHead(name, d as TypeDef), doc: d.doc };
+  }),
 ].sort(byName);
 
 interface StdEntry {

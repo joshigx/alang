@@ -150,6 +150,17 @@ Deno.test("mcp: the path of a change through context and replace", async () => {
   assertEquals((added.json.written as unknown[]).length, 3);
   assertEquals((await call(server, "add", { text: LOAD_PORT })).isError, true); // needs config.LoadError
 
+  // Find: every hit carries its signature on one line, a type's too.
+  const listed = (await call(server, "list", { module: "net.port" })).json.definitions as {
+    name: string;
+    signature: string;
+  }[];
+  assertEquals(listed.map((h) => h.signature), [
+    "type net.port.ParseError, variant: NotANumber | OutOfRange: Int",
+    "type net.port.Port, record: value: Int, where: 1 <= value and value <= 65_535",
+    "fn net.port.parse(text: String): Result<net.port.Port, net.port.ParseError>, effects: none",
+  ]);
+
   // Read (the spec's step 1), then replace with the hash (step 2).
   const context = await call(server, "context", { name: "net.port.parse" });
   assertEquals(context.isError, false);
@@ -489,8 +500,8 @@ Deno.test("mcp: the instructions name the card first, then the spec, in both era
     assert_(instructions.length - spec.length < 3_000, `${instructions.length} characters`);
     // The rest of the instructions follows unchanged.
     for (const kept of ["context(name)", "E0501", "E0506", "E0513"]) assert_(instructions.includes(kept), kept);
-    // Hits carry the signature, so std needs no context call per function.
-    assert_(instructions.includes("comes with its signature (parameters, result, effects) and doc"));
+    // Hits carry the signature, so std needs no context call per function or type.
+    assert_(instructions.includes("comes with its signature (parameters, result, effects; fields or cases) and doc"));
   }
   await done(cb);
 });

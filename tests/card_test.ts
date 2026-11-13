@@ -120,10 +120,16 @@ Deno.test("card: the tool calls it shows find what it says", async () => {
   ) assert_(CARD.includes(shown), shown);
   const std = await call("list", { module: "std" }) as { submodules: string[] };
   assert_(std.submodules.includes("std.string"));
-  // Each function hit holds its signature (parameters, result, effects) and its doc.
+  // Each hit holds its signature (parameters, result, effects; fields or cases) and its doc.
   const split = "fn std.string.split(text: String, separator: String): List<String>, effects: none";
-  const module = await call("list", { module: "std.string" }) as { definitions: { name: string; doc: string }[] };
+  const module = await call("list", { module: "std.string" }) as {
+    definitions: { name: string; signature: string; doc: string }[];
+  };
   assert_(module.definitions.some((d) => d.name === "std.string.split" && d.doc !== ""));
+  assertEquals(
+    module.definitions.find((d) => d.name === "std.string.Cut")?.signature,
+    "type std.string.Cut, record: before: String, after: String",
+  );
   const hits = [module.definitions, await call("search", { text: "split" })] as { name: string; signature: string }[][];
   for (const found of hits) assertEquals(found.find((h) => h.name === "std.string.split")?.signature, split);
   assertEquals(names(await call("search_type", { pattern: "String, String -> List<String>" })), [
