@@ -9,7 +9,8 @@
 // written to stdout. Two eras of MCP are served: the `initialize` handshake
 // (2024-11-05 to 2025-11-25) and the stateless requests of 2026-07-28, which
 // carry their version in `_meta` and find the server by `server/discover`.
-// Only tools are offered.
+// Only tools are offered. The language itself is served by the tool `card`
+// (card.ts), to which the instructions send the model first.
 //
 // Every query first brings the database in step with the export
 // (`Codebase.sync`): a long-running server would otherwise answer from a
@@ -19,6 +20,7 @@
 // JSON-RPC errors are left for malformed requests and unknown tools.
 
 import { fileURLToPath } from "node:url";
+import { CARD } from "./card.ts";
 import { Codebase, parseChanges, type SubmitResult } from "./codebase.ts";
 import { AlangError } from "./diagnostic.ts";
 
@@ -67,14 +69,23 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 // ---- tools ----
 
-// The language description next to the sources, for a model that can read files.
+// The full design and reference next to the sources, for a model that can
+// read files; demoted behind the card. Installed elsewhere (not from files),
+// the instructions go without it.
 const SPEC = new URL("../alang-specs.md", import.meta.url);
 const SPEC_LINE = SPEC.protocol === "file:"
-  ? `The language (syntax, rules, standard library, what is not available yet) is described in \
-${fileURLToPath(SPEC)}; read it before writing alang. `
+  ? ` The full design and reference is ${fileURLToPath(SPEC)}; you need it only for questions the card and the \
+tools do not answer.`
   : "";
 
-export const INSTRUCTIONS = `${SPEC_LINE}An alang codebase, stored as a database of definitions (spec section 6). \
+// Clients cut long instructions (Claude Code at 4,096 characters, before
+// v2.1.296 at 2,048), so the card is a tool and the instructions name it
+// first; tests/mcp_test.ts keeps them short.
+export const INSTRUCTIONS = `Before writing alang, call \`card\` once: the rules every definition needs and a \
+complete accepted program. The standard library is not on it; find it with \`list("std")\`, \`search\`, \
+\`search_type\` and \`context\`.${SPEC_LINE}
+
+An alang codebase, stored as a database of definitions (spec section 6). \
 Read and change definitions only through these tools, never by editing files. export/*.alang is the database's \
 copy for Git, one file per module, kept in step in both directions without your help: every change is written there \
 at once, and what Git or a person changes there is read back before the next tool call. You never export or import \
@@ -114,6 +125,9 @@ interface Tool {
   readonly params: Readonly<Record<string, Param>>;
   // Queries only read: they sync first, and are marked read-only.
   readonly query: boolean;
+  // Answers with Markdown that does not depend on the codebase: no sync, and
+  // the text as it is rather than as JSON.
+  readonly plain?: boolean;
   readonly run: (cb: Codebase, args: Readonly<Record<string, unknown>>) => unknown;
 }
 
@@ -135,6 +149,17 @@ function input<T>(read: () => T): T {
 }
 
 export const TOOLS: readonly Tool[] = [
+  {
+    name: "card",
+    title: "The language card",
+    description: "The rules every alang definition needs and a complete accepted program, as Markdown: call it " +
+      "once before writing alang. The standard library is not on it; find it with `list`, `search`, " +
+      "`search_type` and `context`.",
+    params: {},
+    query: true,
+    plain: true,
+    run: () => CARD,
+  },
   {
     name: "context",
     title: "Definition with what it uses",
@@ -352,10 +377,12 @@ function isSubmitResult(value: unknown): value is SubmitResult {
 }
 
 // Runs a tool. The answer is one JSON text, as `alang db` prints it; a query
-// whose sync failed adds a second one with the sync's diagnostics.
+// whose sync failed adds a second one with the sync's diagnostics. A plain
+// tool (`card`) answers with its text as it is.
 async function callTool(cb: Codebase, tool: Tool, args: unknown): Promise<CallResult> {
   const invalid = invalidArguments(tool, args ?? {});
   if (invalid) return { content: [json({ error: invalid })], isError: true };
+  if (tool.plain) return { content: [{ type: "text", text: tool.run(cb, {}) as string }], isError: false };
   const warning = [];
   try {
     if (tool.query) {

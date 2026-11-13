@@ -11,7 +11,8 @@ Read this first when picking up the work in a new session. Update it when a phas
 `main`, which contains the whole chain `type-checker`, `effects`, `examples`, `database`, `mcp`, `async`, `spec`). The
 phase branches are kept as they are. Start each new phase on its own branch from `main`; pushing is the user's call.
 Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed. List
-literals and pure std (item 15) were built on `list-literals` and fast-forwarded into `main` the same way.
+literals and pure std (item 15) were built on `list-literals` and fast-forwarded into `main` the same way. The
+language card (item 16) is built on `card`, from `main`, not merged yet.
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -74,14 +75,25 @@ literals and pure std (item 15) were built on `list-literals` and fast-forwarded
     Examples and acceptance (Actual values), and the section Text, numbers and lists in std. Its playground round
     (`wordcount`, see "From the wordcount round") was accepted on the first try without the advisor; the two gaps it
     showed, what list operations cost and counting without a Map, are now in the spec (7.8, 7.1).
+16. The language card, on branch `card` (the first layer of "Language knowledge served by the tool"): `src/card.ts`
+    exports `CARD`, about 150 lines and 8.7 KB of Markdown with the rules every definition needs and one complete
+    accepted program (`temp`), and no std listing beyond the names its rules use. The MCP tool `card` returns it;
+    the instructions start by sending the model there and to `list("std")`, `search`, `search_type` and `context`
+    for std, and name the spec only as the full reference. Served by a tool, not inside the instructions as briefed,
+    because Claude Code cuts server instructions at 4,096 characters (see "From the card"). `tests/card_test.ts`
+    parses and accepts the card's program and checks every code, std name and tool call it names. The card restates
+    spec section 7 and changes with it. Decisions in `decisions.md`, MCP server (Card, Instructions, Results, Scope).
 
-**Next:** the roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1 (`list-literals`) is item
+**Next:** a playground round with the card: the playground's `CLAUDE.md` sends the model to the `card` tool instead
+of the spec. Measure first-try acceptance and tool calls as before, and above all whether the model calls `card`
+(it is not always loaded) and finds std through `list`, `search` and `context` instead of reading the spec or the
+sources. Then the roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1 (`list-literals`) is item
 15, and its playground round is done (see "From the wordcount round"). The following phase is `std-maps` (Map
 functions and literal, `std.float`, the remaining text helpers), planned by Opus while the Fable limit is near its
 end; then `std-net` (HTTP client, waiting, console output without a line break; ask the user about N3, reopening
 `std.fs.Error`, before it starts), `statements`, `fn-types`, `const`, `generics`, `extern-fn`. Earlier proposed
 order for the user's six goals, still standing after std breadth and the language forms libraries need: the spec
-served by the MCP server (card plus `explain(code)`, generated from the spec), then the plan/build/test agent
+served by the MCP server (card plus `explain(code)`; the card is item 16), then the plan/build/test agent
 loop (needs an example time limit, a scored task suite, a gate for language decisions), then shipping (JSR package,
 `alang init`, quickstart, CI; std names freeze per 3.8), and self-hosting last. Suggested first step: goal 4 as one
 hand-run round of the loop.
@@ -95,7 +107,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (246 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (256 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -183,6 +195,11 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
 - List costs (after the wordcount round, 2026-11-13): what list functions cost, as 7.8 states it, is part of the std
   contract; the alternative was a persistent list with a cheap `append`. In `decisions.md`, Text, numbers and lists
   in std.
+- The card (item 16, 2026-11-13; the brief was the main session's, these are mine): serving it through the tool
+  `card` instead of inside the instructions, because of the client's 4,096-character cut; the tool answering with
+  Markdown instead of JSON and without a sync; the first paragraph of the instructions; the example program `temp`
+  (a variant type, a pure function with four examples, a `main` with `Result<Unit, String>`); which rules made the
+  card and which codes it names. In `decisions.md`, MCP server.
 
 ## Database phase: open points (2026-11-12)
 
@@ -589,10 +606,30 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
 - **Discovery through the tools is untested for the second round.** The playground's `CLAUDE.md` and the MCP
   instructions (`SPEC_LINE` in `src/mcp.ts`) send the model to the full spec, whose 7.8 lists all of std, so
   `list("std")` and `context` add nothing. The phase that serves the spec through the MCP server; to test discovery,
-  replace the spec pointer with a short card.
+  replace the spec pointer with a short card. Built (item 16): the instructions now send the model to `card`; the
+  playground's `CLAUDE.md` still has to follow.
 - **A byte order mark cannot be written readably.** `"\u{FEFF}"` is E0005 ("`\u{...}` is only for control
   characters"), and its fix inserts the invisible character itself. An open language question for 7.2: allow
   `\u{...}` for invisible format characters too. Listed in `decisions.md`, Open questions.
+
+## From the card (2026-11-13)
+
+- **Clients cut server instructions.** Claude Code passes at most 4,096 characters of an MCP server's instructions,
+  and of a tool description that loads up front, to the model (2,048 before v2.1.296); a tool description loaded
+  through tool search gets 16,384. `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` (from v2.1.280) replaces both limits.
+  Sources: code.claude.com/docs/en/mcp.md ("Tool search for MCP server authors") and the Claude Code changelog;
+  whether instructions from `server/discover` are cut the same way is not documented. The instructions were 2,454
+  characters before the card and are 2,645 now; card and instructions together would be about 11,400. So the card
+  is a tool. If the round shows that the model skips `card`, the options are raising the limit in the playground and
+  serving the card in the instructions (one line in `src/mcp.ts`), or a short core of the card in the instructions.
+- **`_` as a pattern is E0002 with an empty name**: "written in snake_case: ``". The message could name `_` and
+  say that every value in a pattern gets a name.
+- **`if` inside an argument or a lambda passes `checkProgram`**; E0303 comes from the emitter during acceptance, so
+  `alang check` and the tools report it, but only after every check of the program has passed.
+- **One-line `if`.** `if c then return a end if` on one line is accepted and stored on three lines; the card points
+  to its program instead of showing the one-line form.
+- **Keywords name nothing, fields included.** A record field `in` or `type` fails with "A record has at least one
+  field"; `result` and `error` work as fields, as 7.2 says.
 
 ## Spec observations
 
@@ -629,7 +666,10 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
   `search` and `context`: accepted definitions cannot be wrong or stale, unlike prose. Knowledge served by the
   compiler matches its version. The spec file stays as the design document and the source the card and rule texts
   are generated from (as the std table already is). Tools only, so the Scope decision holds. The playground can
-  measure it: first-try acceptance and calls per task, full spec against card plus rules on demand.
+  measure it: first-try acceptance and calls per task, full spec against card plus rules on demand. The first layer
+  is built (item 16), as the tool `card` rather than in the instructions, since clients cut instructions; it is
+  written by hand and checked by tests, not generated from the spec. The `explain(code)` layer and examples as a
+  codebase remain.
 
 ## From the type checker (2026-11-12)
 

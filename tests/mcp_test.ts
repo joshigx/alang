@@ -2,8 +2,10 @@
 // change, sync before queries, and the stdio transport end to end.
 
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { assert_, assertEquals } from "./assert.ts";
 import { done, fresh, LOAD_PORT, PARSE, PARSE_ERROR, PARSE_REORDERED, PORT, withPort } from "./db_helpers.ts";
+import { CARD } from "../src/card.ts";
 import { type Codebase, hashText } from "../src/codebase.ts";
 import { LEGACY_VERSIONS, McpServer, MODERN_VERSIONS, type Response, TOOLS } from "../src/mcp.ts";
 
@@ -91,6 +93,7 @@ Deno.test("mcp: the initialize handshake and the stateless era", async () => {
   // Every tool, in a fixed order, with a closed schema.
   const listed = legacyTools.tools as { name: string; inputSchema: Record<string, unknown> }[];
   assertEquals(listed.map((t) => t.name), [
+    "card",
     "context",
     "definition",
     "signature",
@@ -390,6 +393,46 @@ Deno.test("mcp: a signal ends the server, and no acceptance file stays behind", 
     assertEquals(accepts(), []);
   }
   await Deno.remove(cb.dir, { recursive: true });
+});
+
+// The instructions send the model to the card; clients cut long ones, so
+// they stay short and name the card first.
+Deno.test("mcp: the instructions name the card first, then the spec, in both eras", async () => {
+  const cb = await fresh();
+  const server = new McpServer(cb);
+  const spec = fileURLToPath(new URL("../alang-specs.md", import.meta.url));
+  const legacy = (await result(server, "initialize", { protocolVersion: "2025-11-25" })).instructions as string;
+  const modernEra = (await result(server, "server/discover", modern())).instructions as string;
+  for (const instructions of [legacy, modernEra]) {
+    assert_(instructions.startsWith("Before writing alang, call `card` once"), instructions.slice(0, 80));
+    assert_(instructions.includes(`The full design and reference is ${spec};`));
+    assert_(!instructions.includes("read it before writing alang"));
+    // Claude Code cuts at 4,096 characters (before v2.1.296 at 2,048); install
+    // paths vary in length, so the rest keeps a margin.
+    assert_(instructions.length - spec.length < 3_000, `${instructions.length} characters`);
+    // The rest of the instructions follows unchanged.
+    for (const kept of ["context(name)", "E0501", "E0506", "E0513"]) assert_(instructions.includes(kept), kept);
+  }
+  await done(cb);
+});
+
+Deno.test("mcp: card answers with the card itself, as Markdown", async () => {
+  const cb = await fresh();
+  const server = new McpServer(cb);
+  const tool = (await result(server, "tools/list", {})).tools as { name: string; annotations: unknown }[];
+  assertEquals(tool.find((t) => t.name === "card")!.annotations, {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  });
+  const answered = await result(server, "tools/call", { name: "card", arguments: {} });
+  assertEquals(answered, { content: [{ type: "text", text: CARD }], isError: false });
+  // Without arguments at all, too; an argument it does not take is refused.
+  assertEquals((await result(server, "tools/call", { name: "card" })).content, answered.content);
+  const extra = await call(server, "card", { topic: "match" });
+  assertEquals([extra.isError, typeof extra.json.error], [true, "string"]);
+  await done(cb);
 });
 
 // The tool table and its list stay in step.

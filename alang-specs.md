@@ -455,7 +455,7 @@ examples:
 
 ## 7. Reference for writing alang
 
-Sections 1 to 6 are the design. This section states what the implementation accepts today, in enough detail to write a definition that is accepted on the first try: the gaps the sketch leaves open, the standard library, the codebase tools, and what does not exist yet. The reasons are in `docs/decisions.md`; some of these decisions still await review and may change. A code in brackets is the diagnostic (5.5) that a rule produces.
+Sections 1 to 6 are the design. This section states what the implementation accepts today, in enough detail to write a definition that is accepted on the first try: the gaps the sketch leaves open, the standard library, the codebase tools, and what does not exist yet. The reasons are in `docs/decisions.md`; some of these decisions still await review and may change. A code in brackets is the diagnostic (5.5) that a rule produces. The card that the MCP server serves through its tool `card` (`src/card.ts`) restates this section in short; when a rule here changes, change the card too.
 
 ### 7.1 Not available yet
 

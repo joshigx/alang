@@ -46,8 +46,9 @@ A file given to `alang run` must hold the whole program; a program spread over m
 ## MCP server
 
 `alang mcp` offers the queries and operations of section 6 as MCP tools (`context`, `replace`, `submit`, ...), so an
-LLM reads and changes a codebase the way the spec intends. To use it from Claude Code, register it with absolute
-paths:
+LLM reads and changes a codebase the way the spec intends. Its tool `card` returns the language card
+(`src/card.ts`), the rules every definition needs on one page, and its instructions send the model there first. To
+use it from Claude Code, register it with absolute paths:
 
 ```sh
 claude mcp add alang -- deno run --allow-read --allow-write /path/to/alang/src/cli.ts mcp --dir /path/to/project
@@ -70,5 +71,6 @@ if missing.
 | `src/codebase.ts`  | The codebase database (6): storage, transactions, queries, export     |
 | `src/db_cli.ts`    | `alang db`: the database on the command line                          |
 | `src/mcp.ts`       | `alang mcp`: the database as an MCP server                            |
+| `src/card.ts`      | The language card the MCP server serves; section 7 in short           |
 | `src/runtime.ts`   | Runtime library shared by the tool and generated programs             |
 | `tests/`           | Spec examples, round trip, checker rules, emitter end to end, acceptance |
