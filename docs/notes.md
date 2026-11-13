@@ -103,10 +103,11 @@ on `std-maps` and fast-forwarded into `main` too. The fixes after its playground
     instructions and the tool descriptions say so and leave `context` for examples, the body and uses. Decision in
     `decisions.md`, MCP server, Hits.
 
-**Next:** `logstat-fixes` is merged into `main` (2026-11-13). A playground round from an empty
-codebase (the logstat round's was not, see "From the logstat round"), to check that std `context` calls drop from 21
-to near zero now that hits carry signatures, that the card alone teaches `main` and fs errors, and to try `search` and
-`search_type`, which no round has used yet. The logstat round itself (plan of `std-maps`, section 6) is done. Then the
+**Next:** `logstat-fixes` is merged into `main` (2026-11-13). The `tasks` playground round, from an empty codebase,
+was started on 2026-11-14: prompt, checks and the steps after it are in `docs/plans/tasks-round.md`. When the user
+reports it done, analyze it (step 1 there), fix, then build `std-net` from `docs/plans/std-net.md` (planned by Opus
+on 2026-11-14; do not switch branches in this repo while a playground round runs, since the playground runs alang
+from this working tree). The logstat round itself (plan of `std-maps`, section 6) is done. Then the
 roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1 (`list-literals`) is item 15, and its
 playground round is done (see "From the wordcount round"). Phase 2, `std-maps`, is item 17, and its round is done
 (see "From the logstat round"); then `std-net` (HTTP client, waiting, console output without a line break; N3,
