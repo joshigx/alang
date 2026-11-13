@@ -339,7 +339,9 @@ Language changes are marked **[language]**.
   lock file or "do not overwrite" cannot be written today. This overrides the user's choice D2, so build it in its own
   commit and list it first under "Decisions awaiting the user's review". Alternative: keep four cases, and
   `create_text` returns `Result<Bool, std.fs.Error>` with `Ok(false)` for an existing file. **Main session:** N3
-  undoes a decision the user made explicitly, so ask the user before phase 3 starts.
+  undoes a decision the user made explicitly, so ask the user before phase 3 starts. **Approved by the user on
+  2026-11-13** (after the logstat round): build N3 as recommended, and add a std function that turns a
+  `std.fs.Error` into text.
 - **Risks:** `send` is the first runtime function that really waits; Deno and Node.js must agree on errors; tests run
   against the phase's own `std.http.serve`.
 

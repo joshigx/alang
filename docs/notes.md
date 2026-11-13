@@ -109,8 +109,10 @@ to near zero now that hits carry signatures, that the card alone teaches `main` 
 `search_type`, which no round has used yet. The logstat round itself (plan of `std-maps`, section 6) is done. Then the
 roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1 (`list-literals`) is item 15, and its
 playground round is done (see "From the wordcount round"). Phase 2, `std-maps`, is item 17, and its round is done
-(see "From the logstat round"); then `std-net` (HTTP client, waiting, console output without a line break; ask the user about N3, reopening
-`std.fs.Error`, before it starts), `statements`, `fn-types`, `const`, `generics`, `extern-fn`. Earlier proposed order
+(see "From the logstat round"); then `std-net` (HTTP client, waiting, console output without a line break; N3,
+reopening `std.fs.Error` with `AlreadyExists` and `std.fs.create_text`, approved by the user on 2026-11-13, which
+undoes D2; the phase also adds a std function that turns a `std.fs.Error` into text, so programs drop the four-arm
+`match` that ledger, wordcount and logstat each repeat), `statements`, `fn-types`, `const`, `generics`, `extern-fn`. Earlier proposed order
 for the user's six goals, still standing after std breadth and the language forms libraries need: the spec served by the
 MCP server (card plus `explain(code)`; the card is item 16), then the plan/build/test agent loop (needs an example time
 limit, a scored task suite, a gate for language decisions), then shipping (JSR package, `alang init`, quickstart, CI;
