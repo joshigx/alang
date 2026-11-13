@@ -615,6 +615,12 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | `std.list.window<T>(list: List<T>, size: Int): List<List<T>>` | none | Every run of `size` neighbouring items, from first to last; empty if the list is shorter. A size below 1 traps. |
 | `std.list.zip<T, U, V>(left: List<T>, right: List<U>, with: (T, U) -> V): List<V>` | none | Combines the items of two lists pair by pair with the function. Lists of different lengths trap. |
 | `std.list.enumerate<T, U>(list: List<T>, with: (Int, T) -> U): List<U>` | none | Applies the function to the index of every item, counting from 0, and the item. |
+| `std.list.any<T>(list: List<T>, with: (T) -> Bool): Bool` | none | Whether the function is true for some item; `false` for the empty list. Stops at the first item for which it is true. |
+| `std.list.all<T>(list: List<T>, with: (T) -> Bool): Bool` | none | Whether the function is true for every item; `true` for the empty list. Stops at the first item for which it is false. |
+| `std.list.find<T>(list: List<T>, with: (T) -> Bool): Option<T>` | none | The first item for which the function is true; `None` if there is none. Stops at that item. |
+| `std.list.filter_map<T, U>(list: List<T>, with: (T) -> Option<U>): List<U>` | none | Applies the function to every item and keeps the values inside its `Some` results, in order: `map` and `filter` in one. |
+| `std.list.take_while<T>(list: List<T>, with: (T) -> Bool): List<T>` | none | The items from the start for which the function is true, up to the first for which it is false. Stops there. |
+| `std.list.drop_while<T>(list: List<T>, with: (T) -> Bool): List<T>` | none | Skips the items from the start for which the function is true: the rest of the list from the first item for which it is false. |
 | `std.map.empty<K, V>(): Map<K, V>` | none | The empty map. A map with entries is written as a literal of `key: value` pairs, such as `[1: 10, 2: 20]`; keys are Int or String. |
 | `std.map.insert<K, V>(map: Map<K, V>, key: K, value: V): Map<K, V>` | none | The map with `key` bound to `value`, replacing an earlier value of `key`. Takes time logarithmic in the size of the map, so counting or grouping item by item in `std.list.fold` is fine. |
 | `std.map.get<K, V>(map: Map<K, V>, key: K): Option<V>` | none | Looks up the value of `key`; `None` if the map has no such key. |
@@ -625,6 +631,9 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | `std.map.values<K, V>(map: Map<K, V>): List<V>` | none | The values, in the order of their keys. |
 | `std.map.from_list<T, K, V>(list: List<T>, key: (T) -> K, value: (T) -> V): Map<K, V>` | none | A map with an entry for every item, its key and value computed by the two functions. Two items with the same key trap; to keep the last or combine them, use `std.list.fold` with `std.map.insert`. |
 | `std.map.to_list<K, V, T>(map: Map<K, V>, with: (K, V) -> T): List<T>` | none | Applies the function to every key and its value, in the order of the keys. |
+| `std.option.with_default<T>(option: Option<T>, default: T): T` | none | Unwraps an Option: the value inside `Some`, or `default` for `None`. |
+| `std.option.map<T, U>(option: Option<T>, with: (T) -> U): Option<U>` | none | Applies the function to the value inside `Some`; `None` stays `None`. |
+| `std.order.then_by(first: Order, second: Order): Order` | none | Breaks ties: `first`, unless it is `Equal`; then `second`. Compares by several keys in one expression. |
 | `std.text.show<T>(value: T): String` | none | Text representation of any value without functions. |
 
 The std types, written in alang:

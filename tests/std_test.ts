@@ -594,6 +594,87 @@ fn maps.by_length
   body:
     return std.map.from_list(list: words, key: fn(word: String): Int => std.string.length(text: word), value: fn(word: String): String => word)
 end fn maps.by_length
+
+fn maps.tally
+  doc: "How often each word occurs, counted in a fold with std.option.with_default."
+  in:
+    words: List<String>
+  out: Map<String, Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    tally(words: ["b", "a", "b"]) == ["a": 1, "b": 2]
+  body:
+    return std.list.fold(list: words, initial: std.map.empty<String, Int>(), with: fn(seen: Map<String, Int>, word: String): Map<String, Int> => std.map.insert(map: seen, key: word, value: std.option.with_default(option: std.map.get(map: seen, key: word), default: 0) + 1))
+end fn maps.tally
+
+fn maps.doubled
+  doc: "The double of the count of the word, if it was seen."
+  in:
+    words: List<String>
+    word: String
+  out: Option<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    doubled(words: ["a", "a"], word: "a") == Some(4)
+    doubled(words: ["a"], word: "b") == None
+  body:
+    return std.option.map(option: std.map.get(map: tally(words: words), key: word), with: fn(n: Int): Int => n * 2)
+end fn maps.doubled
+
+type maps.Row
+  doc: "A word and its count."
+  record:
+    word: String
+    count: Int
+  where: none
+end type maps.Row
+
+fn maps.ranked
+  doc: "The rows by count, most first, then by word."
+  in:
+    rows: List<Row>
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    ranked(rows: [Row(word: "b", count: 1), Row(word: "c", count: 2), Row(word: "a", count: 1)]) == ["c", "a", "b"]
+  body:
+    let sorted: List<Row> = std.list.sort(list: rows, by: fn(x: Row, y: Row): Order => std.order.then_by(first: std.int.compare(left: y.count, right: x.count), second: std.string.compare(left: x.word, right: y.word)))
+    return std.list.map(list: sorted, with: fn(row: Row): String => row.word)
+end fn maps.ranked
+
+fn maps.numbers
+  doc: "Facts about the numbers among the texts."
+  in:
+    texts: List<String>
+  out: List<List<Int>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    numbers(texts: ["1", "x", "2", "30"]) == [[1, 2, 30], [1], [2, 30], [1, 1, 30]]
+  body:
+    let all: List<Int> = std.list.filter_map(list: texts, with: fn(text: String): Option<Int> => std.int.parse(text: text))
+    let small: List<Int> = std.list.take_while(list: all, with: fn(n: Int): Bool => n < 2)
+    let rest: List<Int> = std.list.drop_while(list: all, with: fn(n: Int): Bool => n < 2)
+    let any: Int = if std.list.any(list: all, with: fn(n: Int): Bool => n > 9) then
+      1
+    else
+      0
+    end if
+    let every: Int = if std.list.all(list: all, with: fn(n: Int): Bool => n > 0) then
+      1
+    else
+      0
+    end if
+    let large: Int = std.option.with_default(option: std.list.find(list: all, with: fn(n: Int): Bool => n > 9), default: 0)
+    return [all, small, rest, [any, every, large]]
+end fn maps.numbers
 `;
 
 Deno.test("std: the map functions are accepted from alang, and their calls type-check", async () => {
@@ -601,7 +682,61 @@ Deno.test("std: the map functions are accepted from alang, and their calls type-
   const out = new URL("../out/test/std/maps.ts", import.meta.url).pathname;
   const { built, examples } = await accept(MAPS_PROGRAM, out);
   assertEquals(examples.filter((e) => !e.passed), []);
-  assertEquals(examples.length, 7);
+  assertEquals(examples.length, 12);
   const checked = await new Deno.Command(Deno.execPath(), { args: ["check", built.outPath], stderr: "piped" }).output();
   assert_(checked.success, new TextDecoder().decode(checked.stderr));
+});
+
+// ---- lists, options and order ----
+
+Deno.test("std.list: any, all, find, filter_map, take_while, drop_while", () => {
+  const even = (n: number) => n % 2 === 0;
+  const cases: [number[], boolean, boolean, rt.Option<number>, number[], number[]][] = [
+    // list, any, all, find, take_while, drop_while
+    [[], false, true, rt.None, [], []],
+    [[1, 3], false, false, rt.None, [], [1, 3]],
+    [[2, 4], true, true, rt.Some(2), [2, 4], []],
+    [[2, 3, 4], true, false, rt.Some(2), [2], [3, 4]],
+    [[1, 2, 3], true, false, rt.Some(2), [], [1, 2, 3]],
+  ];
+  for (const [xs, any, all, find, taken, dropped] of cases) {
+    assertEquals(
+      [
+        rt.std$list$any(xs, even),
+        rt.std$list$all(xs, even),
+        rt.std$list$find(xs, even),
+        rt.std$list$take_while(xs, even),
+        rt.std$list$drop_while(xs, even),
+      ],
+      [any, all, find, taken, dropped],
+      JSON.stringify(xs),
+    );
+  }
+  const half = (n: number) => (even(n) ? rt.Some(n / 2) : rt.None);
+  assertEquals([[], [1, 3], [2, 4], [1, 2, 3, 4]].map((xs) => rt.std$list$filter_map(xs, half)), [[], [], [1, 2], [
+    1,
+    2,
+  ]]);
+  // Each stops at the item that decides: a function that would trap later is never called there.
+  const upTo = (limit: number, test: (n: number) => boolean) => (n: number) => {
+    if (n > limit) throw new Error(`called on ${n}`);
+    return test(n);
+  };
+  assertEquals(rt.std$list$any([1, 2, 3], upTo(2, even)), true);
+  assertEquals(rt.std$list$all([2, 3, 4], upTo(3, even)), false);
+  assertEquals(rt.std$list$find([1, 2, 3], upTo(2, even)), rt.Some(2));
+  assertEquals(rt.std$list$take_while([2, 3, 4], upTo(3, even)), [2]);
+  assertEquals(rt.std$list$drop_while([2, 3, 4], upTo(3, even)), [3, 4]);
+});
+
+Deno.test("std.option and std.order: with_default, map, then_by", () => {
+  assertEquals([rt.std$option$with_default(rt.Some(1), 0), rt.std$option$with_default(rt.None, 0)], [1, 0]);
+  assertEquals(rt.std$option$map(rt.Some(2), (n: number) => `${n}`), rt.Some("2"));
+  assertEquals(rt.std$option$map(rt.None, () => assert_(false, "called on None")), rt.None);
+  const orders = [rt.Less, rt.Equal, rt.Greater];
+  for (const first of orders) {
+    for (const second of orders) {
+      assertEquals(rt.std$order$then_by(first, second), first.tag === "Equal" ? second : first);
+    }
+  }
 });

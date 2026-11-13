@@ -490,6 +490,48 @@ export const STD: readonly Signature[] = [
     [["list", list(T)], ["with", fnType([INT, T], U)]],
     list(U),
   ),
+  sig(
+    "std.list.any",
+    "Whether the function is true for some item; `false` for the empty list. Stops at the first item for which it is true.",
+    ["T"],
+    [["list", list(T)], ["with", fnType([T], BOOL)]],
+    BOOL,
+  ),
+  sig(
+    "std.list.all",
+    "Whether the function is true for every item; `true` for the empty list. Stops at the first item for which it is false.",
+    ["T"],
+    [["list", list(T)], ["with", fnType([T], BOOL)]],
+    BOOL,
+  ),
+  sig(
+    "std.list.find",
+    "The first item for which the function is true; `None` if there is none. Stops at that item.",
+    ["T"],
+    [["list", list(T)], ["with", fnType([T], BOOL)]],
+    option(T),
+  ),
+  sig(
+    "std.list.filter_map",
+    "Applies the function to every item and keeps the values inside its `Some` results, in order: `map` and `filter` in one.",
+    ["T", "U"],
+    [["list", list(T)], ["with", fnType([T], option(U))]],
+    list(U),
+  ),
+  sig(
+    "std.list.take_while",
+    "The items from the start for which the function is true, up to the first for which it is false. Stops there.",
+    ["T"],
+    [["list", list(T)], ["with", fnType([T], BOOL)]],
+    list(T),
+  ),
+  sig(
+    "std.list.drop_while",
+    "Skips the items from the start for which the function is true: the rest of the list from the first item for which it is false.",
+    ["T"],
+    [["list", list(T)], ["with", fnType([T], BOOL)]],
+    list(T),
+  ),
 
   sig(
     "std.map.empty",
@@ -542,6 +584,29 @@ export const STD: readonly Signature[] = [
     ["K", "V", "T"],
     [["map", map(K, V)], ["with", fnType([K, V], T)]],
     list(T),
+  ),
+
+  sig(
+    "std.option.with_default",
+    "Unwraps an Option: the value inside `Some`, or `default` for `None`.",
+    ["T"],
+    [["option", option(T)], ["default", T]],
+    T,
+  ),
+  sig(
+    "std.option.map",
+    "Applies the function to the value inside `Some`; `None` stays `None`.",
+    ["T", "U"],
+    [["option", option(T)], ["with", fnType([T], U)]],
+    option(U),
+  ),
+
+  sig(
+    "std.order.then_by",
+    "Breaks ties: `first`, unless it is `Equal`; then `second`. Compares by several keys in one expression.",
+    [],
+    [["first", ORDER], ["second", ORDER]],
+    ORDER,
   ),
 
   sig("std.text.show", "Text representation of any value without functions.", ["T"], [["value", T]], STRING, [], [

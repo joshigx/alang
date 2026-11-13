@@ -208,6 +208,8 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
     "std.list",
     "std.log",
     "std.map",
+    "std.option",
+    "std.order",
     "std.random",
     "std.string",
     "std.text",
@@ -281,17 +283,20 @@ Deno.test("queries: search(type) matches signatures by pattern", async () => {
     "std.list.append",
     "std.list.concat",
     "std.list.drop",
+    "std.list.drop_while",
     "std.list.enumerate",
     "std.list.filter",
+    "std.list.filter_map",
     "std.list.map",
     "std.list.sort",
     "std.list.take",
+    "std.list.take_while",
     "std.list.window",
   ]);
   // A type variable stands for one type throughout a signature.
   assertEquals(names("List<Int>, Int -> List<Int>"), ["std.list.append", "std.list.drop", "std.list.take"]);
   assertEquals(names("List<Int>, String -> List<Int>"), []);
-  assertEquals(names("List<String>, _ -> List<Int>"), ["std.list.enumerate", "std.list.map"]);
+  assertEquals(names("List<String>, _ -> List<Int>"), ["std.list.enumerate", "std.list.filter_map", "std.list.map"]);
   assertEquals(names("-> _"), [
     "std.console.read_line",
     "std.env.args",

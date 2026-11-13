@@ -1292,6 +1292,49 @@ export function std$list$enumerate<T, U>(list: readonly T[], fn: (index: number,
   return list.map((x, i) => fn(i, x));
 }
 
+// `any`, `all`, `find`, `take_while` and `drop_while` stop at the item that
+// decides (H3). The function is pure, so stopping shows only as a trap in a
+// later item that does not happen; their docs say so.
+
+export function std$list$any<T>(list: readonly T[], fn: (item: T) => boolean): boolean {
+  for (const x of list) if (fn(x)) return true;
+  return false;
+}
+
+export function std$list$all<T>(list: readonly T[], fn: (item: T) => boolean): boolean {
+  for (const x of list) if (!fn(x)) return false;
+  return true;
+}
+
+export function std$list$find<T>(list: readonly T[], fn: (item: T) => boolean): Option<T> {
+  for (const x of list) if (fn(x)) return Some(x);
+  return None;
+}
+
+export function std$list$filter_map<T, U>(list: readonly T[], fn: (item: T) => Option<U>): readonly U[] {
+  const kept: U[] = [];
+  for (const x of list) {
+    const r = fn(x);
+    if (r.tag === "Some") kept.push(r.value);
+  }
+  return kept;
+}
+
+// The number of items from the start for which the function is true.
+function leading<T>(list: readonly T[], fn: (item: T) => boolean): number {
+  let i = 0;
+  while (i < list.length && fn(list[i])) i++;
+  return i;
+}
+
+export function std$list$take_while<T>(list: readonly T[], fn: (item: T) => boolean): readonly T[] {
+  return list.slice(0, leading(list, fn));
+}
+
+export function std$list$drop_while<T>(list: readonly T[], fn: (item: T) => boolean): readonly T[] {
+  return list.slice(leading(list, fn));
+}
+
 // ---- std.map ----
 // On the AVL tree of `SortedMap` (top of this file).
 
@@ -1354,6 +1397,20 @@ export function std$map$from_list<T, K, V>(
 
 export function std$map$to_list<K, V, T>(map: SortedMap<K, V>, fn: (key: K, value: V) => T): readonly T[] {
   return map_entries(map).map(([k, v]) => fn(k, v));
+}
+
+// ---- std.option, std.order ----
+
+export function std$option$with_default<T>(option: Option<T>, fallback: T): T {
+  return option.tag === "Some" ? option.value : fallback;
+}
+
+export function std$option$map<T, U>(option: Option<T>, fn: (value: T) => U): Option<U> {
+  return option.tag === "Some" ? Some(fn(option.value)) : None;
+}
+
+export function std$order$then_by(first: Order, second: Order): Order {
+  return first.tag === "Equal" ? second : first;
 }
 
 // Text representation (rule 3.9). Records have no runtime type name yet, so
