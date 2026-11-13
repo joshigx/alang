@@ -114,10 +114,18 @@ function toOrder(n: number): Order {
 // Integers from -(2^53 - 1) to 2^53 - 1; leaving the range traps. Generated
 // code passes the full name of the definition the operation is written in,
 // so that the trap names it.
+//
+// An Int is never -0 (JavaScript gives it for `0 * -1` and for
+// `Math.trunc(-1 / 2)`), so that equal Ints are the same value everywhere,
+// also after `std.int.to_float` (3.9). A Float keeps IEEE's -0.0.
+
+function intZero(r: number): number {
+  return r === 0 ? 0 : r;
+}
 
 function int(op: string, a: number, b: number, r: number, definition: string): number {
   if (!Number.isSafeInteger(r)) trap("overflow", definition, `${a} ${op} ${b}`, "Int overflow.");
-  return r;
+  return intZero(r);
 }
 
 export const int_add = (a: number, b: number, definition: string): number => int("+", a, b, a + b, definition);
@@ -863,7 +871,7 @@ export function std$time$now_milliseconds(): number {
 export function std$int$parse(text: string): Option<number> {
   if (!/^-?[0-9]+$/.test(text)) return None;
   const n = Number(text);
-  return Number.isSafeInteger(n) ? Some(n) : None;
+  return Number.isSafeInteger(n) ? Some(intZero(n)) : None;
 }
 
 export function std$int$to_float(value: number): number {
@@ -877,7 +885,7 @@ export function std$int$compare(left: number, right: number): Order {
 export function std$float$floor(value: number): number {
   const r = Math.floor(value);
   if (!Number.isSafeInteger(r)) trap("overflow", "std.float.floor", String(value), "Float outside the Int range.");
-  return r;
+  return intZero(r);
 }
 
 export function std$string$trim(text: string): string {
