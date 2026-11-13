@@ -465,7 +465,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | --- | --- |
 | `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
 | Functions on `Map` | A `List` of records |
-| `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6), `std.int.min`, `std.int.max`, searching text or reading its characters | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
+| `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6), searching text or reading its characters | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
 | Function types in your own signatures | Only std functions take functions (`with`, `by`, `handler`) |
@@ -568,6 +568,12 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | `std.int.parse(text: String): Option<Int>` | none | Reads an integer written as an optional `-` and the digits `0` to `9`; leading zeros are allowed (`007` is 7, `-0` is 0). `None` for anything else (`+`, `_`, whitespace, the empty text) and outside the Int range. |
 | `std.int.to_float(value: Int): Float` | none | The same number as a Float. |
 | `std.int.compare(left: Int, right: Int): Order` | none | Orders two integers. |
+| `std.int.min(left: Int, right: Int): Int` | none | The smaller of two integers. |
+| `std.int.max(left: Int, right: Int): Int` | none | The larger of two integers. |
+| `std.int.abs(value: Int): Int` | none | The value without its sign. |
+| `std.int.checked_add(left: Int, right: Int): Option<Int>` | none | The sum; `None` if it is outside the Int range. |
+| `std.int.checked_subtract(left: Int, right: Int): Option<Int>` | none | The difference; `None` if it is outside the Int range. |
+| `std.int.checked_multiply(left: Int, right: Int): Option<Int>` | none | The product; `None` if it is outside the Int range. |
 | `std.float.floor(value: Float): Int` | none | The largest integer not above the value; traps outside the Int range. |
 | `std.string.trim(text: String): String` | none | Removes leading and trailing whitespace, line breaks included. |
 | `std.string.length(text: String): Int` | none | Number of Unicode scalar values. |

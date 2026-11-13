@@ -882,6 +882,38 @@ export function std$int$compare(left: number, right: number): Order {
   return toOrder(left - right);
 }
 
+export function std$int$min(left: number, right: number): number {
+  return left <= right ? left : right;
+}
+
+export function std$int$max(left: number, right: number): number {
+  return left >= right ? left : right;
+}
+
+// Cannot leave the range, which is symmetric.
+export function std$int$abs(value: number): number {
+  return value < 0 ? -value : value;
+}
+
+// A result outside the range is a value here, not a trap. Below 2^53 every
+// sum, difference and product of Ints is exact, and rounding keeps a larger
+// one outside, so the test is the same as for `+ - *`.
+function checkedInt(r: number): Option<number> {
+  return Number.isSafeInteger(r) ? Some(intZero(r)) : None;
+}
+
+export function std$int$checked_add(left: number, right: number): Option<number> {
+  return checkedInt(left + right);
+}
+
+export function std$int$checked_subtract(left: number, right: number): Option<number> {
+  return checkedInt(left - right);
+}
+
+export function std$int$checked_multiply(left: number, right: number): Option<number> {
+  return checkedInt(left * right);
+}
+
 export function std$float$floor(value: number): number {
   const r = Math.floor(value);
   if (!Number.isSafeInteger(r)) trap("overflow", "std.float.floor", String(value), "Float outside the Int range.");

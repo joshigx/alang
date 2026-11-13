@@ -230,6 +230,30 @@ export const STD: readonly Signature[] = [
   ),
   sig("std.int.to_float", "The same number as a Float.", [], [["value", INT]], FLOAT),
   sig("std.int.compare", "Orders two integers.", [], [["left", INT], ["right", INT]], ORDER),
+  sig("std.int.min", "The smaller of two integers.", [], [["left", INT], ["right", INT]], INT),
+  sig("std.int.max", "The larger of two integers.", [], [["left", INT], ["right", INT]], INT),
+  sig("std.int.abs", "The value without its sign.", [], [["value", INT]], INT),
+  sig(
+    "std.int.checked_add",
+    "The sum; `None` if it is outside the Int range.",
+    [],
+    [["left", INT], ["right", INT]],
+    option(INT),
+  ),
+  sig(
+    "std.int.checked_subtract",
+    "The difference; `None` if it is outside the Int range.",
+    [],
+    [["left", INT], ["right", INT]],
+    option(INT),
+  ),
+  sig(
+    "std.int.checked_multiply",
+    "The product; `None` if it is outside the Int range.",
+    [],
+    [["left", INT], ["right", INT]],
+    option(INT),
+  ),
 
   sig("std.float.floor", "The largest integer not above the value; traps outside the Int range.", [], [[
     "value",
