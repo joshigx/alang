@@ -670,7 +670,16 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
 - **A duplicate map key is reported at the later entry** (`"a": 2`), which is canonical text; like E0228, a fix
   located by quoted text could match the wrong place, but E0234 has no fix.
 - **Discovery is still the open question for the next round** (plan, section 6): every new rule is in a doc line,
-  but `context` of a std function is one call per function.
+  but `context` of a std function is one call per function. Checked against the plan's table with `alang db search`:
+  every word finds what it predicts except two. "look up" finds nothing, since the doc of `std.map.get` says "Looks
+  up" (the substring "look" finds it); "tie" also finds `std.float.to_fixed`, through "Infinities". `search_type`
+  gives exactly the plan's hits for all seven patterns.
+- **A mistyped local as a map key gets the quote fix.** `[nmae: 1]` with a local `name` is E0203 with the fix
+  `"nmae"`, not the closest-name fix `name`, since the hint applies to every unknown one-segment name (as planned).
+  A key is far more often meant as text than as a misspelled local, but both readings fit the message.
+- **The plan's `logstat` key lines are accepted** (checked in a scratch program, not a test): a lambda nested in the
+  lambda of a `fold`, a record-valued `Map` updated through `std.option.map` and `with_default`, `with: parse_line`
+  passed to `filter_map`, and a sort by two keys with `then_by`.
 
 ## Spec observations
 
