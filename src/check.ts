@@ -10,7 +10,7 @@
 import type { Arg, Definition, Expr, FnDef, Literal, Path, Pattern, Stmt, TypeDef, TypeRef } from "./ast.ts";
 import { type Effect, EFFECTS, moduleOf, pathText } from "./ast.ts";
 import { type Diagnostic, diagnostic, type Fix } from "./diagnostic.ts";
-import { printExpr, printStmts, printTypeRef } from "./printer.ts";
+import { printExpr, printStmts, printString, printTypeRef } from "./printer.ts";
 import { type Signature, STD, STD_TYPES } from "./std.ts";
 import {
   BOOL,
@@ -27,6 +27,7 @@ import {
   isBottom,
   isCon,
   list,
+  map,
   NEVER,
   option,
   ORDER,
@@ -647,6 +648,8 @@ class DefChecker {
         return this.construct(e, scope, expected);
       case "list":
         return this.listLiteral(e, scope, expected);
+      case "map":
+        return this.mapLiteral(e, scope, expected);
       case "binary":
         return this.binary(e, scope);
       case "not":
@@ -1107,18 +1110,9 @@ class DefChecker {
   private listLiteral(e: Extract<Expr, { kind: "list" }>, scope: Scope, expected: Type | null): Type {
     const want = expected !== null && isCon(expected, "List") ? expected.args[0] : null;
     if (e.items.length === 0) {
-      const empty = want !== null && writable(want)
-        ? printExpr({
-          kind: "call",
-          path: ["std", "list", "empty"],
-          typeArgs: [toTypeRef(want, this.module)],
-          args: [],
-        }, "")
-        : null;
-      this.report("E0228", "[]", "The empty list is written `std.list.empty<T>()`, with its item type (1.4).", {
-        expected: empty ?? "std.list.empty<T>()",
-        fix: empty ? { replace: "[]", with: empty } : undefined,
-      });
+      // Where a map is expected, the message and fix are those of the empty map (H6).
+      if (expected !== null && isCon(expected, "Map")) this.emptyMap("[]", expected.args);
+      else this.emptyList("[]", want);
       return ERROR;
     }
     let itemType = want;
@@ -1127,6 +1121,99 @@ class DefChecker {
       if (itemType === null && t.k !== "never") itemType = t;
     }
     return itemType === null ? ERROR : list(itemType);
+  }
+
+  // `["a": 1, "b": 2]`: the key and value types come from the expected type,
+  // otherwise from the first entry (1.4), as for a list. The empty map has
+  // one spelling, `std.map.empty<K, V>()` (E0228).
+  private mapLiteral(e: Extract<Expr, { kind: "map" }>, scope: Scope, expected: Type | null): Type {
+    const want = expected !== null && isCon(expected, "Map") ? expected.args : null;
+    if (e.entries.length === 0) {
+      if (expected !== null && isCon(expected, "List")) this.emptyList("[:]", expected.args[0]);
+      else this.emptyMap("[:]", want);
+      return ERROR;
+    }
+    let keyType = want ? want[0] : null;
+    let valueType = want ? want[1] : null;
+    const literalKeys = new Set<string>();
+    for (const entry of e.entries) {
+      const k = this.unknownKey(entry.key, scope) ? ERROR : this.expr(entry.key, scope, keyType);
+      if (keyType === null && k.k !== "never") keyType = k;
+      const v = this.expr(entry.value, scope, valueType);
+      if (valueType === null && v.k !== "never") valueType = v;
+      // Two equal literal keys (M3); a computed duplicate traps at runtime.
+      if ((entry.key.kind === "int" || entry.key.kind === "string") && !isBottom(k)) {
+        const id = `${entry.key.kind} ${entry.key.value}`;
+        if (literalKeys.has(id)) {
+          const key = printExpr(entry.key, "");
+          this.report(
+            "E0234",
+            firstLine(`${key}: ${printExpr(entry.value, "")}`),
+            `The key \`${key}\` already has an entry in this map; write each key once.`,
+          );
+        }
+        literalKeys.add(id);
+      }
+    }
+    if (keyType === null || valueType === null) return ERROR;
+    // An expected Map type was checked where it was written (or built), so
+    // only an inferred key type is checked here (E0229).
+    if (want === null && !keyOk(keyType)) {
+      if (expected === null || !containsError(expected)) this.badKey(firstLine(printExpr(e, "")), keyType);
+      return ERROR;
+    }
+    return map(keyType, valueType);
+  }
+
+  // A bare unknown name as a map key, the habit of JavaScript's object keys
+  // (5.7): E0203 with the key in quotes as the fix. Whether it is one.
+  private unknownKey(key: Expr, scope: Scope): boolean {
+    if (key.kind !== "name" || key.path.length !== 1) return false;
+    const name = key.path[0];
+    if (scope.lookup(name) !== undefined || this.env.fns.has(`${this.module}.${name}`)) return false;
+    const quoted = printString(name);
+    this.report(
+      "E0203",
+      name,
+      `Unknown name \`${name}\`; a map key is a value, so a text key is written in quotes: \`${quoted}\`.`,
+      { expected: quoted, fix: { replace: name, with: quoted } },
+    );
+    this.info.types.set(key, ERROR);
+    return true;
+  }
+
+  // E0228 for the empty list, at `[]` (or at `[:]` where a list is
+  // expected). The fix names the item type, if the expected type gives one
+  // that can be written.
+  private emptyList(at: string, item: Type | null): void {
+    const empty = item !== null && writable(item)
+      ? printExpr(
+        { kind: "call", path: ["std", "list", "empty"], typeArgs: [toTypeRef(item, this.module)], args: [] },
+        "",
+      )
+      : null;
+    this.report("E0228", at, "The empty list is written `std.list.empty<T>()`, with its item type (1.4).", {
+      expected: empty ?? "std.list.empty<T>()",
+      fix: empty ? { replace: at, with: empty } : undefined,
+    });
+  }
+
+  // E0228 for the empty map, at `[:]` (or at `[]` where a map is expected).
+  private emptyMap(at: string, types: readonly Type[] | null): void {
+    const empty = types !== null && types.every(writable)
+      ? printExpr({
+        kind: "call",
+        path: ["std", "map", "empty"],
+        typeArgs: types.map((t) => toTypeRef(t, this.module)),
+        args: [],
+      }, "")
+      : null;
+    this.report(
+      "E0228",
+      at,
+      "The empty map is written `std.map.empty<K, V>()`, with its key and value types (1.4).",
+      { expected: empty ?? "std.map.empty<K, V>()", fix: empty ? { replace: at, with: empty } : undefined },
+    );
   }
 
   private binary(e: Extract<Expr, { kind: "binary" }>, scope: Scope): Type {
@@ -1244,7 +1331,9 @@ class DefChecker {
           this.report(
             "E0204",
             firstLine(printExpr(e.iterable, "")),
-            `\`for\` iterates over a List, found \`${this.show(it)}\`.`,
+            `\`for\` iterates over a List, found \`${this.show(it)}\`${
+              isCon(it, "Map") ? "; take `std.map.keys` or `std.map.to_list` of it." : "."
+            }`,
           );
         }
         const body = scope.child();

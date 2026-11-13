@@ -45,6 +45,9 @@ export type Expr =
   // `[a, b, c]`: at least one item in valid text; `[]` parses so that the
   // checker can name the empty list's one spelling (E0228).
   | { readonly kind: "list"; readonly items: readonly Expr[] }
+  // `["a": 1, "b": 2]`: at least one entry in valid text; `[:]` parses so
+  // that the checker can name the empty map's one spelling (E0228).
+  | { readonly kind: "map"; readonly entries: readonly MapEntry[] }
   | { readonly kind: "binary"; readonly op: BinaryOp; readonly left: Expr; readonly right: Expr }
   | { readonly kind: "not"; readonly operand: Expr }
   | {
@@ -67,6 +70,11 @@ export type Expr =
     readonly out: TypeRef;
     readonly body: Expr;
   };
+
+export interface MapEntry {
+  readonly key: Expr;
+  readonly value: Expr;
+}
 
 // Record construction carries named args (`Port(value: 1)`), a variant case
 // carries at most one unnamed value (`OutOfRange(n)`), rule 4.2.

@@ -67,6 +67,22 @@ Deno.test("codebase: a list literal is stored in canonical form", async () => {
   await done(cb);
 });
 
+Deno.test("codebase: a map literal is stored in canonical form", async () => {
+  const cb = await fresh();
+  const canonical = fn("m.counts", {
+    out: "Map<String, Int>",
+    examples: ['counts() == ["a": 1, "b": 2]'],
+    body: 'return ["b": 2, "a": 1]',
+  });
+  const written = canonical
+    .replace('counts() == ["a": 1, "b": 2]', 'counts() == [ "a" :1 ,"b":  2 ]')
+    .replace('return ["b": 2, "a": 1]', 'return [\n      "b"\n      : 2,\n      "a": 1\n    ]');
+  const r = await ok(cb, [add(written)]);
+  assertEquals(cb.definition("m.counts").text, canonical);
+  assertEquals(r.written.map((w) => w.hash), [hashText(canonical)]);
+  await done(cb);
+});
+
 Deno.test("codebase: history records each change in order", async () => {
   const cb = await withPort();
   const h1 = hashOf(cb, "net.port.parse");

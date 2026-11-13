@@ -4,6 +4,7 @@
 import { assert_, assertEquals, assertThrows } from "./assert.ts";
 import { ENDING_PROGRAM, IO_PROGRAM } from "./io_program.ts";
 import { AlangError } from "../src/diagnostic.ts";
+import * as rt from "../src/runtime.ts";
 import { Trap } from "../src/runtime.ts";
 import { build, type Built, compile, permissionsFor, run, testExamples, writeEntry } from "../src/toolchain.ts";
 import { parseProgram } from "../src/parser.ts";
@@ -561,6 +562,99 @@ fn lists.main
 end fn lists.main
 `;
 
+const MAPS = `
+type maps.Point
+  doc: "A point."
+  record:
+    x: Int
+    y: Int
+  where: none
+end type maps.Point
+
+fn maps.corners
+  doc: "Two named points."
+  in: none
+  out: Map<String, Point>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    corners() == ["low": Point(x: 0, y: 0), "high": Point(x: 9, y: 9)]
+  body:
+    return ["low": Point(x: 0, y: 0), "high": Point(x: 9, y: 9)]
+end fn maps.corners
+
+fn maps.options
+  doc: "A map whose first value is None, typed by its declaration, and one more entry."
+  in: none
+  out: Map<String, Option<Int>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    options() == ["a": None, "b": Some(2), "c": Some(3)]
+  body:
+    let fixed: Map<String, Option<Int>> = ["a": None, "b": Some(2)]
+    return std.map.insert(map: fixed, key: "c", value: Some(3))
+end fn maps.options
+
+fn maps.grown
+  doc: "A literal whose type comes from its first entry, then extended by None."
+  in: none
+  out: Map<String, Option<Int>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    grown() == ["a": Some(1), "b": None]
+  body:
+    return std.map.insert(map: ["a": Some(1)], key: "b", value: None)
+end fn maps.grown
+
+fn maps.pair
+  doc: "Two keys with their values."
+  in:
+    first: String
+    second: String
+  out: Map<String, Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    pair(first: "b", second: "a") == ["a": 2, "b": 1]
+  body:
+    return [first: 1, second: 2]
+end fn maps.pair
+
+fn maps.say
+  doc: "Prints the text and returns it."
+  in:
+    text: String
+  out: String
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    std.console.print_line(text: text)
+    return text
+end fn maps.say
+
+fn maps.main
+  doc: "Builds a map whose entries print, then prints the map."
+  in: none
+  out: Unit
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let m: Map<String, String> = [say(text: "b"): say(text: "2"), say(text: "a"): say(text: "1")]
+    std.console.print_line(text: std.text.show(value: m))
+    return Unit
+end fn maps.main
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
@@ -572,6 +666,7 @@ const PROGRAMS: Record<string, string> = {
   steps: STEPS,
   kinds: KINDS,
   lists: LISTS,
+  maps: MAPS,
   io: IO_PROGRAM,
   ending: ENDING_PROGRAM,
 };
@@ -590,6 +685,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
     await writeEntry(built.app),
     await writeEntry(built.steps, "steps.main"),
     await writeEntry(built.lists, "lists.main"),
+    await writeEntry(built.maps, "maps.main"),
     await writeEntry(built.io),
     // A `Result` main reads `.tag`, which a `Unit` main's entry must not.
     await writeEntry(built.ending),
@@ -669,6 +765,7 @@ Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(STEPS)), STEPS.trimStart());
   assertEquals(printProgram(parseProgram(KINDS)), KINDS.trimStart());
   assertEquals(printProgram(parseProgram(LISTS)), LISTS.trimStart());
+  assertEquals(printProgram(parseProgram(MAPS)), MAPS.trimStart());
   assertEquals(printProgram(parseProgram(IO_PROGRAM)), IO_PROGRAM);
   assertEquals(printProgram(parseProgram(ENDING_PROGRAM)), ENDING_PROGRAM);
 });
@@ -740,6 +837,29 @@ Deno.test("emit: list literals run, typed as their checked type", async () => {
   // Items with effects are awaited from left to right.
   const out = await run(built.lists, { stdio: "piped", main: "lists.main" });
   assertEquals([out.code, text(out.stdout).split("\n")], [0, ["one", "three", "3", "5"]]);
+});
+
+Deno.test("emit: map literals run, typed as their checked type", async () => {
+  assertEquals((await testExamples(built.maps)).filter((r) => !r.passed), []);
+  const ts = await Deno.readTextFile(built.maps.outPath);
+  assert_(
+    ts.includes('$rt.map_literal<string, $rt.Option<number>>([["a", $rt.None], ["b", $rt.Some(2)]], "maps.options")'),
+    ts,
+  );
+  assert_(ts.includes("export function maps$corners(): $rt.SortedMap<string, maps$Point> {"), ts);
+  const mod = await load("maps");
+  assertEquals(rt.map_entries(mod.maps$grown()), [["a", rt.Some(1)], ["b", rt.None]]);
+  // Two computed keys that are equal trap, naming the definition.
+  const trap = assertThrows(() => mod.maps$pair("a", "a"), Trap);
+  assertEquals([trap.kind, trap.definition, trap.at, trap.message], [
+    "key",
+    "maps.pair",
+    '"a"',
+    'The key "a" appears twice in a map literal.',
+  ]);
+  // Entries run from left to right, each key before its value; the map is in key order.
+  const out = await run(built.maps, { stdio: "piped", main: "maps.main" });
+  assertEquals([out.code, text(out.stdout).split("\n")], [0, ["b", "2", "a", "1", '["a": "1", "b": "2"]']]);
 });
 
 Deno.test("emit: an if as a list item is not compiled yet (E0303)", () => {

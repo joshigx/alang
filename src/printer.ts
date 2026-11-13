@@ -215,6 +215,9 @@ export function printExpr(e: Expr, indent: string): string {
       return pathText(e.path) + printPayload(e.payload, indent);
     case "list":
       return `[${e.items.map((x) => printExpr(x, indent)).join(", ")}]`;
+    case "map":
+      if (e.entries.length === 0) return "[:]";
+      return `[${e.entries.map((x) => `${printExpr(x.key, indent)}: ${printExpr(x.value, indent)}`).join(", ")}]`;
     case "binary":
       return `${operand(e, e.left, "left", indent)} ${e.op} ${operand(e, e.right, "right", indent)}`;
     case "not":

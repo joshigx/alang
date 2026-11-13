@@ -662,6 +662,112 @@ Deno.test("check: maps through the std functions", () => {
   clean(source.replace(d.at, d.at.replace(d.fix!.replace, d.fix!.with)));
 });
 
+Deno.test("check: a map literal takes its types from the expected type, else from the first entry (1.4)", () => {
+  clean(fn('let m: Map<String, Int> = ["a": 1, "b": 2]\nreturn std.map.size(map: m)'));
+  clean(fn('return std.map.size(map: ["a": 1, "b": 2])'));
+  clean(fn('return std.map.size(map: [1: ["x"], 2: std.list.empty<String>()])'));
+  clean(fn("let m: Map<Int, List<Point>> = [1: [Point(x: 1, y: 2)]]\nreturn std.map.size(map: m)", { extra: POINT }));
+  clean(fn('return ["b": 2, "a": 1] == ["a": 1, "b": 2]', { out: "Bool" }));
+  // The expected type reaches every entry, so `None` first is fine there.
+  clean(fn('let m: Map<String, Option<Int>> = ["a": None, "b": Some(1)]\nreturn std.map.size(map: m)'));
+  one(fn('return std.map.size(map: ["a": None, "b": Some(1)])'), "E0210");
+  const mixed = one(fn('let m: Map<String, Float> = ["a": 1.0, "b": 2]\nreturn 0'), "E0204");
+  assertEquals([mixed.at, mixed.fix], ["2", { replace: "2", with: "2.0" }]);
+  one(fn("let m: Map<String, Int> = [1: 1]\nreturn 0"), "E0204");
+  one(fn('let m: Map<String, Int> = ["a": 1, 2: 2]\nreturn 0'), "E0204");
+  one(fn('let x: Int = ["a": 1]\nreturn x'), "E0204");
+  // An inferred key type that is not Int or String; a written one is reported once, where it is written.
+  const inferred = one(fn("return std.map.size(map: [1.5: 1])"), "E0229");
+  assertEquals([inferred.at, inferred.message], ["[1.5: 1]", keyMessage("Float")]);
+  assertEquals(one(fn("return std.map.size(map: [[1]: 1])"), "E0229").message, keyMessage("List<Int>"));
+  const written = one(fn("let m: Map<Point, Int> = [Point(x: 1, y: 2): 1]\nreturn 0", { extra: POINT }), "E0229");
+  assertEquals(written.at, "Map<Point, Int>");
+});
+
+Deno.test("check: a literal key written twice is E0234; a bare unknown name as a key gets quotes (E0203)", () => {
+  const twice = one(fn('return std.map.size(map: ["a": 1, "b": 2, "a": 3])'), "E0234");
+  assertEquals([twice.at, twice.message, twice.expected, twice.fix], [
+    '"a": 3',
+    'The key `"a"` already has an entry in this map; write each key once.',
+    null,
+    null,
+  ]);
+  assertEquals(one(fn('return std.map.size(map: [1: "x", 1: "y"])'), "E0234").at, '1: "y"');
+  assertEquals(
+    one(fn("return std.map.size(map: [-1: 0, -1: 1])"), "E0234").message,
+    "The key `-1` already has an entry in this map; write each key once.",
+  );
+  // Computed keys trap at runtime instead, if they are equal.
+  clean(fn("return std.map.size(map: [x: 1, y: 2])", { params: ["x: String", "y: String"] }));
+  clean(fn("return std.map.size(map: [1: 1, -1: 2, 2: 3])"));
+  // The habit from JavaScript object keys (5.7).
+  const source = fn("let m: Map<String, Int> = [name: 1, other: 2]\nreturn std.map.size(map: m)");
+  const ds = check(source);
+  assertEquals(ds.map((d) => [d.code, d.at, d.message, d.expected, d.fix]), [
+    [
+      "E0203",
+      "name",
+      'Unknown name `name`; a map key is a value, so a text key is written in quotes: `"name"`.',
+      '"name"',
+      {
+        replace: "name",
+        with: '"name"',
+      },
+    ],
+    [
+      "E0203",
+      "other",
+      'Unknown name `other`; a map key is a value, so a text key is written in quotes: `"other"`.',
+      '"other"',
+      {
+        replace: "other",
+        with: '"other"',
+      },
+    ],
+  ]);
+  clean(source.replace("[name: 1, other: 2]", '["name": 1, "other": 2]'));
+  // A local or a function of the module is a key like any other value.
+  clean(fn("return std.map.size(map: [g(): 1])", { extra: G }));
+  // A for over a map names the ways to a list.
+  const loop = one(
+    fn('for k: String in ["a": 1] do\n  std.console.print_line(text: k)\nend for\nreturn 0', { effects: "console" }),
+    "E0204",
+  );
+  assertEquals(
+    loop.message,
+    "`for` iterates over a List, found `Map<String, Int>`; take `std.map.keys` or `std.map.to_list` of it.",
+  );
+});
+
+Deno.test("check: the empty map is written std.map.empty<K, V>() (E0228), in both directions", () => {
+  const mapMessage = "The empty map is written `std.map.empty<K, V>()`, with its key and value types (1.4).";
+  const listMessage = "The empty list is written `std.list.empty<T>()`, with its item type (1.4).";
+  const sites: [string, Parameters<typeof fn>[1], string, string, string][] = [
+    ["let m: Map<String, Int> = [:]\nreturn 0", {}, "[:]", mapMessage, "std.map.empty<String, Int>()"],
+    [
+      "return m == [:]",
+      { params: ["m: Map<Int, Point>"], out: "Bool", extra: POINT },
+      "[:]",
+      mapMessage,
+      "std.map.empty<Int, Point>()",
+    ],
+    ["let m: Map<String, Int> = []\nreturn 0", {}, "[]", mapMessage, "std.map.empty<String, Int>()"],
+    ["let xs: List<Int> = [:]\nreturn 0", {}, "[:]", listMessage, "std.list.empty<Int>()"],
+    ['let m: Map<String, List<Int>> = ["a": [:]]\nreturn 0', {}, "[:]", listMessage, "std.list.empty<Int>()"],
+  ];
+  for (const [body, o, at, message, empty] of sites) {
+    const source = fn(body, o);
+    const d = one(source, "E0228");
+    assertEquals([d.at, d.message, d.expected, d.fix], [at, message, empty, { replace: at, with: empty }]);
+    clean(source.replace(at, empty));
+  }
+  // Without expected types, or with a function type among them, there is no fix.
+  const bare = one(fn("return std.map.size(map: [:])"), "E0228");
+  assertEquals([bare.message, bare.expected, bare.fix], [mapMessage, "std.map.empty<K, V>()", null]);
+  const fns = one(fn('return std.list.length(list: [["a": g], [:]])', { extra: G }), "E0228");
+  assertEquals([fns.expected, fns.fix], ["std.map.empty<K, V>()", null]);
+});
+
 // ---- contracts and examples ----
 
 Deno.test("check: contracts see the right names", () => {

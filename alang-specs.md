@@ -221,7 +221,7 @@ let        = "let" name ":" type "=" expr [ "else" "return" expr ] ;
 return     = "return" expr ;
 for        = "for" name ":" type "in" expr "do" stmt { stmt } "end" "for" ;
 
-expr       = if | match | for | lambda | call | construct | list
+expr       = if | match | for | lambda | call | construct | list | map
            | binary | unary | field | literal | name ;
 if         = "if" expr "then" stmt { stmt } [ "else" stmt { stmt } ] "end" "if" ;
 match      = "match" expr arm { arm } "end" "match" ;
@@ -232,6 +232,7 @@ call       = path [ "<" type { "," type } ">" ] "(" [ arg { "," arg } ] ")" ;
 arg        = name ":" expr ;
 construct  = TypePath [ "(" ( arg { "," arg } | expr ) ")" ] ;
 list       = "[" expr { "," expr } "]" ;
+map        = "[" expr ":" expr { "," expr ":" expr } "]" ;
 ```
 
 ## 4. Nothing to count, nothing to simulate
@@ -482,8 +483,8 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Numbers.** An integer with more than four digits is grouped in threes with `_` (`65_535`, `1_000_000`); `65535`, `1_000` and leading zeros are errors (4.7). A float is written `digits.digits` (`1.0`, `0.25`), never `1.`, `.5` or `1e3`. A negative number is a literal (`-3`, `-0.5`). There is no minus in front of other expressions; write `0 - x`.
 - **Other values.** `true`, `false`, and `Unit`, the one value of the type `Unit`.
 - **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them.
-- **Foreign forms.** `===`, `!==`, `&&`, `||`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7).
-- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction and inside the brackets of a list, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
+- **Foreign forms.** `===`, `!==`, `&&`, `||`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7). The message for `{` and `}` names the map literal `[key: value]`, and the one for index access names `std.list.get` and `std.map.get`.
+- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction and inside the brackets of a list or a map, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
 - **Files.** In a file given to `alang check` or `alang run`, the order of definitions has no meaning (6.2). The stored text and the export sort them by name, with one empty line between them.
 
 ### 7.3 Definitions and names
@@ -516,6 +517,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 - **Calls and construction (4.1).** Every argument is named, in declaration order, with none left out and none given twice (E0205 to E0208): `std.string.concat(left: a, right: b)`, `Port(value: 8080)`. A case's value has no name: `Some(n)`, `Err(OutOfRange(n))`. Fields are read with a dot (`request.path`). There are no method calls (`x.f()`, E0220).
 - **Lists.** `[1, 2, 3]` is a `List<Int>`. A list literal has at least one item; the stored text separates the items with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The item type comes from the expected type (a `let`, a parameter, `out` at a `return`, the left side of `==`), otherwise from the first item, and every other item must have it: `[1.0, 2]` is an error (E0204), and so is `[None, Some(1)]` without an expected type (E0210). The empty list is `std.list.empty<Int>()`; `[]` is an error whose fix names the item type when the expected type gives it (E0228). There is no index access (`xs[0]`) and no `Int[]` (E0006): use `std.list.get(list: xs, index: 0)` and `List<Int>`.
+- **Maps.** `["a": 1, "b": 2]` is a `Map<String, Int>`. Every entry is `key: value`, with no space before the colon and one after it; a map literal has at least one entry, the stored text separates the entries with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The token after the first expression decides: a `:` makes the literal a map, so every entry has one, the first one too. Keys are `Int` or `String` (E0229), wherever a `Map` type arises: written (`Map<Float, Int>`), in a literal (`[1.5: 1]`), or built by a std call (`std.map.empty<Point, Int>()`, a `std.map.from_list` whose key function returns a record); key a map by an `Int` or `String` field instead, or keep a `List` of records. The key and value types come from the expected type, otherwise from the first entry, as for a list. A key is a value, so a text key is in quotes: `["name": 1]`; a bare unknown name as a key (`[name: 1]`) is E0203 with the quoted text as its fix. Two equal literal keys are an error (E0234); two computed keys that turn out equal trap (`key`). The empty map is `std.map.empty<String, Int>()`; `[:]` is an error whose fix names the types when the expected type gives them (E0228), and so is `[]` where a map is expected. There is no index access (`m["a"]`, E0006): `std.map.get(map: m, key: "a")` gives an `Option`. A `for` iterates over a list, so over `std.map.keys` or `std.map.to_list` of a map (E0204).
 - **Explicit type arguments (1.4).** They are written exactly when a type parameter of the function occurs in no parameter type, and never otherwise (E0209): `std.list.empty<Int>()`, but `std.list.map(list: xs, with: ...)`.
 - **Types flow from left to right (1.4).** `Ok`, `Err` and `None` take their type from what is expected at that point: the type of a `let`, a parameter, `out` at a `return`, or the left side of `==`. Without an expected type they are an error (E0210); `Some(x)` can also take its type from `x`. So the side with a known type comes first: `parse(text: "1") == Ok(...)`, not `None == x`.
 - **Arithmetic.** `+ - * / %` work on two `Int` or two `Float`; nothing is converted implicitly (`std.int.to_float`). `Int` division truncates toward zero, and `%` takes the sign of the dividend (`-7 % 2 == -1`). Division by zero and leaving the `Int` range trap. An `Int` is never negative zero: `0 * -1` and `-1 / 2` are `0`, while a `Float` keeps IEEE's `-0.0`. A `Float` result that is NaN traps (`0.0 / 0.0`); infinities are ordinary values.
@@ -809,8 +811,9 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | --- | --- |
 | E0001 to E0006 | Characters, names, numbers, strings, foreign forms |
 | E0101 to E0199 | Syntax and section order |
-| E0201 to E0228 | Names, types, calls, patterns, examples' form, the empty list |
+| E0201 to E0229 | Names, types, calls, patterns, examples' form, the empty list or map, map keys |
 | E0230 to E0233 | Effects |
+| E0234 | A key written twice in a map literal |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0403 | Missing, failing and trapping examples |
 | E0501 to E0513 | Codebase operations |

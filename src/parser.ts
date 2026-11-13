@@ -11,6 +11,7 @@ import type {
   Expr,
   FnDef,
   Literal,
+  MapEntry,
   Param,
   Path,
   Pattern,
@@ -521,7 +522,10 @@ class Parser {
       e = { kind: "field", target: e, field: this.expectName() };
     }
     if (this.isSymbol("[")) {
-      this.fail("There is no index access; use `std.list.get(list: xs, index: i)` (4.6).", { code: "E0006" });
+      this.fail(
+        "There is no index access; use `std.list.get(list: xs, index: i)` or `std.map.get(map: m, key: k)` (4.6).",
+        { code: "E0006" },
+      );
     }
     return e;
   }
@@ -568,7 +572,7 @@ class Parser {
       this.expectSymbol(")");
       return e;
     }
-    if (this.isSymbol("[")) return this.listExpr();
+    if (this.isSymbol("[")) return this.bracketExpr();
     if (this.isKeyword("if")) return this.ifExpr(false);
     if (this.isKeyword("match")) return this.matchExpr();
     if (this.isKeyword("for")) return this.forExpr();
@@ -619,26 +623,63 @@ class Parser {
     return null;
   }
 
-  // `[a, b, c]`. Line breaks inside the brackets are ignored, as inside
-  // parentheses. `[]` parses, so that the checker can name the empty list's
-  // spelling with its item type (E0228).
-  private listExpr(): Expr {
+  // A list `[a, b, c]` or a map `["a": 1, "b": 2]`: the token after the
+  // first expression decides (1.1). Line breaks inside the brackets are
+  // ignored, as inside parentheses. `[]` and `[:]` parse, so that the
+  // checker can name the empty list's and the empty map's spelling with
+  // their types (E0228).
+  private bracketExpr(): Expr {
     this.expectSymbol("[");
     this.skipNewlines();
+    if (this.isSymbol(":")) {
+      this.next();
+      this.skipNewlines();
+      this.expectSymbol("]");
+      return { kind: "map", entries: [] };
+    }
     const items: Expr[] = [];
     if (!this.isSymbol("]")) {
       items.push(this.expr());
       this.skipNewlines();
+      if (this.isSymbol(":")) return this.mapRest(items[0]);
       while (this.isSymbol(",")) {
         this.next();
         this.skipNewlines();
         if (this.isSymbol("]")) this.fail("A list ends after its last item; remove the comma before `]`.");
         items.push(this.expr());
         this.skipNewlines();
+        if (this.isSymbol(":")) {
+          this.fail("A list holds items without `:`; in a map, every entry is `key: value`, the first one too.");
+        }
       }
     }
     this.expectSymbol("]");
     return { kind: "list", items };
+  }
+
+  // The rest of a map after its first key, at the `:`.
+  private mapRest(first: Expr): Expr {
+    const entries: MapEntry[] = [{ key: first, value: this.entryValue() }];
+    while (this.isSymbol(",")) {
+      this.next();
+      this.skipNewlines();
+      if (this.isSymbol("]")) this.fail("A map ends after its last entry; remove the comma before `]`.");
+      const key = this.expr();
+      this.skipNewlines();
+      if (!this.isSymbol(":")) this.fail("Every entry of a map is `key: value`.");
+      entries.push({ key, value: this.entryValue() });
+    }
+    this.expectSymbol("]");
+    return { kind: "map", entries };
+  }
+
+  // `: value` of a map entry, and the line breaks after it.
+  private entryValue(): Expr {
+    this.expectSymbol(":");
+    this.skipNewlines();
+    const value = this.expr();
+    this.skipNewlines();
+    return value;
   }
 
   private args(): Arg[] {

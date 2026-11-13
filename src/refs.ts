@@ -161,6 +161,8 @@ function rebuild(
       }
       case "list":
         return { kind: "list", items: e.items.map(expr) };
+      case "map":
+        return { kind: "map", entries: e.entries.map((x) => ({ key: expr(x.key), value: expr(x.value) })) };
       case "binary":
         return { kind: "binary", op: e.op, left: expr(e.left), right: expr(e.right) };
       case "not":

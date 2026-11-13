@@ -517,6 +517,17 @@ class DefinitionEmitter {
         const type = `ReadonlyArray<${this.tsType(t.args[0])}>`;
         return `([${e.items.map((x) => this.expr(x, scope)).join(", ")}] satisfies ${type} as ${type})`;
       }
+      case "map": {
+        // With the checked types, for the reason given at `list`. Entries are
+        // evaluated from left to right, each key before its value; a key that
+        // occurs twice traps.
+        const t = this.typeOf(e);
+        if (!isCon(t, "Map")) throw new Error(`map literal without a Map type in ${this.name}`);
+        const entries = e.entries.map((x) => `[${this.expr(x.key, scope)}, ${this.expr(x.value, scope)}]`);
+        return `${RT}.map_literal<${this.tsType(t.args[0])}, ${this.tsType(t.args[1])}>([${entries.join(", ")}], ${
+          JSON.stringify(this.name)
+        })`;
+      }
       case "binary":
         return this.binary(e, scope);
       case "not":

@@ -137,6 +137,22 @@ function lookup<K, V>(m: SortedMap<K, V>, key: K): MapNode<K, V> | null {
   return null;
 }
 
+// A map literal, built entry by entry. A key that occurs twice traps; the
+// checker reports two equal literal keys before (E0234), so this is a
+// computed key.
+export function map_literal<K, V>(entries: ReadonlyArray<readonly [K, V]>, definition: string): SortedMap<K, V> {
+  let root: MapNode<K, V> | null = null;
+  for (const [key, value] of entries) {
+    const [next, existed]: [MapNode<K, V>, boolean] = put(root, key, value);
+    if (existed) {
+      const shown = std$text$show(key);
+      trap("key", definition, shown, `The key ${shown} appears twice in a map literal.`);
+    }
+    root = next;
+  }
+  return new SortedMap(root, entries.length);
+}
+
 // The entries in key order, walked with an explicit stack.
 export function map_entries<K, V>(m: SortedMap<K, V>): (readonly [K, V])[] {
   const entries: (readonly [K, V])[] = [];

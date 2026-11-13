@@ -284,6 +284,23 @@ Deno.test("rename: a call inside a list literal is a reference and is rewritten"
   await done(cb);
 });
 
+Deno.test("rename: calls in the keys and values of a map literal are references and are rewritten", async () => {
+  const cb = await fresh();
+  const one = fn("m.one", { out: "Int", examples: ["one() == 1"], body: "return 1" });
+  const named = fn("m.named", { out: "String", examples: ['named() == "a"'], body: 'return "a"' });
+  const both = fn("other.both", {
+    out: "Map<String, Int>",
+    examples: ['both() == ["a": 1]'],
+    body: "return [m.named(): m.one()]",
+  });
+  await ok(cb, [add(one), add(named), add(both)]);
+  assertEquals([cb.callers("m.one").callers, cb.callers("m.named").callers], [["other.both"], ["other.both"]]);
+  await ok(cb, [rename(cb, "m.one", "m.single"), rename(cb, "m.named", "m.label")]);
+  assertEquals(cb.definition("other.both").text, both.replace("[m.named(): m.one()]", "[m.label(): m.single()]"));
+  assertEquals(cb.callers("m.single").callers, ["other.both"]);
+  await done(cb);
+});
+
 Deno.test("rename: a new name captured by a local binding is rejected (E0510)", async () => {
   // A function value `by: cmp` would read the local `g` after renaming cmp to g.
   const cb = await fresh();

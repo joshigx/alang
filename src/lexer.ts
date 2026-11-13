@@ -85,6 +85,8 @@ const SYMBOLS = [
 ];
 
 // Forms from other languages with a dedicated message (rule 5.7).
+const BRACES =
+  "There are no curly braces; blocks end with `end if`, `end for`, `end match`, `end fn <name>`, and a map is written `[key: value]`.";
 const FOREIGN: readonly { form: string; message: string; replacement?: string }[] = [
   { form: "===", message: "`===` does not exist; equality is `==` for every type.", replacement: "==" },
   { form: "!==", message: "`!==` does not exist; inequality is `!=`.", replacement: "!=" },
@@ -93,14 +95,8 @@ const FOREIGN: readonly { form: string; message: string; replacement?: string }[
   { form: "//", message: "There are no comments; describe a definition in its `doc` section." },
   { form: "/*", message: "There are no comments; describe a definition in its `doc` section." },
   { form: "#", message: "There are no comments; describe a definition in its `doc` section." },
-  {
-    form: "{",
-    message: "There are no curly braces; blocks end with `end if`, `end for`, `end match`, `end fn <name>`.",
-  },
-  {
-    form: "}",
-    message: "There are no curly braces; blocks end with `end if`, `end for`, `end match`, `end fn <name>`.",
-  },
+  { form: "{", message: BRACES },
+  { form: "}", message: BRACES },
   {
     form: "?",
     message: "There is no `?` operator; propagate errors with `let name: Type = expression else return ...`.",

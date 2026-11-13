@@ -223,8 +223,9 @@ Deno.test("lists: literals print on one line and round-trip", () => {
 });
 
 Deno.test("lists: no index access, no T[] and no trailing comma", () => {
-  const index = "There is no index access; use `std.list.get(list: xs, index: i)` (4.6).";
-  for (const source of ["xs[0]", "f(a: 1)[0]", "[1, 2][0]", "p.items[i]"]) {
+  const index =
+    "There is no index access; use `std.list.get(list: xs, index: i)` or `std.map.get(map: m, key: k)` (4.6).";
+  for (const source of ["xs[0]", "f(a: 1)[0]", "[1, 2][0]", "p.items[i]", 'm["a"]', '["a": 1]["a"]']) {
     const d = assertThrows(() => parseExpression(source), AlangError).diagnostic;
     assertEquals([d.code, d.message], ["E0006", index], source);
   }
@@ -239,4 +240,51 @@ Deno.test("lists: no index access, no T[] and no trailing comma", () => {
   assertEquals(code(() => parseExpression("[1,\n]")), "E0101");
   assertEquals(code(() => parseExpression("[1 2]")), "E0101");
   assertEquals(code(() => parseExpression("[1, 2")), "E0101");
+});
+
+Deno.test("maps: literals print on one line and round-trip", () => {
+  assertEquals(canonicalExpr('["a": 1, "b": 2]'), '["a": 1, "b": 2]');
+  // Line breaks and spaces inside the brackets are ignored, around `:` too.
+  assertEquals(canonicalExpr('[\n "a" : 1 ,\n "b":2\n]'), '["a": 1, "b": 2]');
+  assertEquals(canonicalExpr('[\n  "a"\n  :\n  1\n]'), '["a": 1]');
+  assertEquals(canonicalExpr("[1: [2: 3]]"), "[1: [2: 3]]");
+  assertEquals(canonicalExpr('[["a": 1]]'), '[["a": 1]]');
+  assertEquals(canonicalExpr("[-1: 0]"), "[-1: 0]");
+  assertEquals(
+    canonicalExpr('["f": fn(x: Int): Int => x + 1, "g": fn(x: Int): Int => x]'),
+    '["f": fn(x: Int): Int => x + 1, "g": fn(x: Int): Int => x]',
+  );
+  assertEquals(canonicalExpr("[Point(x: 1, y: 2): Some(1), k: f(a: 1)]"), "[Point(x: 1, y: 2): Some(1), k: f(a: 1)]");
+  assertEquals(canonicalExpr('f(a: 1) == ["a": None]'), 'f(a: 1) == ["a": None]');
+  // The empty map parses, so that the checker can give its spelling (E0228).
+  assertEquals(canonicalExpr("[:]"), "[:]");
+  assertEquals(canonicalExpr("[ :\n ]"), "[:]");
+  assertEquals(parseExpression('["a": 1]'), {
+    kind: "map",
+    entries: [{ key: { kind: "string", value: "a" }, value: { kind: "int", value: 1 } }],
+  });
+  assertEquals(parseExpression("[:]"), { kind: "map", entries: [] });
+});
+
+Deno.test("maps: every entry is key: value, without a trailing comma; no braces", () => {
+  const message = (source: string) => {
+    const d = assertThrows(() => parseExpression(source), AlangError).diagnostic;
+    return [d.code, d.message];
+  };
+  assertEquals(message('["a": 1, 2]'), ["E0101", "Every entry of a map is `key: value`."]);
+  assertEquals(message('[1, "a": 2]'), [
+    "E0101",
+    "A list holds items without `:`; in a map, every entry is `key: value`, the first one too.",
+  ]);
+  assertEquals(message('["a": 1, ]'), ["E0101", "A map ends after its last entry; remove the comma before `]`."]);
+  assertEquals(code(() => parseExpression('["a": 1,\n]')), "E0101");
+  assertEquals(code(() => parseExpression("[:1]")), "E0101");
+  assertEquals(code(() => parseExpression('["a": ]')), "E0101");
+  assertEquals(code(() => parseExpression('["a": 1')), "E0101");
+  const braces =
+    "There are no curly braces; blocks end with `end if`, `end for`, `end match`, `end fn <name>`, and a map is written `[key: value]`.";
+  for (const source of ['{"a": 1}', "let m: Int = {}"]) {
+    const d = assertThrows(() => parseStatements(source), AlangError).diagnostic;
+    assertEquals([d.code, d.message], ["E0006", braces], source);
+  }
 });
