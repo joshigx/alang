@@ -465,7 +465,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | --- | --- |
 | `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
 | Functions on `Map` | A `List` of records |
-| `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6) | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
+| Float functions beyond `std.float.floor` (rounding, square root, parsing), padding and repeating text, character codes | A helper function of your own, with recursion and `std.string.concat`; character codes have no replacement yet |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
 | Function types in your own signatures | Only std functions take functions (`with`, `by`, `handler`) |
@@ -546,7 +546,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 ### 7.8 Standard library
 
-This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound from the arguments. A type such as `(T) -> U` is a function parameter; pass a lambda or a function name (7.5). `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
+This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`) are bound from the arguments. A type such as `(T) -> U` is a function parameter; pass a lambda or a function name (7.5). `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
 
 | Function | Effects | Meaning |
 | --- | --- | --- |
@@ -601,6 +601,18 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | `std.list.filter<T>(list: List<T>, with: (T) -> Bool): List<T>` | none | The items for which the function is true. |
 | `std.list.fold<T, A>(list: List<T>, initial: A, with: (A, T) -> A): A` | none | Combines the items from first to last, starting with `initial`. |
 | `std.list.sort<T>(list: List<T>, by: (T, T) -> Order): List<T>` | none | The items in the order given by the comparison; stable. |
+| `std.list.first<T>(list: List<T>): Option<T>` | none | The first item; `None` for the empty list. |
+| `std.list.last<T>(list: List<T>): Option<T>` | none | The last item; `None` for the empty list. |
+| `std.list.take<T>(list: List<T>, count: Int): List<T>` | none | The first `count` items, or the whole list if it is shorter. A negative count traps. |
+| `std.list.drop<T>(list: List<T>, count: Int): List<T>` | none | The list without its first `count` items; empty if it is shorter. A negative count traps. |
+| `std.list.reverse<T>(list: List<T>): List<T>` | none | The items from last to first. |
+| `std.list.concat<T>(left: List<T>, right: List<T>): List<T>` | none | The items of the left list followed by those of the right. |
+| `std.list.flatten<T>(lists: List<List<T>>): List<T>` | none | The items of all the lists, in order. |
+| `std.list.contains<T>(list: List<T>, item: T): Bool` | none | Whether the list holds an item equal to the given one. |
+| `std.list.range(low: Int, high: Int): List<Int>` | none | The integers from `low` to `high`, both included, in ascending order; empty if `low > high`. |
+| `std.list.window<T>(list: List<T>, size: Int): List<List<T>>` | none | Every run of `size` neighbouring items, from first to last; empty if the list is shorter. A size below 1 traps. |
+| `std.list.zip<T, U, V>(left: List<T>, right: List<U>, with: (T, U) -> V): List<V>` | none | Combines the items of two lists pair by pair with the function. Lists of different lengths trap. |
+| `std.list.enumerate<T, U>(list: List<T>, with: (Int, T) -> U): List<U>` | none | Applies the function to the index of every item, counting from 0, and the item. |
 | `std.text.show<T>(value: T): String` | none | Text representation of any value without functions. |
 
 The std types, written in alang:

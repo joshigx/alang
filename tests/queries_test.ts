@@ -267,18 +267,30 @@ Deno.test("queries: search(type) matches signatures by pattern", async () => {
   assertEquals(names("String -> Option<Int>"), ["std.int.parse"]);
   assertEquals(names("String -> Result<String, _>"), ["std.fs.read_text"]);
   // std type variables match anything; a function-typed parameter only `_`.
-  assertEquals(names("List<_>, Int -> _"), ["std.list.append", "std.list.get"]);
+  assertEquals(names("List<_>, Int -> _"), [
+    "std.list.append",
+    "std.list.contains",
+    "std.list.drop",
+    "std.list.get",
+    "std.list.take",
+    "std.list.window",
+  ]);
   assertEquals(names("List<_>, Int -> Option<_>"), ["std.list.get"]);
   assertEquals(names("List<Int>, _ -> List<_>"), [
     "std.list.append",
+    "std.list.concat",
+    "std.list.drop",
+    "std.list.enumerate",
     "std.list.filter",
     "std.list.map",
     "std.list.sort",
+    "std.list.take",
+    "std.list.window",
   ]);
   // A type variable stands for one type throughout a signature.
-  assertEquals(names("List<Int>, Int -> List<Int>"), ["std.list.append"]);
+  assertEquals(names("List<Int>, Int -> List<Int>"), ["std.list.append", "std.list.drop", "std.list.take"]);
   assertEquals(names("List<Int>, String -> List<Int>"), []);
-  assertEquals(names("List<String>, _ -> List<Int>"), ["std.list.map"]);
+  assertEquals(names("List<String>, _ -> List<Int>"), ["std.list.enumerate", "std.list.map"]);
   assertEquals(names("-> _"), [
     "std.console.read_line",
     "std.env.args",

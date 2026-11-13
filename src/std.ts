@@ -97,10 +97,14 @@ export interface Signature {
   readonly out: Type;
   readonly effects: readonly Effect[];
   readonly doc: string;
+  // Type parameters that may not be bound to a type with function values,
+  // since the function compares or shows values (3.9, E0222).
+  readonly withoutFunctions?: readonly string[];
 }
 
 const T = tvar("T");
 const U = tvar("U");
+const V = tvar("V");
 const A = tvar("A");
 
 function sig(
@@ -110,8 +114,10 @@ function sig(
   params: [string, Type][],
   out: Type,
   effects: Effect[] = [],
+  withoutFunctions?: string[],
 ): Signature {
-  return { name, doc, typeParams, params: params.map(([name, type]) => ({ name, type })), out, effects };
+  const signature = { name, doc, typeParams, params: params.map(([name, type]) => ({ name, type })), out, effects };
+  return withoutFunctions ? { ...signature, withoutFunctions } : signature;
 }
 
 export const STD: readonly Signature[] = [
@@ -402,7 +408,78 @@ export const STD: readonly Signature[] = [
     ["by", fnType([T, T], ORDER)],
   ], list(T)),
 
-  sig("std.text.show", "Text representation of any value without functions.", ["T"], [["value", T]], STRING),
+  sig(
+    "std.list.first",
+    "The first item; `None` for the empty list.",
+    ["T"],
+    [["list", list(T)]],
+    option(T),
+  ),
+  sig("std.list.last", "The last item; `None` for the empty list.", ["T"], [["list", list(T)]], option(T)),
+  sig(
+    "std.list.take",
+    "The first `count` items, or the whole list if it is shorter. A negative count traps.",
+    ["T"],
+    [["list", list(T)], ["count", INT]],
+    list(T),
+  ),
+  sig(
+    "std.list.drop",
+    "The list without its first `count` items; empty if it is shorter. A negative count traps.",
+    ["T"],
+    [["list", list(T)], ["count", INT]],
+    list(T),
+  ),
+  sig("std.list.reverse", "The items from last to first.", ["T"], [["list", list(T)]], list(T)),
+  sig(
+    "std.list.concat",
+    "The items of the left list followed by those of the right.",
+    ["T"],
+    [["left", list(T)], ["right", list(T)]],
+    list(T),
+  ),
+  sig("std.list.flatten", "The items of all the lists, in order.", ["T"], [["lists", list(list(T))]], list(T)),
+  sig(
+    "std.list.contains",
+    "Whether the list holds an item equal to the given one.",
+    ["T"],
+    [["list", list(T)], ["item", T]],
+    BOOL,
+    [],
+    ["T"],
+  ),
+  sig(
+    "std.list.range",
+    "The integers from `low` to `high`, both included, in ascending order; empty if `low > high`.",
+    [],
+    [["low", INT], ["high", INT]],
+    list(INT),
+  ),
+  sig(
+    "std.list.window",
+    "Every run of `size` neighbouring items, from first to last; empty if the list is shorter. A size below 1 traps.",
+    ["T"],
+    [["list", list(T)], ["size", INT]],
+    list(list(T)),
+  ),
+  sig(
+    "std.list.zip",
+    "Combines the items of two lists pair by pair with the function. Lists of different lengths trap.",
+    ["T", "U", "V"],
+    [["left", list(T)], ["right", list(U)], ["with", fnType([T, U], V)]],
+    list(V),
+  ),
+  sig(
+    "std.list.enumerate",
+    "Applies the function to the index of every item, counting from 0, and the item.",
+    ["T", "U"],
+    [["list", list(T)], ["with", fnType([INT, T], U)]],
+    list(U),
+  ),
+
+  sig("std.text.show", "Text representation of any value without functions.", ["T"], [["value", T]], STRING, [], [
+    "T",
+  ]),
 ];
 
 export const STD_BY_NAME: ReadonlyMap<string, Signature> = new Map(STD.map((s) => [s.name, s]));

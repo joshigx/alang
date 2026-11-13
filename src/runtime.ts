@@ -1073,6 +1073,84 @@ export function std$list$sort<T>(list: readonly T[], by: (left: T, right: T) => 
   return [...list].sort((a, b) => order[by(a, b).tag]);
 }
 
+export function std$list$first<T>(list: readonly T[]): Option<T> {
+  return list.length > 0 ? Some(list[0]) : None;
+}
+
+export function std$list$last<T>(list: readonly T[]): Option<T> {
+  return list.length > 0 ? Some(list[list.length - 1]) : None;
+}
+
+export function std$list$take<T>(list: readonly T[], count: number): readonly T[] {
+  countAtLeastZero("std.list.take", count);
+  return list.slice(0, count);
+}
+
+export function std$list$drop<T>(list: readonly T[], count: number): readonly T[] {
+  countAtLeastZero("std.list.drop", count);
+  return list.slice(count);
+}
+
+export function std$list$reverse<T>(list: readonly T[]): readonly T[] {
+  return [...list].reverse();
+}
+
+export function std$list$concat<T>(left: readonly T[], right: readonly T[]): readonly T[] {
+  return [...left, ...right];
+}
+
+export function std$list$flatten<T>(lists: readonly (readonly T[])[]): readonly T[] {
+  const items: T[] = [];
+  for (const list of lists) for (const item of list) items.push(item);
+  return items;
+}
+
+// Structural equality, as `==` (3.9); the checker keeps out function values.
+export function std$list$contains<T>(list: readonly T[], item: T): boolean {
+  return list.some((x) => eq(x, item));
+}
+
+// The most items a JavaScript array holds (checked: 2^32 - 1). Memory runs
+// out long before, with the host's own error; the trap only states the limit.
+const MAX_LIST_LENGTH = 4_294_967_295;
+
+export function std$list$range(low: number, high: number): readonly number[] {
+  if (low > high) return [];
+  // May round for wide ranges, but stays far above the limit then.
+  const count = high - low + 1;
+  if (count > MAX_LIST_LENGTH) {
+    trap("overflow", "std.list.range", `${low} to ${high}`, "More integers from low to high than a list can hold.");
+  }
+  const items: number[] = [];
+  for (let n = low; n <= high; n++) items.push(n);
+  return items;
+}
+
+export function std$list$window<T>(list: readonly T[], size: number): readonly (readonly T[])[] {
+  if (size < 1) trap("requires", "std.list.window", "size >= 1", "Precondition of std.list.window violated: size >= 1");
+  const runs: (readonly T[])[] = [];
+  for (let i = 0; i + size <= list.length; i++) runs.push(list.slice(i, i + size));
+  return runs;
+}
+
+const ZIP_CONDITION = "std.list.length(list: left) == std.list.length(list: right)";
+
+// Different lengths trap: a silent cut at the shorter list would hide an error.
+export function std$list$zip<T, U, V>(
+  left: readonly T[],
+  right: readonly U[],
+  fn: (left: T, right: U) => V,
+): readonly V[] {
+  if (left.length !== right.length) {
+    trap("requires", "std.list.zip", ZIP_CONDITION, `Precondition of std.list.zip violated: ${ZIP_CONDITION}`);
+  }
+  return left.map((x, i) => fn(x, right[i]));
+}
+
+export function std$list$enumerate<T, U>(list: readonly T[], fn: (index: number, item: T) => U): readonly U[] {
+  return list.map((x, i) => fn(i, x));
+}
+
 // Text representation (rule 3.9). Records have no runtime type name yet, so
 // they show as their fields in parentheses.
 export function std$text$show(value: unknown): string {

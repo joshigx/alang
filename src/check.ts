@@ -94,6 +94,8 @@ interface FnSig {
   readonly params: readonly Param[];
   readonly out: Type;
   readonly effects: readonly Effect[];
+  // Type parameters that may not be bound to a type with function values (E0222).
+  readonly withoutFunctions?: readonly string[];
 }
 
 export type TypeShape =
@@ -875,11 +877,13 @@ class DefChecker {
     // Arguments that matched no parameter were reported; still check them.
     for (const a of e.args) if (!byName.includes(a)) this.expr(a.value, scope, null);
 
-    if (full === "std.text.show") {
-      const t = subst.get("T");
-      if (t && containsFn(t, (n) => this.env.recordFields(n))) {
-        this.report("E0222", at, "`std.text.show` is defined for types without function values (3.9).");
-      }
+    // Functions that compare or show their values (3.9).
+    const withFn = (sig.withoutFunctions ?? []).find((tp) => {
+      const t = subst.get(tp);
+      return t !== undefined && containsFn(t, (n) => this.env.recordFields(n));
+    });
+    if (withFn !== undefined) {
+      this.report("E0222", at, `\`${this.written(full)}\` is defined for types without function values (3.9).`);
     }
     const out = substitute(sig.out, subst);
     return freeVars(out).size === 0 ? out : ERROR;

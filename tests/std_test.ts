@@ -224,6 +224,90 @@ fn uses.split_up
   body:
     return [std.string.characters(text: text), std.string.lines(text: text)]
 end fn uses.split_up
+
+type uses.Point
+  doc: "A point."
+  record:
+    x: Int
+    y: Int
+  where: none
+end type uses.Point
+
+fn uses.ends
+  doc: "The first and the last item."
+  in:
+    xs: List<Int>
+  out: List<Option<Int>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    ends(xs: [1, 2, 3]) == [Some(1), Some(3)]
+    ends(xs: std.list.empty<Int>()) == [None, None]
+  body:
+    return [std.list.first(list: xs), std.list.last(list: xs)]
+end fn uses.ends
+
+fn uses.reshaped
+  doc: "The list cut, reversed, doubled and flattened."
+  in:
+    xs: List<Int>
+  out: List<List<Int>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    reshaped(xs: [1, 2, 3]) == [[1, 2], [3], [3, 2, 1], [1, 2, 3, 1, 2, 3], [1, 2, 3, 4]]
+  body:
+    return [std.list.take(list: xs, count: 2), std.list.drop(list: xs, count: 2), std.list.reverse(list: xs), std.list.concat(left: xs, right: xs), std.list.flatten(lists: [xs, [4]])]
+end fn uses.reshaped
+
+fn uses.member
+  doc: "Whether the point is one of two fixed points."
+  in:
+    point: Point
+  out: Bool
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    member(point: Point(x: 3, y: 4)) == true
+    member(point: Point(x: 4, y: 3)) == false
+  body:
+    return std.list.contains(list: [Point(x: 1, y: 2), Point(x: 3, y: 4)], item: point)
+end fn uses.member
+
+fn uses.neighbours
+  doc: "Each integer from low to high with its successor."
+  in:
+    low: Int
+    high: Int
+  out: List<List<Int>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    neighbours(low: 1, high: 3) == [[1, 2], [2, 3]]
+    neighbours(low: 1, high: 0) == std.list.empty<List<Int>>()
+  body:
+    return std.list.window(list: std.list.range(low: low, high: high), size: 2)
+end fn uses.neighbours
+
+fn uses.labels
+  doc: "Two names with their numbers, then with their positions."
+  in:
+    names: List<String>
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    labels(names: ["a", "b"]) == ["a1", "b2", "0a", "1b"]
+  body:
+    let numbered: List<String> = std.list.zip(left: names, right: [1, 2], with: fn(name: String, n: Int): String => std.string.concat(left: name, right: std.text.show(value: n)))
+    let placed: List<String> = std.list.enumerate(list: names, with: fn(i: Int, name: String): String => std.string.concat(left: std.text.show(value: i), right: name))
+    return std.list.concat(left: numbered, right: placed)
+end fn uses.labels
 `;
 
 Deno.test("std: the new functions are accepted from alang, and their calls type-check", async () => {
@@ -233,4 +317,61 @@ Deno.test("std: the new functions are accepted from alang, and their calls type-
   assertEquals(examples.filter((e) => !e.passed), []);
   const checked = await new Deno.Command(Deno.execPath(), { args: ["check", built.outPath], stderr: "piped" }).output();
   assert_(checked.success, new TextDecoder().decode(checked.stderr));
+});
+
+Deno.test("std.list: first, last, take, drop, reverse, concat, flatten", () => {
+  const xs = [1, 2, 3];
+  assertEquals([rt.std$list$first(xs), rt.std$list$first([])], [rt.Some(1), rt.None]);
+  assertEquals([rt.std$list$last(xs), rt.std$list$last([])], [rt.Some(3), rt.None]);
+  assertEquals([0, 2, 3, 9].map((n) => rt.std$list$take(xs, n)), [[], [1, 2], [1, 2, 3], [1, 2, 3]]);
+  assertEquals([0, 2, 3, 9].map((n) => rt.std$list$drop(xs, n)), [[1, 2, 3], [3], [], []]);
+  assertEquals(rt.std$list$take([], 1), []);
+  assertEquals(trapOf(() => rt.std$list$take(xs, -1)), ["requires", "std.list.take", "count >= 0"]);
+  assertEquals(trapOf(() => rt.std$list$drop(xs, -1)), ["requires", "std.list.drop", "count >= 0"]);
+  assertEquals([rt.std$list$reverse(xs), rt.std$list$reverse([])], [[3, 2, 1], []]);
+  // The argument stays as it was: lists are values.
+  assertEquals(xs, [1, 2, 3]);
+  assertEquals(rt.std$list$concat(xs, [4]), [1, 2, 3, 4]);
+  assertEquals([rt.std$list$concat([], xs), rt.std$list$concat(xs, []), rt.std$list$concat([], [])], [xs, xs, []]);
+  assertEquals(rt.std$list$flatten([[1], [], [2, 3]]), [1, 2, 3]);
+  assertEquals([rt.std$list$flatten([]), rt.std$list$flatten([[], []])], [[], []]);
+});
+
+Deno.test("std.list: contains compares structurally; range includes both ends", () => {
+  const points = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+  assertEquals(rt.std$list$contains(points, { x: 3, y: 4 }), true);
+  assertEquals(rt.std$list$contains(points, { x: 4, y: 3 }), false);
+  assertEquals(rt.std$list$contains([rt.Some([1])], rt.Some([1])), true);
+  assertEquals(rt.std$list$contains([], 1), false);
+  assertEquals(rt.std$list$range(1, 3), [1, 2, 3]);
+  assertEquals(rt.std$list$range(2, 2), [2]);
+  assertEquals(rt.std$list$range(1, 0), []);
+  assertEquals(rt.std$list$range(-1, 1), [-1, 0, 1]);
+  assertEquals(Object.is(rt.std$list$range(-1, 0)[1], 0), true);
+  // More items than an array holds: a trap, before any memory is taken.
+  const max = Number.MAX_SAFE_INTEGER;
+  assertEquals(trapOf(() => rt.std$list$range(0, 4_294_967_295)), ["overflow", "std.list.range", "0 to 4294967295"]);
+  assertEquals(trapOf(() => rt.std$list$range(-max, max))[0], "overflow");
+});
+
+Deno.test("std.list: window gives every run of neighbours", () => {
+  const xs = ["a", "b", "c"];
+  assertEquals(rt.std$list$window(xs, 1), [["a"], ["b"], ["c"]]);
+  assertEquals(rt.std$list$window(xs, 2), [["a", "b"], ["b", "c"]]);
+  assertEquals(rt.std$list$window(xs, 3), [["a", "b", "c"]]);
+  assertEquals(rt.std$list$window(xs, 4), []);
+  assertEquals(rt.std$list$window([], 1), []);
+  assertEquals(trapOf(() => rt.std$list$window(xs, 0)), ["requires", "std.list.window", "size >= 1"]);
+});
+
+Deno.test("std.list: zip and enumerate apply the function pair by pair", () => {
+  assertEquals(rt.std$list$zip([1, 2], ["a", "b"], (n: number, s: string) => `${s}${n}`), ["a1", "b2"]);
+  assertEquals(rt.std$list$zip([], [], (a: number, b: number) => a + b), []);
+  assertEquals(trapOf(() => rt.std$list$zip([1, 2], [1], (a: number, b: number) => a + b)), [
+    "requires",
+    "std.list.zip",
+    "std.list.length(list: left) == std.list.length(list: right)",
+  ]);
+  assertEquals(rt.std$list$enumerate(["a", "b"], (i: number, s: string) => `${i}${s}`), ["0a", "1b"]);
+  assertEquals(rt.std$list$enumerate([], (i: number, s: string) => `${i}${s}`), []);
 });

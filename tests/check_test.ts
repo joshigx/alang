@@ -580,6 +580,23 @@ Deno.test("check: items of a list literal follow the usual rules", () => {
   one(fn("return [g] == [g]", { out: "Bool", extra: G }), "E0222");
 });
 
+Deno.test("check: std.list.contains and std.text.show need a type without function values (E0222)", () => {
+  const contains = one(fn("return std.list.contains(list: [g], item: g)", { out: "Bool", extra: G }), "E0222");
+  assertEquals(
+    [contains.at, contains.message],
+    [
+      "std.list.contains(list: [g], item: g)",
+      "`std.list.contains` is defined for types without function values (3.9).",
+    ],
+  );
+  const show = one(fn("return std.text.show(value: [g])", { out: "String", extra: G }), "E0222");
+  assertEquals(show.message, "`std.text.show` is defined for types without function values (3.9).");
+  clean(
+    fn("return std.list.contains(list: [Point(x: 1, y: 2)], item: Point(x: 1, y: 2))", { out: "Bool", extra: POINT }),
+  );
+  clean(fn('return std.text.show(value: ["a"])', { out: "String" }));
+});
+
 // ---- contracts and examples ----
 
 Deno.test("check: contracts see the right names", () => {
