@@ -1,6 +1,8 @@
-// A program that calls every std function for files and program input once
-// or more, printing each result. io_test.ts runs it on Deno and Node.js;
-// emit_test.ts has TypeScript check its output.
+// Programs that io_test.ts runs on Deno and Node.js, and whose output
+// emit_test.ts has TypeScript check.
+
+// Calls every std function for files and program input once or more,
+// printing each result.
 
 const CALLS = [
   "std.env.args()",
@@ -82,3 +84,20 @@ export const IO_STDOUT = [
   "",
 ].join("\n");
 export const IO_STDERR = "to the log\n";
+
+// A `main` that ends with an error: without an argument, `Err` with a
+// message for stderr and exit code 1.
+export const ENDING_PROGRAM = `fn ending.main
+  doc: "Prints its first argument; without one, ends with an error."
+  in: none
+  out: Result<Unit, String>
+  effects: env, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let first: String = std.list.get(list: std.env.args(), index: 0) else return Err("no input")
+    std.console.print_line(text: first)
+    return Ok(Unit)
+end fn ending.main
+`;

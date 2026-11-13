@@ -4,7 +4,7 @@
 
 import { join } from "node:path";
 import { assert_, assertEquals, assertThrows } from "./assert.ts";
-import { IO_ARGS, IO_ENV, IO_PROGRAM, IO_STDERR, IO_STDIN, IO_STDOUT } from "./io_program.ts";
+import { ENDING_PROGRAM, IO_ARGS, IO_ENV, IO_PROGRAM, IO_STDERR, IO_STDIN, IO_STDOUT } from "./io_program.ts";
 import {
   Err,
   None,
@@ -26,7 +26,9 @@ import {
   Trap,
   Unit,
 } from "../src/runtime.ts";
-import { accept, type Built, run, type RunOptions, writeEntry } from "../src/toolchain.ts";
+import { accept, type Built, findMain, run, type RunOptions, writeEntry } from "../src/toolchain.ts";
+import { AlangError } from "../src/diagnostic.ts";
+import { parseProgram } from "../src/parser.ts";
 
 const OUT = new URL("../out/test/io/", import.meta.url).pathname;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -438,3 +440,40 @@ for (const host of ["deno", "node"] as const) {
     }
   });
 }
+
+// ---- ending with an error ----
+
+for (const host of ["deno", "node"] as const) {
+  Deno.test(`io: a main that returns Err ends with its message and exit code 1 (${host})`, async () => {
+    if (host === "node" && !(await hasNode())) return;
+    const built = await program(ENDING_PROGRAM);
+    const entry = await writeEntry(built);
+    const start = async (args: string[]) => {
+      const out = host === "deno"
+        ? await run(built, { stdio: "piped", args })
+        : await new Deno.Command("node", { args: [entry, ...args], stdin: "null", stdout: "piped", stderr: "piped" })
+          .output();
+      return [out.code, decode(out.stdout), decode(out.stderr)];
+    };
+    assertEquals(await start([]), [1, "", "no input\n"]);
+    assertEquals(await start(["given"]), [0, "given\n", ""]);
+  });
+}
+
+Deno.test("io: main returns Unit or Result<Unit, String>, and takes nothing (E0305)", () => {
+  const main = (out: string, params = "  in: none") =>
+    parseProgram(
+      ENDING_PROGRAM.replace("  out: Result<Unit, String>", `  out: ${out}`).replace("  in: none", params),
+    );
+  assertEquals(findMain(main("Unit")).out.path, ["Unit"]);
+  assertEquals(findMain(main("Result<Unit, String>")).out.path, ["Result"]);
+  for (const out of ["Int", "Result<Unit, Int>", "Result<String, String>", "Option<Unit>"]) {
+    const e = assertThrows(() => findMain(main(out)), AlangError);
+    assertEquals([e.diagnostic.code, e.diagnostic.message], [
+      "E0305",
+      "`main` has `in: none`, and `out: Unit` or `out: Result<Unit, String>`.",
+    ], out);
+  }
+  const withParam = assertThrows(() => findMain(main("Unit", "  in:\n    text: String")), AlangError);
+  assertEquals(withParam.diagnostic.code, "E0305");
+});

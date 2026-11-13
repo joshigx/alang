@@ -15,7 +15,7 @@ There are four kinds of definitions. Each has a full name of the form `module.pa
 | `const` | Named, immutable value |
 | `extern fn` | Signature of a function in the target language, with `target` instead of `body` |
 
-A program starts at a function named `main` with `in: none` and `out: Unit`. The smallest complete program:
+A program starts at a function named `main` with `in: none`, and `out: Unit` or `out: Result<Unit, String>`; an `Err` ends the program with its message on stderr and exit code 1. The smallest complete program:
 
 ```
 fn hello.main
@@ -536,6 +536,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 - **Declaration (2.1).** `effects` includes the effects of every function that is called, directly or as a handler (E0230, with the corrected line). Declaring more than needed is allowed.
 - **Running.** `main` runs in its own process with exactly the Deno permissions of its effects (Toolchain); an operation without permission traps. The program runs in the directory it was started from, so a relative path such as `notes.txt` is read from there. A trap ends the program with exit code 70 and a diagnostic as JSON on stderr.
+- **Ending with an error.** `main` has `out: Unit` or `out: Result<Unit, String>` (E0305). With the `Result`, `let ... else return Err(...)` works in `main`, where every I/O error ends up: `Err(message)` writes the message to stderr and ends the program with exit code 1. The exit codes are 0 when `main` returned (`Unit` or `Ok`), 1 for an `Err` from `main` and also when the tool refuses a program (its diagnostics as JSON on stderr), 2 for a command line the tool does not understand, and 70 for a trap.
 - **Values as text.** `std.text.show` gives `42`, `2.5`, `"a\"b"` (quoted), `Some(3)`, `Less`, `Unit`, `["a", "b"]` for a list, and `(x: 1, y: -2)` for a record, without its type name. A case shows without its module: `PermissionDenied`, `Other("disk full")`. Numbers show without `_` grouping (`12345`), and a whole `Float` without its fraction: `2.0` gives `2`.
 
 ### 7.8 Standard library
