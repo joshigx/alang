@@ -1055,10 +1055,86 @@ export function std$int$checked_multiply(left: number, right: number): Option<nu
   return checkedInt(left * right);
 }
 
-export function std$float$floor(value: number): number {
-  const r = Math.floor(value);
-  if (!Number.isSafeInteger(r)) trap("overflow", "std.float.floor", String(value), "Float outside the Int range.");
+// A Float rounded to an Int by `floor`, `round`, `ceil` or `trunc`: outside
+// the Int range (infinities included) it traps; `-0` becomes `0` (S1).
+function floatToInt(name: string, value: number, r: number): number {
+  if (!Number.isSafeInteger(r)) trap("overflow", name, String(value), "Float outside the Int range.");
   return intZero(r);
+}
+
+export function std$float$floor(value: number): number {
+  return floatToInt("std.float.floor", value, Math.floor(value));
+}
+
+// `-0.0` and `0.0` are Equal, as under `==`.
+export function std$float$compare(left: number, right: number): Order {
+  return left < right ? Less : left > right ? Greater : Equal;
+}
+
+// Exactly the form the doc states; `-0` gives `-0.0`, a valid Float.
+export function std$float$parse(text: string): Option<number> {
+  if (!/^-?[0-9]+(\.[0-9]+)?$/.test(text)) return None;
+  const n = Number(text);
+  return Number.isFinite(n) ? Some(n) : None;
+}
+
+// Halves away from zero (R1); Math.round alone rounds -2.5 to -2.
+export function std$float$round(value: number): number {
+  return floatToInt("std.float.round", value, Math.sign(value) * Math.round(Math.abs(value)));
+}
+
+export function std$float$ceil(value: number): number {
+  return floatToInt("std.float.ceil", value, Math.ceil(value));
+}
+
+export function std$float$trunc(value: number): number {
+  return floatToInt("std.float.trunc", value, Math.trunc(value));
+}
+
+export function std$float$abs(value: number): number {
+  return Math.abs(value);
+}
+
+// On equal values the left one wins.
+export function std$float$min(left: number, right: number): number {
+  return left <= right ? left : right;
+}
+
+export function std$float$max(left: number, right: number): number {
+  return left >= right ? left : right;
+}
+
+// Traps before Math.sqrt, so the trap names the cause, not a NaN (R5).
+export function std$float$sqrt(value: number): number {
+  if (!(value >= 0)) {
+    trap("requires", "std.float.sqrt", "value >= 0.0", "Precondition of std.float.sqrt violated: value >= 0.0");
+  }
+  return Math.sqrt(value);
+}
+
+const DECIMALS_CONDITION = "0 <= decimals and decimals <= 100";
+
+// One text per shown value (R4): no exponent form, which toFixed gives from
+// 1e21 on, and no `-` before zeros only (`-0.001` with 2 is `0.00`).
+// toFixed breaks a tie toward the larger magnitude, on the exact binary
+// value, so `1.005` (a little below) gives `1.00` with 2 (R1).
+export function std$float$to_fixed(value: number, decimals: number): string {
+  if (decimals < 0 || decimals > 100) {
+    trap(
+      "requires",
+      "std.float.to_fixed",
+      DECIMALS_CONDITION,
+      `Precondition of std.float.to_fixed violated: ${DECIMALS_CONDITION}`,
+    );
+  }
+  if (value === Infinity) return "Infinity";
+  if (value === -Infinity) return "-Infinity";
+  const m = Math.abs(value);
+  // From 1e21 on every Float is an integer.
+  const digits = m < 1e21
+    ? m.toFixed(decimals)
+    : BigInt(m).toString() + (decimals > 0 ? "." + "0".repeat(decimals) : "");
+  return value < 0 && /[1-9]/.test(digits) ? `-${digits}` : digits;
 }
 
 export function std$string$trim(text: string): string {

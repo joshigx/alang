@@ -704,6 +704,26 @@ fn maps.codes
   body:
     return std.string.code_points(text: text)
 end fn maps.codes
+
+fn maps.measures
+  doc: "The number read from the text, rounded in three ways and formatted."
+  in:
+    text: String
+  out: Option<List<String>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    measures(text: "-2.5") == Some(["-3", "-2", "-2", "-2.50", "2.5", "Less"])
+    measures(text: "1e3") == None
+  body:
+    let value: Float = std.float.parse(text: text) else return None
+    let ints: List<Int> = [std.float.round(value: value), std.float.ceil(value: value), std.float.trunc(value: value)]
+    let shown: List<String> = std.list.map(list: ints, with: fn(n: Int): String => std.text.show(value: n))
+    let size: Float = std.float.max(left: std.float.abs(value: value), right: std.float.min(left: value, right: 0.0))
+    let order: String = std.text.show(value: std.float.compare(left: value, right: std.float.sqrt(value: 4.0)))
+    return Some(std.list.concat(left: shown, right: [std.float.to_fixed(value: value, decimals: 2), std.float.to_fixed(value: size, decimals: 1), order]))
+end fn maps.measures
 `;
 
 Deno.test("std: the map functions are accepted from alang, and their calls type-check", async () => {
@@ -711,7 +731,7 @@ Deno.test("std: the map functions are accepted from alang, and their calls type-
   const out = new URL("../out/test/std/maps.ts", import.meta.url).pathname;
   const { built, examples } = await accept(MAPS_PROGRAM, out);
   assertEquals(examples.filter((e) => !e.passed), []);
-  assertEquals(examples.length, 14);
+  assertEquals(examples.length, 16);
   const checked = await new Deno.Command(Deno.execPath(), { args: ["check", built.outPath], stderr: "piped" }).output();
   assert_(checked.success, new TextDecoder().decode(checked.stderr));
 });
@@ -821,4 +841,94 @@ Deno.test("std.string: trim_characters, code_points and from_code_points", () =>
   // A long list is built in chunks, not with one spread that overflows the stack.
   const many = Array(200_000).fill(128_512);
   assertEquals(rt.std$string$length(rt.std$string$from_code_points(many)), 200_000);
+});
+
+// ---- Float ----
+
+Deno.test("std.float: compare, parse, abs, min, max, sqrt", () => {
+  assertEquals([rt.std$float$compare(1, 2), rt.std$float$compare(2, 1), rt.std$float$compare(-0, 0)], [
+    rt.Less,
+    rt.Greater,
+    rt.Equal,
+  ]);
+  assertEquals(["3", "-0.25", "007.5", "0.0"].map(rt.std$float$parse), [
+    rt.Some(3),
+    rt.Some(-0.25),
+    rt.Some(7.5),
+    rt.Some(0),
+  ]);
+  // "-0" is the Float -0.0, which is a value of its own (Int has no -0).
+  assert_(Object.is((rt.std$float$parse("-0") as rt.Some<number>).value, -0));
+  for (
+    const text of ["+1", ".5", "1.", "1e3", " 1", "1 ", "", "-", "1.2.3", "0x1", "Infinity", "1" + "0".repeat(400)]
+  ) {
+    assertEquals(rt.std$float$parse(text), rt.None, JSON.stringify(text));
+  }
+  assertEquals([rt.std$float$abs(-2.5), rt.std$float$abs(2.5), rt.std$float$abs(-Infinity)], [2.5, 2.5, Infinity]);
+  assert_(Object.is(rt.std$float$abs(-0), 0));
+  assertEquals([rt.std$float$min(1.5, -2), rt.std$float$max(1.5, -2)], [-2, 1.5]);
+  // On equal values the left one wins.
+  assert_(Object.is(rt.std$float$min(-0, 0), -0) && Object.is(rt.std$float$max(0, -0), 0));
+  assertEquals([rt.std$float$sqrt(6.25), rt.std$float$sqrt(0), rt.std$float$sqrt(Infinity)], [2.5, 0, Infinity]);
+  assert_(Object.is(rt.std$float$sqrt(-0), -0));
+  assertEquals(trapOf(() => rt.std$float$sqrt(-1)), ["requires", "std.float.sqrt", "value >= 0.0"]);
+  assertEquals(trapOf(() => rt.std$float$sqrt(-Infinity))[0], "requires");
+});
+
+Deno.test("std.float: round halves away from zero; round, ceil and trunc trap outside the Int range", () => {
+  assertEquals([2.5, -2.5, 2.4, -2.6, 0.5, 0.49999999999999994, 4_503_599_627_370_495.5].map(rt.std$float$round), [
+    3,
+    -3,
+    2,
+    -3,
+    1,
+    0,
+    4_503_599_627_370_496,
+  ]);
+  assertEquals([2.1, -2.9, 3].map(rt.std$float$ceil), [3, -2, 3]);
+  assertEquals([2.9, -2.9, -3].map(rt.std$float$trunc), [2, -2, -3]);
+  // An Int is never -0 (S1).
+  for (
+    const zero of [rt.std$float$round(-0.4), rt.std$float$ceil(-0.5), rt.std$float$trunc(-0.9), rt.std$float$round(-0)]
+  ) {
+    assert_(Object.is(zero, 0));
+  }
+  for (
+    const [name, fn] of [["round", rt.std$float$round], ["ceil", rt.std$float$ceil], [
+      "trunc",
+      rt.std$float$trunc,
+    ]] as const
+  ) {
+    assertEquals(trapOf(() => fn(2 ** 53)), ["overflow", `std.float.${name}`, "9007199254740992"]);
+    assertEquals(trapOf(() => fn(-Infinity)), ["overflow", `std.float.${name}`, "-Infinity"]);
+    assertEquals(fn(2 ** 53 - 1), 2 ** 53 - 1);
+  }
+  const trap = assertThrows(() => rt.std$float$round(Infinity), rt.Trap);
+  assertEquals(trap.message, "Float outside the Int range.");
+});
+
+Deno.test("std.float: to_fixed, without exponents and without a minus before zeros", () => {
+  const cases: [number, number, string][] = [
+    // Ties break on the exact binary value, away from zero: 1.005 is a little below.
+    [1.005, 2, "1.00"],
+    [0.125, 2, "0.13"],
+    [2.5, 0, "3"],
+    [-2.5, 0, "-3"],
+    [-0.001, 2, "0.00"],
+    [-0, 1, "0.0"],
+    [1.5, 2, "1.50"],
+    [-1.5, 0, "-2"],
+    [12.345_6, 1, "12.3"],
+    [0, 0, "0"],
+    [1e21, 2, "1000000000000000000000.00"],
+    [-1e21, 0, "-1000000000000000000000"],
+    [999_999_999_999_999_900_000, 1, "999999999999999868928.0"],
+    [Infinity, 2, "Infinity"],
+    [-Infinity, 0, "-Infinity"],
+  ];
+  for (const [value, decimals, text] of cases) assertEquals(rt.std$float$to_fixed(value, decimals), text, `${value}`);
+  assertEquals(rt.std$float$to_fixed(0.1, 100).length, 102);
+  const condition = "0 <= decimals and decimals <= 100";
+  assertEquals(trapOf(() => rt.std$float$to_fixed(1, -1)), ["requires", "std.float.to_fixed", condition]);
+  assertEquals(trapOf(() => rt.std$float$to_fixed(1, 101)), ["requires", "std.float.to_fixed", condition]);
 });
