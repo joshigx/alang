@@ -241,7 +241,12 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
   assertEquals(cb.searchText("file").map((h) => [h.name, h.hash === null]), [
     ["config.load_port", false],
     ["std.fs.Error", true],
+    ["std.fs.Kind", true],
+    ["std.fs.append_text", true],
+    ["std.fs.kind", true],
     ["std.fs.read_text", true],
+    ["std.fs.remove", true],
+    ["std.fs.write_text", true],
   ]);
   assertEquals(cb.searchText("no such words"), []);
   await done(cb);

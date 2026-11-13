@@ -424,6 +424,32 @@ fn halt.main
 end fn halt.main
 `;
 
+// The std types of std.fs named in a program: a variant type missing from
+// runtime.ts is caught only by `deno check` of such a program.
+const KINDS = `
+fn kinds.describe
+  doc: "Says what a path names."
+  in:
+    path: String
+  out: String
+  effects: fs.read
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let found: Result<std.fs.Kind, std.fs.Error> = std.fs.kind(path: path)
+    let text: String = match found
+      case Ok(std.fs.File) then
+        "a file"
+      case Ok(std.fs.Directory) then
+        "a directory"
+      case Err(reason) then
+        std.text.show(value: reason)
+    end match
+    return text
+end fn kinds.describe
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
@@ -433,6 +459,7 @@ const PROGRAMS: Record<string, string> = {
   port_plus: PORT_PLUS,
   app: APP,
   steps: STEPS,
+  kinds: KINDS,
 };
 
 const built: Record<string, Built> = {};
@@ -517,6 +544,7 @@ Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(CALC)), CALC.trimStart());
   assertEquals(printProgram(parseProgram(BLOCKS)), BLOCKS.trimStart());
   assertEquals(printProgram(parseProgram(STEPS)), STEPS.trimStart());
+  assertEquals(printProgram(parseProgram(KINDS)), KINDS.trimStart());
 });
 
 Deno.test("emit: Int overflow traps", async () => {
@@ -566,6 +594,13 @@ Deno.test("emit: functions with effects are async, pure code stays synchronous",
   const mod = await load("steps");
   assertEquals(mod.steps$words(), ["a", "bc"]);
   assert_(mod.steps$say instanceof (async () => {}).constructor);
+});
+
+Deno.test("emit: a match over the std.fs types runs", async () => {
+  const mod = await load("kinds");
+  assertEquals(await mod.kinds$describe(OUT), "a directory");
+  assertEquals(await mod.kinds$describe(new URL("../deno.json", import.meta.url).pathname), "a file");
+  assertEquals(await mod.kinds$describe("/does/not/exist"), "NotFound");
 });
 
 // ---- effects at runtime ----

@@ -214,13 +214,33 @@ export function std$console$print_line(text: string): Unit {
   return Unit;
 }
 
-// Files are one of the two places where the runtime touches the host; the
-// network (std.http) is the other. Deno and Node.js (and Bun) are detected by
-// their globals; the error codes are shared.
-type Host = {
-  Deno?: { readTextFileSync(path: string): string };
-  process?: { getBuiltinModule(name: string): { readFileSync(path: string, encoding: "utf8"): string } };
+// ---- std.fs ----
+// Files are one of the places where the runtime touches the host; the
+// network (std.http) and the program's input (std.env, std.console) are the
+// others. Deno and Node.js (and Bun) are detected by their globals; the error
+// codes are shared. Every operation is synchronous.
+
+type DenoFs = {
+  readTextFileSync(path: string): string;
+  writeTextFileSync(path: string, text: string, options?: { append: boolean }): void;
+  readDirSync(path: string): Iterable<{ readonly name: string }>;
+  statSync(path: string): { readonly isDirectory: boolean };
+  mkdirSync(path: string, options: { recursive: boolean }): void;
+  removeSync(path: string): void;
 };
+
+type NodeFs = {
+  readFileSync(path: string, encoding: "utf8"): string;
+  writeFileSync(path: string, text: string): void;
+  appendFileSync(path: string, text: string): void;
+  readdirSync(path: string): string[];
+  statSync(path: string): { isDirectory(): boolean };
+  mkdirSync(path: string, options: { recursive: boolean }): void;
+  rmSync(path: string): void;
+  rmdirSync(path: string): void;
+};
+
+type FsHost = { Deno?: DenoFs; process?: { getBuiltinModule(name: "node:fs"): NodeFs } };
 
 export type std$fs$Error =
   | { readonly tag: "NotFound" }
@@ -228,31 +248,127 @@ export type std$fs$Error =
   | { readonly tag: "IsADirectory" }
   | { readonly tag: "Other"; readonly value: string };
 
-export function std$fs$read_text(path: string): Result<string, std$fs$Error> {
-  const host = globalThis as Host;
+export type std$fs$Kind = { readonly tag: "File" } | { readonly tag: "Directory" };
+
+const NEEDS = {
+  "fs.read": "Reading files and directories needs the effect `fs.read` on `main`.",
+  "fs.write": "Creating, changing and deleting files needs the effect `fs.write` on `main`.",
+} as const;
+
+// One file operation on whichever host runs the program, with the host's
+// errors as std.fs.Error. A refusal for lack of the permission traps: the
+// program does more than its `main` declares (2.5). A path Deno guards
+// although the permission is there (`/proc`, `/sys`: "Requires all access")
+// is refused by the system, as the OS would refuse it: an `Err`.
+function onFiles<T>(
+  name: string,
+  effect: keyof typeof NEEDS,
+  path: string,
+  onDeno: (deno: DenoFs) => T,
+  onNode: (fs: NodeFs) => T,
+): Result<T, std$fs$Error> {
+  const host = globalThis as FsHost;
   try {
-    if (host.Deno) return Ok(host.Deno.readTextFileSync(path));
-    if (host.process) return Ok(host.process.getBuiltinModule("node:fs").readFileSync(path, "utf8"));
-    return trap("effect", "std.fs.read_text", path, "This runtime has no file system.");
+    if (host.Deno) return Ok(onDeno(host.Deno));
+    if (host.process) return Ok(onNode(host.process.getBuiltinModule("node:fs")));
   } catch (e) {
-    if (e instanceof Trap) throw e;
     const err = e as { name?: string; code?: string; message?: string };
-    // A read the host refused because the program lacks the permission:
-    // the program does more than its `main` declares (2.5).
-    if (err.name === "NotCapable") {
-      return trap("effect", "std.fs.read_text", path, "Reading files needs the effect `fs.read` on `main`.");
+    if (err.name === "NotCapable" && /\ball access\b/.test(String(err.message))) {
+      return Err<std$fs$Error>({ tag: "PermissionDenied" });
     }
-    switch (err.code) {
-      case "ENOENT":
-        return Err<std$fs$Error>({ tag: "NotFound" });
-      case "EACCES":
-      case "EPERM":
-        return Err<std$fs$Error>({ tag: "PermissionDenied" });
-      case "EISDIR":
-        return Err<std$fs$Error>({ tag: "IsADirectory" });
-    }
+    if (err.name === "NotCapable" || err.code === "ERR_ACCESS_DENIED") return trap("effect", name, path, NEEDS[effect]);
+    // Node.js reports ENOENT for an empty path; Deno refuses it before
+    // asking the system, with a message of its own and no code.
+    if (err.code === "ENOENT" || path === "") return Err<std$fs$Error>({ tag: "NotFound" });
+    if (err.code === "EACCES" || err.code === "EPERM") return Err<std$fs$Error>({ tag: "PermissionDenied" });
+    if (err.code === "EISDIR") return Err<std$fs$Error>({ tag: "IsADirectory" });
     return Err<std$fs$Error>({ tag: "Other", value: String(err.message ?? e) });
   }
+  return trap("effect", name, path, "This runtime has no file system.");
+}
+
+export function std$fs$read_text(path: string): Result<string, std$fs$Error> {
+  return onFiles(
+    "std.fs.read_text",
+    "fs.read",
+    path,
+    (deno) => deno.readTextFileSync(path),
+    (fs) => fs.readFileSync(path, "utf8"),
+  );
+}
+
+// Exactly the text's UTF-8 bytes: no line break added, no byte order mark.
+export function std$fs$write_text(path: string, text: string): Result<Unit, std$fs$Error> {
+  return onFiles("std.fs.write_text", "fs.write", path, (deno) => {
+    deno.writeTextFileSync(path, text);
+    return Unit;
+  }, (fs) => {
+    fs.writeFileSync(path, text);
+    return Unit;
+  });
+}
+
+export function std$fs$append_text(path: string, text: string): Result<Unit, std$fs$Error> {
+  return onFiles("std.fs.append_text", "fs.write", path, (deno) => {
+    deno.writeTextFileSync(path, text, { append: true });
+    return Unit;
+  }, (fs) => {
+    fs.appendFileSync(path, text);
+    return Unit;
+  });
+}
+
+// Sorted, so that every host gives the same order (3.7); hidden entries
+// included, `.` and `..` not.
+export function std$fs$list_directory(path: string): Result<readonly string[], std$fs$Error> {
+  return onFiles(
+    "std.fs.list_directory",
+    "fs.read",
+    path,
+    (deno) => [...deno.readDirSync(path)].map((e) => e.name).sort(str_compare),
+    (fs) => fs.readdirSync(path).sort(str_compare),
+  );
+}
+
+// Follows links: a link to a directory is a directory, a broken one is
+// NotFound. Everything that is not a directory (a device too) is a file.
+export function std$fs$kind(path: string): Result<std$fs$Kind, std$fs$Error> {
+  const kind = (directory: boolean): std$fs$Kind => directory ? { tag: "Directory" } : { tag: "File" };
+  return onFiles(
+    "std.fs.kind",
+    "fs.read",
+    path,
+    (deno) => kind(deno.statSync(path).isDirectory),
+    (fs) => kind(fs.statSync(path).isDirectory()),
+  );
+}
+
+export function std$fs$create_directory(path: string): Result<Unit, std$fs$Error> {
+  return onFiles("std.fs.create_directory", "fs.write", path, (deno) => {
+    deno.mkdirSync(path, { recursive: true });
+    return Unit;
+  }, (fs) => {
+    fs.mkdirSync(path, { recursive: true });
+    return Unit;
+  });
+}
+
+// A link is removed itself, not its target. Node.js's rmSync takes no
+// directory without `recursive`, so an empty one goes through rmdirSync.
+export function std$fs$remove(path: string): Result<Unit, std$fs$Error> {
+  return onFiles("std.fs.remove", "fs.write", path, (deno) => {
+    deno.removeSync(path);
+    return Unit;
+  }, (fs) => {
+    try {
+      fs.rmSync(path);
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code !== "ERR_FS_EISDIR" && code !== "EISDIR") throw e;
+      fs.rmdirSync(path);
+    }
+    return Unit;
+  });
 }
 
 // ---- std.http ----

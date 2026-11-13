@@ -34,6 +34,14 @@ export const STD_TYPES_SOURCE = `type std.fs.Error
   where: none
 end type std.fs.Error
 
+type std.fs.Kind
+  doc: "What a path names. Everything that is not a directory counts as a file."
+  variant:
+    File
+    Directory
+  where: none
+end type std.fs.Kind
+
 type std.http.Header
   doc: "One header of a request or response."
   record:
@@ -108,6 +116,54 @@ export const STD: readonly Signature[] = [
     [["path", STRING]],
     result(STRING, con("std.fs.Error")),
     ["fs.read"],
+  ),
+  sig(
+    "std.fs.write_text",
+    "Writes the text to a file as UTF-8, creating the file or replacing its content.",
+    [],
+    [["path", STRING], ["text", STRING]],
+    result(UNIT, con("std.fs.Error")),
+    ["fs.write"],
+  ),
+  sig(
+    "std.fs.append_text",
+    "Adds the text to the end of a file as UTF-8, creating the file if it is missing.",
+    [],
+    [["path", STRING], ["text", STRING]],
+    result(UNIT, con("std.fs.Error")),
+    ["fs.write"],
+  ),
+  sig(
+    "std.fs.list_directory",
+    "The names of a directory's entries, in the order of `std.string.compare`; names, not paths.",
+    [],
+    [["path", STRING]],
+    result(list(STRING), con("std.fs.Error")),
+    ["fs.read"],
+  ),
+  sig(
+    "std.fs.kind",
+    "Whether a path exists as a file or as a directory; `Err(NotFound)` if nothing is there.",
+    [],
+    [["path", STRING]],
+    result(con("std.fs.Kind"), con("std.fs.Error")),
+    ["fs.read"],
+  ),
+  sig(
+    "std.fs.create_directory",
+    "Creates a directory and its missing parents; `Ok` if it already exists.",
+    [],
+    [["path", STRING]],
+    result(UNIT, con("std.fs.Error")),
+    ["fs.write"],
+  ),
+  sig(
+    "std.fs.remove",
+    "Removes a file or an empty directory.",
+    [],
+    [["path", STRING]],
+    result(UNIT, con("std.fs.Error")),
+    ["fs.write"],
   ),
 
   sig(

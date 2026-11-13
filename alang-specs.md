@@ -546,6 +546,12 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | --- | --- | --- |
 | `std.console.print_line(text: String): Unit` | console | Writes a line to the console. |
 | `std.fs.read_text(path: String): Result<String, std.fs.Error>` | fs.read | Reads a whole file as UTF-8 text. |
+| `std.fs.write_text(path: String, text: String): Result<Unit, std.fs.Error>` | fs.write | Writes the text to a file as UTF-8, creating the file or replacing its content. |
+| `std.fs.append_text(path: String, text: String): Result<Unit, std.fs.Error>` | fs.write | Adds the text to the end of a file as UTF-8, creating the file if it is missing. |
+| `std.fs.list_directory(path: String): Result<List<String>, std.fs.Error>` | fs.read | The names of a directory's entries, in the order of `std.string.compare`; names, not paths. |
+| `std.fs.kind(path: String): Result<std.fs.Kind, std.fs.Error>` | fs.read | Whether a path exists as a file or as a directory; `Err(NotFound)` if nothing is there. |
+| `std.fs.create_directory(path: String): Result<Unit, std.fs.Error>` | fs.write | Creates a directory and its missing parents; `Ok` if it already exists. |
+| `std.fs.remove(path: String): Result<Unit, std.fs.Error>` | fs.write | Removes a file or an empty directory. |
 | `std.http.serve(host: String, port: Int, handler: (std.http.Request) -> std.http.Response with effects): Result<Unit, std.http.ServeError>` | net | Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them. |
 | `std.int.parse(text: String): Option<Int>` | none | Reads a decimal integer; `None` if the text is not one. |
 | `std.int.to_float(value: Int): Float` | none | The same number as a Float. |
@@ -578,6 +584,14 @@ type std.fs.Error
     Other: String
   where: none
 end type std.fs.Error
+
+type std.fs.Kind
+  doc: "What a path names. Everything that is not a directory counts as a file."
+  variant:
+    File
+    Directory
+  where: none
+end type std.fs.Kind
 
 type std.http.Header
   doc: "One header of a request or response."

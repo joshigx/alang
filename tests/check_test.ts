@@ -593,6 +593,23 @@ Deno.test("effects: a caller declares the effects of its callees (2.1)", () => {
   assertEquals(partial.fix, { replace: "effects: console", with: "effects: fs.read, console" });
 });
 
+// Every std function with an effect, as a statement that binds its result.
+const EFFECTFUL: [string, string][] = [
+  ['let r: Result<Unit, std.fs.Error> = std.fs.write_text(path: "x", text: "y")', "fs.write"],
+  ['let r: Result<Unit, std.fs.Error> = std.fs.append_text(path: "x", text: "y")', "fs.write"],
+  ['let r: Result<List<String>, std.fs.Error> = std.fs.list_directory(path: "x")', "fs.read"],
+  ['let r: Result<std.fs.Kind, std.fs.Error> = std.fs.kind(path: "x")', "fs.read"],
+  ['let r: Result<Unit, std.fs.Error> = std.fs.create_directory(path: "x")', "fs.write"],
+  ['let r: Result<Unit, std.fs.Error> = std.fs.remove(path: "x")', "fs.write"],
+];
+
+Deno.test("effects: each std function with an effect needs it on the caller (2.1)", () => {
+  for (const [call, effect] of EFFECTFUL) {
+    assertEquals(one(fn(call + "\nreturn 0"), "E0230").fix?.with, `effects: ${effect}`, call);
+    clean(fn(call + "\nreturn 0", { effects: effect }));
+  }
+});
+
 Deno.test("effects: accepted forms", () => {
   clean(fn('std.console.print_line(text: "hi")\nreturn 0', { effects: "console" }));
   // Effects per element go through `for` (2.4).
