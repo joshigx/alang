@@ -404,7 +404,7 @@ Deno.test("mcp: the instructions name the card first, then the spec, in both era
   const legacy = (await result(server, "initialize", { protocolVersion: "2025-11-25" })).instructions as string;
   const modernEra = (await result(server, "server/discover", modern())).instructions as string;
   for (const instructions of [legacy, modernEra]) {
-    assert_(instructions.startsWith("Before writing alang, call `card` once"), instructions.slice(0, 80));
+    assert_(instructions.startsWith("Before writing alang, call `card`"), instructions.slice(0, 80));
     assert_(instructions.includes(`The full design and reference is ${spec};`));
     assert_(!instructions.includes("read it before writing alang"));
     // Claude Code cuts at 4,096 characters (before v2.1.296 at 2,048); install

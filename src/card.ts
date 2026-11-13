@@ -12,13 +12,16 @@ export const CARD = `# The alang card
 alang is written by LLMs and transpiled to TypeScript. This card holds the rules every definition needs: write
 from it. The standard library is not on it; find it with the tools.
 
-## Finding std and code
+## Working through the tools
 
 - \`list("std")\` gives the std modules, \`list("std.string")\` a module's definitions with their docs.
 - \`search("split")\` finds names and docs containing a text. \`search_type("String, String -> List<String>")\` finds
   functions by signature: parameter types in order, \`_\` for any type; the count and the result must match.
 - \`context(name)\` gives a definition's text and hash and the signatures of what it uses; for a std name, its
   signature, effects and doc, and the types it mentions. Read code this way, not from \`export/\`.
+- \`add(text)\` adds a definition, \`replace(name, hash, text)\` replaces the version whose hash a query returned, and
+  \`submit(changes)\` sends several as one transaction: definitions that use each other, or an interface change with
+  its callers. Nothing is written unless all of it is accepted.
 - A rejected change returns diagnostics with \`code\`, \`at\` (the quoted text), \`message\`, \`expected\` and, when the
   correction is mechanical, a \`fix\` (\`replace\` by \`with\`): apply it and send the change again.
 

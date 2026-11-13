@@ -6,7 +6,7 @@ import { assert_, assertEquals } from "./assert.ts";
 import { done, fresh } from "./db_helpers.ts";
 import { EFFECTS, pathText } from "../src/ast.ts";
 import { CARD } from "../src/card.ts";
-import { McpServer } from "../src/mcp.ts";
+import { McpServer, TOOLS } from "../src/mcp.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
 import { STD, STD_TYPES } from "../src/std.ts";
@@ -82,6 +82,13 @@ Deno.test("card: every std name it mentions exists", () => {
 
 Deno.test("card: the effects are listed in table order", () => {
   assert_(CARD.includes(`\`${EFFECTS.join(", ")}\``));
+});
+
+Deno.test("card: every tool it names exists", () => {
+  const section = CARD.slice(CARD.indexOf("## Working through the tools"), CARD.indexOf("## Definitions"));
+  const named = [...new Set([...section.matchAll(/`([a-z_]+)\(/g)].map((m) => m[1]))];
+  assertEquals(named, ["list", "search", "search_type", "context", "add", "replace", "submit"]);
+  for (const name of named) assert_(TOOLS.some((t) => t.name === name), name);
 });
 
 Deno.test("card: the tool calls it shows find what it says", async () => {

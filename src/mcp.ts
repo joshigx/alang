@@ -81,8 +81,8 @@ tools do not answer.`
 // Clients cut long instructions (Claude Code at 4,096 characters, before
 // v2.1.296 at 2,048), so the card is a tool and the instructions name it
 // first; tests/mcp_test.ts keeps them short.
-export const INSTRUCTIONS = `Before writing alang, call \`card\` once: the rules every definition needs and a \
-complete accepted program. The standard library is not on it; find it with \`list("std")\`, \`search\`, \
+export const INSTRUCTIONS = `Before writing alang, call \`card\`, and again when its text is no longer in your \
+context: the rules every definition needs and a complete accepted program. The standard library is not on it; find it with \`list("std")\`, \`search\`, \
 \`search_type\` and \`context\`.${SPEC_LINE}
 
 An alang codebase, stored as a database of definitions (spec section 6). \
@@ -153,7 +153,7 @@ export const TOOLS: readonly Tool[] = [
     name: "card",
     title: "The language card",
     description: "The rules every alang definition needs and a complete accepted program, as Markdown: call it " +
-      "once before writing alang. The standard library is not on it; find it with `list`, `search`, " +
+      "before writing alang, and again when its text is no longer in your context. The standard library is not on it; find it with `list`, `search`, " +
       "`search_type` and `context`.",
     params: {},
     query: true,

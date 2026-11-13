@@ -76,7 +76,7 @@ language card (item 16) is built on `card`, from `main`, not merged yet.
     (`wordcount`, see "From the wordcount round") was accepted on the first try without the advisor; the two gaps it
     showed, what list operations cost and counting without a Map, are now in the spec (7.8, 7.1).
 16. The language card, on branch `card` (the first layer of "Language knowledge served by the tool"): `src/card.ts`
-    exports `CARD`, about 150 lines and 8.7 KB of Markdown with the rules every definition needs and one complete
+    exports `CARD`, about 155 lines and 9 KB of Markdown with the rules every definition needs and one complete
     accepted program (`temp`), and no std listing beyond the names its rules use. The MCP tool `card` returns it;
     the instructions start by sending the model there and to `list("std")`, `search`, `search_type` and `context`
     for std, and name the spec only as the full reference. Served by a tool, not inside the instructions as briefed,
@@ -619,9 +619,10 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
   through tool search gets 16,384. `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` (from v2.1.280) replaces both limits.
   Sources: code.claude.com/docs/en/mcp.md ("Tool search for MCP server authors") and the Claude Code changelog;
   whether instructions from `server/discover` are cut the same way is not documented. The instructions were 2,454
-  characters before the card and are 2,645 now; card and instructions together would be about 11,400. So the card
+  characters before the card and are 2,694 now; card and instructions together would be over 11,000. So the card
   is a tool. If the round shows that the model skips `card`, the options are raising the limit in the playground and
-  serving the card in the instructions (one line in `src/mcp.ts`), or a short core of the card in the instructions.
+  serving the card in the instructions (a small change to `INSTRUCTIONS` and its tests), or a short core of the
+  card in the instructions.
 - **`_` as a pattern is E0002 with an empty name**: "written in snake_case: ``". The message could name `_` and
   say that every value in a pattern gets a name.
 - **`if` inside an argument or a lambda passes `checkProgram`**; E0303 comes from the emitter during acceptance, so
