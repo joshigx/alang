@@ -210,6 +210,41 @@ Deno.test("io: remove takes a file, a link or an empty directory", async () => {
   });
 });
 
+// A link whose target is missing names nothing, alike on every host and
+// with every permission (the tasks round, 2026-11-14: on Deno it was `Other`,
+// "Too many levels of symbolic links"; on Node.js a write created the target).
+Deno.test("io: a dangling link is NotFound, but in the way of create_directory; remove takes the link", async () => {
+  if (!LINUX) return;
+  await inTemp(async (dir) => {
+    const at = (name: string) => join(dir, name);
+    await Deno.symlink("target.txt", at("dangling"));
+    await Deno.symlink("dangling", at("chain"));
+    await Deno.symlink("missing", at("nowhere"));
+    await Deno.symlink("loop2", at("loop"));
+    await Deno.symlink("loop", at("loop2"));
+    for (const path of [at("dangling"), at("chain"), join(at("nowhere"), "a.txt")]) {
+      assertEquals(std$fs$read_text(path), NOT_FOUND, path);
+      // Not followed: the target is not created.
+      assertEquals(std$fs$write_text(path, "x"), NOT_FOUND, path);
+      assertEquals(std$fs$append_text(path, "x"), NOT_FOUND, path);
+      assertEquals(std$fs$kind(path), NOT_FOUND, path);
+      assertEquals(std$fs$list_directory(path), NOT_FOUND, path);
+      // As a file in the way would be (`mkdir -p` says "File exists").
+      assertEquals(other(std$fs$create_directory(path)), "Other", path);
+    }
+    assertEquals(other(std$fs$create_directory(join(at("nowhere"), "sub"))), "Other");
+    assertEquals(std$fs$list_directory(dir), Ok(["chain", "dangling", "loop", "loop2", "nowhere"]));
+    // A loop is not missing: Other, whatever the operation.
+    assertEquals(other(std$fs$read_text(at("loop"))), "Other");
+    assertEquals(other(std$fs$write_text(at("loop"), "x")), "Other");
+    assertEquals(other(std$fs$kind(at("loop"))), "Other");
+    // remove takes the link itself.
+    assertEquals(std$fs$remove(at("dangling")), Ok(Unit));
+    assertEquals(std$fs$remove(at("loop")), Ok(Unit));
+    assertEquals(std$fs$list_directory(dir), Ok(["chain", "loop2", "nowhere"]));
+  });
+});
+
 Deno.test("io: env.get reads a variable; None if it is not set or cannot exist", () => {
   Deno.env.set("ALANG_IO_GET", "a value");
   Deno.env.set("ALANG_IO_EMPTY", "");
@@ -453,6 +488,96 @@ for (const host of ["deno", "node"] as const) {
     } finally {
       for (const name of Object.keys(IO_ENV)) Deno.env.delete(name);
       await Deno.remove(cwd, { recursive: true });
+    }
+  });
+}
+
+// Every std.fs function on links, as a program sees them, on both hosts:
+// `Other` messages differ between hosts and are left out.
+const LINK_CALLS = [
+  'std.fs.read_text(path: "dangling")',
+  'std.fs.write_text(path: "dangling", text: "x")',
+  'std.fs.append_text(path: "dangling", text: "x")',
+  'std.fs.kind(path: "dangling")',
+  'std.fs.list_directory(path: "dangling")',
+  'std.fs.create_directory(path: "dangling")',
+  'std.fs.write_text(path: "chain", text: "x")',
+  'std.fs.write_text(path: "nowhere/a.txt", text: "x")',
+  'std.fs.create_directory(path: "nowhere/sub")',
+  'std.fs.read_text(path: "loop")',
+  'std.fs.write_text(path: "loop", text: "x")',
+  'std.fs.write_text(path: "good", text: "through the link")',
+  'std.fs.remove(path: "dangling")',
+];
+const linksMain = (name: string, effects: string, calls: string[]) =>
+  mainWith(name, effects, [
+    ...calls.map((call) => `std.console.print_line(text: std.text.show(value: ${call}))`),
+    "return Unit",
+  ]);
+const LINK_RESULTS = [
+  "Err(NotFound)",
+  "Err(NotFound)",
+  "Err(NotFound)",
+  "Err(NotFound)",
+  "Err(NotFound)",
+  "Err(Other)",
+  "Err(NotFound)",
+  "Err(NotFound)",
+  "Err(Other)",
+  "Err(Other)",
+  "Err(Other)",
+  "Ok(Unit)",
+  "Ok(Unit)",
+];
+
+for (const host of ["deno", "node"] as const) {
+  Deno.test(`io: links behave alike on every host and with fs.write alone (${host})`, async () => {
+    if (!LINUX || (host === "node" && !(await hasNode()))) return;
+    // Without fs.read only writing is possible: those calls.
+    const writing = LINK_CALLS.flatMap((call, i) =>
+      /write_text|append_text|create_directory|remove/.test(call) ? [i] : []
+    );
+    const built = await program(
+      linksMain("links", "fs.read, fs.write, console", LINK_CALLS),
+      linksMain("writing", "fs.write, console", writing.map((i) => LINK_CALLS[i])),
+    );
+    for (
+      const [main, expected] of [
+        ["links.main", LINK_RESULTS],
+        // Deno without fs.read cannot tell a loop from a dangling link.
+        ["writing.main", writing.map((i) => host === "deno" && i === 10 ? "Err(NotFound)" : LINK_RESULTS[i])],
+      ] as const
+    ) {
+      const cwd = await Deno.makeTempDir({ prefix: "alang-io-links-" });
+      try {
+        await Deno.writeTextFile(join(cwd, "real.txt"), "r");
+        for (
+          const [link, target] of [
+            ["dangling", "target.txt"],
+            ["chain", "dangling"],
+            ["nowhere", "missing"],
+            ["loop", "loop2"],
+            ["loop2", "loop"],
+            ["good", "real.txt"],
+          ]
+        ) await Deno.symlink(target, join(cwd, link));
+        const out = host === "deno" ? await run(built, { stdio: "piped", cwd, main }) : await new Deno.Command("node", {
+          args: [await writeEntry(built, main)],
+          cwd,
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals([out.code, decode(out.stderr)], [0, ""], main);
+        const shown = decode(out.stdout).replaceAll(/Other\("[^\n]*"\)/g, "Other");
+        assertEquals(shown.split("\n"), [...expected, ""], main);
+        // No target was created; the link to a file was followed.
+        const names = (await Array.fromAsync(Deno.readDir(cwd))).map((e) => e.name).sort();
+        assertEquals(names, ["chain", "good", "loop", "loop2", "nowhere", "real.txt"], main);
+        assertEquals(await Deno.readTextFile(join(cwd, "real.txt")), "through the link", main);
+      } finally {
+        await Deno.remove(cwd, { recursive: true });
+      }
     }
   });
 }

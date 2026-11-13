@@ -489,6 +489,7 @@ type DenoFs = {
   writeTextFileSync(path: string, text: string, options?: { append: boolean }): void;
   readDirSync(path: string): Iterable<{ readonly name: string }>;
   statSync(path: string): { readonly isDirectory: boolean };
+  lstatSync(path: string): { readonly isSymlink: boolean };
   mkdirSync(path: string, options: { recursive: boolean }): void;
   removeSync(path: string): void;
 };
@@ -499,6 +500,7 @@ type NodeFs = {
   appendFileSync(path: string, text: string): void;
   readdirSync(path: string): string[];
   statSync(path: string): { isDirectory(): boolean };
+  lstatSync(path: string): { isSymbolicLink(): boolean };
   mkdirSync(path: string, options: { recursive: boolean }): void;
   rmSync(path: string): void;
   rmdirSync(path: string): void;
@@ -518,6 +520,61 @@ const NEEDS = {
   "fs.read": "Reading files and directories needs the effect `fs.read` on `main`.",
   "fs.write": "Creating, changing and deleting files needs the effect `fs.write` on `main`.",
 } as const;
+
+// A link whose target is missing (a dangling link) names nothing, and the
+// hosts disagree on it. Node.js reads it as ENOENT but writes through it,
+// creating the target; Deno, without all permissions (as `alang run` starts
+// programs), refuses to open it at all (ELOOP), and without the read
+// permission cannot even look at it, so it can neither follow the link nor
+// tell it from a loop. Hence one rule for both: reading, writing and
+// appending through a dangling link are `NotFound`, as are `kind` and
+// `list_directory`; `create_directory` is `Other`, as for a file in the way
+// (`mkdir -p` says "File exists"); `remove` removes the link. A real loop is
+// `Other`, except that a program with `fs.write` and without `fs.read` gets
+// `NotFound` when writing on Deno, which cannot tell the two apart.
+
+const codeOf = (e: unknown): string | undefined => (e as { code?: string } | null)?.code;
+
+// Whether `path` goes through a dangling link: the deepest part of it that
+// exists is a link that resolves to nothing. Null if that cannot be told
+// (Deno without the read permission). Never throws.
+function throughDanglingLink(path: string): boolean | null {
+  const host = globalThis as FsHost;
+  const node = host.Deno ? null : host.process?.getBuiltinModule("node:fs");
+  const isLink = (p: string) => host.Deno ? host.Deno.lstatSync(p).isSymlink : node!.lstatSync(p).isSymbolicLink();
+  const resolve = (p: string) => host.Deno ? host.Deno.statSync(p) : node!.statSync(p);
+  if (!host.Deno && !node) return null;
+  const parts = path.split("/");
+  for (let n = parts.length; n > 0; n--) {
+    const prefix = parts.slice(0, n).join("/");
+    if (prefix === "") continue;
+    let link: boolean;
+    try {
+      link = isLink(prefix);
+    } catch (e) {
+      if ((e as { name?: string }).name === "NotCapable") return null;
+      if (codeOf(e) === "ENOENT") continue;
+      return false;
+    }
+    if (!link) return false;
+    try {
+      resolve(prefix);
+      return false;
+    } catch (e) {
+      return codeOf(e) === "ENOENT";
+    }
+  }
+  return false;
+}
+
+function hostError(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code });
+}
+
+// Before a write: a dangling link is not followed (see above).
+function refuseDanglingLink(path: string): void {
+  if (throughDanglingLink(path) === true) throw hostError("ENOENT", `The link ${path} leads to nothing.`);
+}
 
 // One file operation on whichever host runs the program, with the host's
 // errors as std.fs.Error. A refusal for lack of the permission traps: the
@@ -544,6 +601,8 @@ function onFiles<T>(
     // Node.js reports ENOENT for an empty path; Deno refuses it before
     // asking the system, with a message of its own and no code.
     if (err.code === "ENOENT" || path === "") return Err<std$fs$Error>({ tag: "NotFound" });
+    // Deno's answer for a dangling link; a real loop stays `Other`.
+    if (err.code === "ELOOP" && throughDanglingLink(path) !== false) return Err<std$fs$Error>({ tag: "NotFound" });
     if (err.code === "EACCES" || err.code === "EPERM") return Err<std$fs$Error>({ tag: "PermissionDenied" });
     if (err.code === "EISDIR") return Err<std$fs$Error>({ tag: "IsADirectory" });
     return Err<std$fs$Error>({ tag: "Other", value: String(err.message ?? e) });
@@ -562,11 +621,14 @@ export function std$fs$read_text(path: string): Result<string, std$fs$Error> {
 }
 
 // Exactly the text's UTF-8 bytes: no line break added, no byte order mark.
+// Links are followed, but not a dangling one.
 export function std$fs$write_text(path: string, text: string): Result<Unit, std$fs$Error> {
   return onFiles("std.fs.write_text", "fs.write", path, (deno) => {
+    refuseDanglingLink(path);
     deno.writeTextFileSync(path, text);
     return Unit;
   }, (fs) => {
+    refuseDanglingLink(path);
     fs.writeFileSync(path, text);
     return Unit;
   });
@@ -574,9 +636,11 @@ export function std$fs$write_text(path: string, text: string): Result<Unit, std$
 
 export function std$fs$append_text(path: string, text: string): Result<Unit, std$fs$Error> {
   return onFiles("std.fs.append_text", "fs.write", path, (deno) => {
+    refuseDanglingLink(path);
     deno.writeTextFileSync(path, text, { append: true });
     return Unit;
   }, (fs) => {
+    refuseDanglingLink(path);
     fs.appendFileSync(path, text);
     return Unit;
   });
@@ -607,12 +671,21 @@ export function std$fs$kind(path: string): Result<std$fs$Kind, std$fs$Error> {
   );
 }
 
+// A dangling link at the path or on the way is in the way, as a file is:
+// Deno says EEXIST, Node.js ENOENT.
 export function std$fs$create_directory(path: string): Result<Unit, std$fs$Error> {
   return onFiles("std.fs.create_directory", "fs.write", path, (deno) => {
     deno.mkdirSync(path, { recursive: true });
     return Unit;
   }, (fs) => {
-    fs.mkdirSync(path, { recursive: true });
+    try {
+      fs.mkdirSync(path, { recursive: true });
+    } catch (e) {
+      if (codeOf(e) === "ENOENT" && path !== "" && throughDanglingLink(path)) {
+        throw hostError("EEXIST", `A link that leads to nothing is in the way: ${path}`);
+      }
+      throw e;
+    }
     return Unit;
   });
 }

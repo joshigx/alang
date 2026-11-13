@@ -153,7 +153,7 @@ export const STD: readonly Signature[] = [
   ),
   sig(
     "std.fs.write_text",
-    "Writes the text to a file as UTF-8, creating the file or replacing its content.",
+    "Writes the text to a file as UTF-8, creating the file or replacing its content. A link is followed, but a link whose target is missing is `Err(NotFound)`: the target is not created.",
     [],
     [["path", STRING], ["text", STRING]],
     result(UNIT, con("std.fs.Error")),
@@ -161,7 +161,7 @@ export const STD: readonly Signature[] = [
   ),
   sig(
     "std.fs.append_text",
-    "Adds the text to the end of a file as UTF-8, creating the file if it is missing.",
+    "Adds the text to the end of a file as UTF-8, creating the file if it is missing. A link is followed, but a link whose target is missing is `Err(NotFound)`: the target is not created.",
     [],
     [["path", STRING], ["text", STRING]],
     result(UNIT, con("std.fs.Error")),
