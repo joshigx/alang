@@ -11,7 +11,7 @@ Read this first when picking up the work in a new session. Update it when a phas
 `main`, which contains the whole chain `type-checker`, `effects`, `examples`, `database`, `mcp`, `async`, `spec`). The
 phase branches are kept as they are. Start each new phase on its own branch from `main`; pushing is the user's call.
 Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed. List
-literals and pure std (item 15) are on `list-literals`, branched from `main`, not merged.
+literals and pure std (item 15) were built on `list-literals` and fast-forwarded into `main` the same way.
 
 **Done** (phases from CLAUDE.md, in order):
 
