@@ -66,7 +66,9 @@ Deno.test("queries: context lists what a definition uses, then the types of thos
   assertEquals(used.get("std.fs.Error")?.text, printDefinition(STD_TYPES[0]));
   assertEquals(
     used.get("std.fs.read_text")?.text,
-    'fn std.fs.read_text(path: String): Result<String, std.fs.Error>, effects: fs.read, doc: "Reads a whole file as UTF-8 text."',
+    'fn std.fs.read_text(path: String): Result<String, std.fs.Error>, effects: fs.read, doc: "Reads a whole file as ' +
+      "UTF-8 text, as it is: line ends and a byte order mark at the start (U+FEFF) stay. Bytes that are not UTF-8 " +
+      'become U+FFFD, so writing the text back changes such a file."',
   );
 
   // A definition is not listed among its own uses.

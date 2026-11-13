@@ -457,6 +457,74 @@ for (const host of ["deno", "node"] as const) {
   });
 }
 
+// What the doc lines of read_text and read_line say about decoding: bytes
+// that are not UTF-8 become U+FFFD (one per maximal invalid sequence), a byte
+// order mark at the start stays, line ends stay in a file; alike on both hosts.
+const DECODING_PROGRAM = mainWith("decoding", "fs.read, console", [
+  'let text: String = std.fs.read_text(path: "in.txt") else return Unit',
+  "std.console.print_line(text: std.text.show(value: std.string.code_points(text: text)))",
+  ...Array(2).fill([
+    "std.console.print_line(text: std.text.show(value: std.option.map(option: std.console.read_line(), " +
+    "with: fn(line: String): List<Int> => std.string.code_points(text: line))))",
+  ]).flat(),
+  "return Unit",
+]);
+// A byte order mark, an invalid byte, CR LF, a truncated sequence, an
+// overlong one, and a byte order mark inside the text.
+const UNDECODABLE = [
+  0xef,
+  0xbb,
+  0xbf,
+  0x61,
+  0xff,
+  0x62,
+  0x0d,
+  0x0a,
+  0xe2,
+  0x82,
+  0x41,
+  0xc0,
+  0xaf,
+  0x0a,
+  0x63,
+  0xef,
+  0xbb,
+  0xbf,
+];
+for (const host of ["deno", "node"] as const) {
+  Deno.test(`io: read_text and read_line decode alike, as their docs say (${host})`, async () => {
+    if (host === "node" && !(await hasNode())) return;
+    const built = await program(DECODING_PROGRAM);
+    const cwd = await Deno.makeTempDir({ prefix: "alang-io-decoding-" });
+    try {
+      await Deno.writeFile(join(cwd, "in.txt"), new Uint8Array(UNDECODABLE));
+      // The console gets bytes, which `RunOptions.stdin` (a text) cannot hold:
+      // started by hand, on Deno with the permission of its effects.
+      const entry = await writeEntry(built);
+      const child = new Deno.Command(host === "deno" ? Deno.execPath() : "node", {
+        args: host === "deno" ? ["run", "--allow-read", entry] : [entry],
+        cwd,
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const writer = child.stdin.getWriter();
+      await writer.write(new Uint8Array(UNDECODABLE));
+      await writer.close();
+      const out = await child.output();
+      assertEquals([out.code, decode(out.stderr)], [0, ""]);
+      assertEquals(decode(out.stdout).split("\n"), [
+        "[65279, 97, 65533, 98, 13, 10, 65533, 65, 65533, 65533, 10, 99, 65279]",
+        "Some([65279, 97, 65533, 98])",
+        "Some([65533, 65, 65533, 65533])",
+        "",
+      ]);
+    } finally {
+      await Deno.remove(cwd, { recursive: true });
+    }
+  });
+}
+
 // ---- ending with an error ----
 
 for (const host of ["deno", "node"] as const) {

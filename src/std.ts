@@ -126,7 +126,7 @@ export const STD: readonly Signature[] = [
   sig("std.console.print_line", "Writes a line to the console.", [], [["text", STRING]], UNIT, ["console"]),
   sig(
     "std.console.read_line",
-    "Reads the next line from the console, without its line break; `None` at the end of the input.",
+    "Reads the next line from the console as UTF-8, without its line break (a line feed, and a carriage return right before it); `None` at the end of the input. Bytes that are not UTF-8 become U+FFFD; a byte order mark at the start of the input stays (U+FEFF).",
     [],
     [],
     option(STRING),
@@ -145,7 +145,7 @@ export const STD: readonly Signature[] = [
 
   sig(
     "std.fs.read_text",
-    "Reads a whole file as UTF-8 text.",
+    "Reads a whole file as UTF-8 text, as it is: line ends and a byte order mark at the start (U+FEFF) stay. Bytes that are not UTF-8 become U+FFFD, so writing the text back changes such a file.",
     [],
     [["path", STRING]],
     result(STRING, con("std.fs.Error")),
