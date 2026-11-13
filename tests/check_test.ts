@@ -113,7 +113,7 @@ Deno.test("check: spec programs are accepted", () => {
 const LOAD_PORT_CONTEXT = `type config.LoadError
   doc: "Why the configuration could not be loaded."
   variant:
-    FileUnreadable: std.fs.ReadError
+    FileUnreadable: std.fs.Error
     InvalidPort: net.port.ParseError
   where: none
 end type config.LoadError
@@ -136,7 +136,7 @@ Deno.test("check: the spec's let fragments are accepted inside a function", () =
   clean(
     fn(specBlock("let contents") + "\nreturn contents", {
       params: ["paths: List<String>"],
-      out: "List<Result<String, std.fs.ReadError>>",
+      out: "List<Result<String, std.fs.Error>>",
       effects: "fs.read",
     }),
   );
@@ -343,7 +343,7 @@ Deno.test("check: a local built from a case is matched on every case, also of a 
     `let n: Int = match ${subject}\n` + cases.map((c) => `  case ${c} then\n    0\n`).join("") + "end match\nreturn n";
   clean(fn("let s: Shape = Dot\n" + match("s", ["Circle(v)", "Square(v)", "Dot"]), { extra: SHAPE }));
   clean(fn(
-    'let e: std.fs.ReadError = std.fs.Other("disk")\n' +
+    'let e: std.fs.Error = std.fs.Other("disk")\n' +
       match("e", ["std.fs.NotFound", "std.fs.PermissionDenied", "std.fs.IsADirectory", "std.fs.Other(why)"]),
   ));
 });
@@ -581,13 +581,13 @@ Deno.test("effects: a caller declares the effects of its callees (2.1)", () => {
   // Several missing effects: one diagnostic, the whole line fixed, in table order.
   const both = one(
     fn(
-      'std.console.print_line(text: "a")\nlet r: Result<String, std.fs.ReadError> = std.fs.read_text(path: "x")\nreturn 0',
+      'std.console.print_line(text: "a")\nlet r: Result<String, std.fs.Error> = std.fs.read_text(path: "x")\nreturn 0',
     ),
     "E0230",
   );
   assertEquals(both.fix, { replace: "effects: none", with: "effects: fs.read, console" });
   const partial = one(
-    fn('let r: Result<String, std.fs.ReadError> = std.fs.read_text(path: "x")\nreturn 0', { effects: "console" }),
+    fn('let r: Result<String, std.fs.Error> = std.fs.read_text(path: "x")\nreturn 0', { effects: "console" }),
     "E0230",
   );
   assertEquals(partial.fix, { replace: "effects: console", with: "effects: fs.read, console" });

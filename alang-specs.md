@@ -184,7 +184,7 @@ For every purpose the grammar permits exactly one form, and every definition has
 Reading files and collecting the results, with `for` as an expression per 3.4 instead of a lambda with an effect:
 
 ```
-let contents: List<Result<String, std.fs.ReadError>> = for path: String in paths do
+let contents: List<Result<String, std.fs.Error>> = for path: String in paths do
   std.fs.read_text(path: path)
 end for
 ```
@@ -507,7 +507,7 @@ These forms are common in other languages but do not exist in alang. Write the f
   - A case without a value is matched bare: `case None then`.
   - A case with a value always takes a sub-pattern, either a name or a nested case: `case Some(n) then`, `case Err(OutOfRange(n)) then`, `case Err(std.fs.NotFound) then`.
   - A `match` on `Int` or `String` can never be exhaustive (E0213); use `if`.
-  - A name may not stand for the remaining cases. After `case Err(std.fs.NotFound) then`, a `case Err(other) then` would be a catch-all, so a case added to `std.fs.ReadError` later would go unreported; it is rejected (E0227). Write a case for each. A name with no specific case beside it (`case Err(e) then` alone) binds the whole value, as usual.
+  - A name may not stand for the remaining cases. After `case Err(std.fs.NotFound) then`, a `case Err(other) then` would be a catch-all, so a case added to `std.fs.Error` later would go unreported; it is rejected (E0227). Write a case for each. A name with no specific case beside it (`case Err(e) then` alone) binds the whole value, as usual.
   - A branch may hold `let` statements before its value.
 - **`for` (3.4).** `for name: Type in list do ... end for`. As a statement, its body has type `Unit`. As a value, it is the list of the body's values; this is how effects per element are collected.
 - **Where `if`, `match` and `for` stand.** As a statement, as the value of a `let`, or after `return`. Not yet inside another expression (E0303).
@@ -545,7 +545,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | Function | Effects | Meaning |
 | --- | --- | --- |
 | `std.console.print_line(text: String): Unit` | console | Writes a line to the console. |
-| `std.fs.read_text(path: String): Result<String, std.fs.ReadError>` | fs.read | Reads a whole file as UTF-8 text. |
+| `std.fs.read_text(path: String): Result<String, std.fs.Error>` | fs.read | Reads a whole file as UTF-8 text. |
 | `std.http.serve(host: String, port: Int, handler: (std.http.Request) -> std.http.Response with effects): Result<Unit, std.http.ServeError>` | net | Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them. |
 | `std.int.parse(text: String): Option<Int>` | none | Reads a decimal integer; `None` if the text is not one. |
 | `std.int.to_float(value: Int): Float` | none | The same number as a Float. |
@@ -569,15 +569,15 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 The std types, written in alang:
 
 ```
-type std.fs.ReadError
-  doc: "Why a file could not be read."
+type std.fs.Error
+  doc: "Why a file or directory operation failed. Other carries the host's message, which differs between runtimes: show it, do not compare it."
   variant:
     NotFound
     PermissionDenied
     IsADirectory
     Other: String
   where: none
-end type std.fs.ReadError
+end type std.fs.Error
 
 type std.http.Header
   doc: "One header of a request or response."

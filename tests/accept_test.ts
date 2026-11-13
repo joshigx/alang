@@ -64,7 +64,7 @@ const LOAD_PORT = specBlock("fn config.load_port") + `
 type config.LoadError
   doc: "Why the configuration could not be loaded."
   variant:
-    FileUnreadable: std.fs.ReadError
+    FileUnreadable: std.fs.Error
     InvalidPort: net.port.ParseError
   where: none
 end type config.LoadError
@@ -245,7 +245,7 @@ end type vals.Pair`,
   }),
   fn("vals.read_error", {
     params: ["n: Int"],
-    out: "Result<Bool, std.fs.ReadError>",
+    out: "Result<Bool, std.fs.Error>",
     examples: ["read_error(n: 1) == Ok(true)"],
     body: 'if n > 0 then\n  return Err(std.fs.Other("disk"))\nend if\nreturn Err(std.fs.NotFound)',
   }),

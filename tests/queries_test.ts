@@ -49,7 +49,7 @@ Deno.test("queries: context lists what a definition uses, then the types of thos
     "std.string.trim",
     "net.port.parse",
     // One level deeper: types in the signatures above.
-    "std.fs.ReadError",
+    "std.fs.Error",
     "net.port.ParseError",
   ]);
   const used = new Map(c.uses.map((u) => [u.name, u]));
@@ -63,10 +63,10 @@ Deno.test("queries: context lists what a definition uses, then the types of thos
     hash: null,
     text: signatureLine(STD_BY_NAME.get("std.fs.read_text")!),
   });
-  assertEquals(used.get("std.fs.ReadError")?.text, printDefinition(STD_TYPES[0]));
+  assertEquals(used.get("std.fs.Error")?.text, printDefinition(STD_TYPES[0]));
   assertEquals(
     used.get("std.fs.read_text")?.text,
-    'fn std.fs.read_text(path: String): Result<String, std.fs.ReadError>, effects: fs.read, doc: "Reads a whole file as UTF-8 text."',
+    'fn std.fs.read_text(path: String): Result<String, std.fs.Error>, effects: fs.read, doc: "Reads a whole file as UTF-8 text."',
   );
 
   // A definition is not listed among its own uses.
@@ -196,7 +196,7 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
   assertEquals(cb.context("std.list.map").uses, []);
   // callers: the codebase's users.
   assertEquals(cb.callers("std.int.parse"), { name: "std.int.parse", hash: null, callers: ["net.port.parse"] });
-  assertEquals(cb.callers("std.fs.ReadError").callers, ["config.LoadError"]);
+  assertEquals(cb.callers("std.fs.Error").callers, ["config.LoadError"]);
   // list: std is reached by name, and is not one of the codebase's modules.
   assertEquals(cb.list("std").submodules, [
     "std.console",
@@ -240,7 +240,7 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
   ]);
   assertEquals(cb.searchText("file").map((h) => [h.name, h.hash === null]), [
     ["config.load_port", false],
-    ["std.fs.ReadError", true],
+    ["std.fs.Error", true],
     ["std.fs.read_text", true],
   ]);
   assertEquals(cb.searchText("no such words"), []);

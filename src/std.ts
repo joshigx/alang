@@ -23,16 +23,16 @@ import {
 } from "./types.ts";
 
 // Types of the standard library, written in alang. runtime.ts has the
-// matching TypeScript type under the mangled name (`std$fs$ReadError`).
-export const STD_TYPES_SOURCE = `type std.fs.ReadError
-  doc: "Why a file could not be read."
+// matching TypeScript type under the mangled name (`std$fs$Error`).
+export const STD_TYPES_SOURCE = `type std.fs.Error
+  doc: "Why a file or directory operation failed. Other carries the host's message, which differs between runtimes: show it, do not compare it."
   variant:
     NotFound
     PermissionDenied
     IsADirectory
     Other: String
   where: none
-end type std.fs.ReadError
+end type std.fs.Error
 
 type std.http.Header
   doc: "One header of a request or response."
@@ -106,7 +106,7 @@ export const STD: readonly Signature[] = [
     "Reads a whole file as UTF-8 text.",
     [],
     [["path", STRING]],
-    result(STRING, con("std.fs.ReadError")),
+    result(STRING, con("std.fs.Error")),
     ["fs.read"],
   ),
 

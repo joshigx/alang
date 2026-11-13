@@ -20,7 +20,7 @@ const SOURCE = specBlock("type net.port.Port") + "\n" + specBlock("fn config.loa
 type config.LoadError
   doc: "Why the configuration could not be loaded."
   variant:
-    FileUnreadable: std.fs.ReadError
+    FileUnreadable: std.fs.Error
     InvalidPort: net.port.ParseError
   where: none
 end type config.LoadError
@@ -52,7 +52,7 @@ Deno.test("refs: dependencies in order of first use, cases by their own name", (
     "net.port.parse",
     "config.InvalidPort",
   ]);
-  assertEquals(dependencies(byName("config.LoadError"), info), ["std.fs.ReadError", "net.port.ParseError"]);
+  assertEquals(dependencies(byName("config.LoadError"), info), ["std.fs.Error", "net.port.ParseError"]);
   assertEquals(dependencies(byName("net.port.Port"), info), []);
 });
 

@@ -295,7 +295,7 @@ const APP = specBlock("fn config.load_port") + "\n\n" + specBlock("type net.port
 type config.LoadError
   doc: "Why the configuration could not be loaded."
   variant:
-    FileUnreadable: std.fs.ReadError
+    FileUnreadable: std.fs.Error
     InvalidPort: net.port.ParseError
   where: none
 end type config.LoadError

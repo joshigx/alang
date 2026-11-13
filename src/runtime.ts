@@ -222,13 +222,13 @@ type Host = {
   process?: { getBuiltinModule(name: string): { readFileSync(path: string, encoding: "utf8"): string } };
 };
 
-export type std$fs$ReadError =
+export type std$fs$Error =
   | { readonly tag: "NotFound" }
   | { readonly tag: "PermissionDenied" }
   | { readonly tag: "IsADirectory" }
   | { readonly tag: "Other"; readonly value: string };
 
-export function std$fs$read_text(path: string): Result<string, std$fs$ReadError> {
+export function std$fs$read_text(path: string): Result<string, std$fs$Error> {
   const host = globalThis as Host;
   try {
     if (host.Deno) return Ok(host.Deno.readTextFileSync(path));
@@ -244,14 +244,14 @@ export function std$fs$read_text(path: string): Result<string, std$fs$ReadError>
     }
     switch (err.code) {
       case "ENOENT":
-        return Err<std$fs$ReadError>({ tag: "NotFound" });
+        return Err<std$fs$Error>({ tag: "NotFound" });
       case "EACCES":
       case "EPERM":
-        return Err<std$fs$ReadError>({ tag: "PermissionDenied" });
+        return Err<std$fs$Error>({ tag: "PermissionDenied" });
       case "EISDIR":
-        return Err<std$fs$ReadError>({ tag: "IsADirectory" });
+        return Err<std$fs$Error>({ tag: "IsADirectory" });
     }
-    return Err<std$fs$ReadError>({ tag: "Other", value: String(err.message ?? e) });
+    return Err<std$fs$Error>({ tag: "Other", value: String(err.message ?? e) });
   }
 }
 

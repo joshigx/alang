@@ -109,7 +109,7 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   identical to `alang db`, a hand-written protocol instead of the SDK, and queries marked read-only although their
   sync can change the database.
 - std library: all names and parameter names in `src/std.ts`, including `std.fs.read_text` and the cases of
-  `std.fs.ReadError`, are provisional. Rule 3.8 freezes them once published.
+  `std.fs.Error` (renamed from `ReadError`), are provisional. Rule 3.8 freezes them once published.
 - Section 7 of the spec states these decisions as rules, since a model writing alang needs them; it is the
   implementation's reference, not a settled design. Also mine: std readable through the queries but left out of
   `list("")`. The MCP server's instructions naming the spec's path were kept by the user (2026-11-12).
