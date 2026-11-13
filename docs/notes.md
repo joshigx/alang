@@ -10,6 +10,7 @@ Read this first when picking up the work in a new session. Update it when a phas
 **Branches.** `main` holds everything below (2026-11-13: the user chose to merge; `spec` was fast-forwarded into
 `main`, which contains the whole chain `type-checker`, `effects`, `examples`, `database`, `mcp`, `async`, `spec`). The
 phase branches are kept as they are. Start each new phase on its own branch from `main`; pushing is the user's call.
+Files and program I/O (item 14) are on `std-io`, branched from `main`; merging is the user's call.
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -48,10 +49,20 @@ phase branches are kept as they are. Start each new phase on its own branch from
     reference of what the implementation accepts, what is not available, the std library (a test compares it with
     `src/std.ts`), the server example (accepted in the tests), the codebase tools and the diagnostic ranges. Section
     7 restates decisions from `decisions.md`; when one changes, change both.
+14. Files and program I/O in std, on branch `std-io` (plan in `docs/plans/std-io.md`; the user took every
+    recommendation, D1 to D5): one error type `std.fs.Error` (renamed from `ReadError`) for all of `std.fs`;
+    `write_text`, `append_text`, `list_directory`, `kind` (variant `std.fs.Kind`), `create_directory`, `remove`;
+    `std.console.read_line`, `std.env.args`, `std.env.get`, `std.log.print_line`, `std.random.int`,
+    `std.time.now_milliseconds`, `std.string.split`. `alang run <file> -- <args>` and `alang db run [<main>] -- <args>`
+    pass arguments; `RunOptions` takes `args` and `stdin`. `main` may return `Result<Unit, String>`: an `Err` goes to
+    stderr with exit code 1. Every effect now has a std function. One program gives the same output on Deno and
+    Node.js (`tests/io_test.ts`). Example in `examples/lines.alang`. Decisions in `decisions.md`, Files, arguments
+    and console.
 
 **Next:** proposed order for the user's six goals (2026-11-13; the merge is done, the rest awaits the user's
-choice): file and program I/O in std (fs write/list/exists/remove, arguments, env, clock, console input), then std
-breadth (text splitting and searching, `int.min`/`max`, Map functions, list helpers, the HTTP client) and the
+choice): file and program I/O in std is built on `std-io` (item 14); its playground round (plan, section 6) is
+next. Then std breadth (text searching and characters, `int.min`/`max`, Map functions, list helpers, the HTTP
+client) and the
 language forms libraries need (`extern fn`, `const`, function types, list literals, generic definitions), then the
 spec served by the MCP server (card plus `explain(code)`, generated from the spec), then the plan/build/test agent
 loop (needs an example time limit, a scored task suite, a gate for language decisions), then shipping (JSR package,
@@ -67,7 +78,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (195 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (221 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -118,6 +129,14 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   time; `host` as a parameter; the record fields (`content`, since `body` is reserved; method and query as plain
   strings); the `where` of `Response`; `Err` for a port in use but a trap for a bad header; a trap in a handler ends
   the whole server; `alang run` ignoring SIGINT while the program runs. Everything in `decisions.md`, HTTP server.
+- Files and program I/O (the user chose D1 to D5, 2026-11-13; the rest is the planner's and mine): the four cases
+  of `std.fs.Error` with everything else in `Other`; a path Deno guards (`/proc`) as `PermissionDenied` with the
+  permission and a trap without it; the empty path as `NotFound`; `list_directory` sorted; `kind` following links
+  and calling everything that is not a directory a file; `create_directory` making parents and accepting an existing
+  directory; `remove` without recursion; `read_line`'s line ends and its `None` for ever after the end; impossible
+  environment names as `None`; `Math.random`; the synchronous runtime functions; `--` as the separator in both
+  commands, with other words before it a usage error; a test's console empty unless it gives one; the example only in
+  `examples/`. Everything in `decisions.md`, Files, arguments and console.
 
 ## Database phase: open points (2026-11-12)
 
@@ -417,6 +436,34 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   the value (a list of three items took a 250-character example line). `const` would need none (5.1 covers
   functions).
 
+## From files and program I/O (2026-11-13)
+
+- **Bun and Windows are untested.** Bun takes the Node.js path (`process.getBuiltinModule`) but is not installed
+  here. On Windows, the tests of links, file modes and `/proc` are skipped, and nothing else was tried.
+- **The hosts differ on guarded paths.** Deno refuses `/proc/version` even with `--allow-read` ("Requires all
+  access"), so `std.fs.read_text` gives `Err(PermissionDenied)` there; Node.js reads it. The same program can thus
+  give different results on the two hosts, against runtime neutrality. Only the system's pseudo files are affected.
+- **Deno refuses the empty path itself**, before the permission check and without an error code ("Empty path is
+  not allowed"). The runtime maps an empty path to `NotFound`, which Node.js reports as ENOENT; without that, it was
+  `Other` on Deno only.
+- **`--allow-env` comes with the arguments.** A program that only reads `std.env.args()` declares `env` and may then
+  read every environment variable. The alternative of D4 (`std.program.args` under the same effect) would not
+  change that; only an effect of its own, outside the closed table of 2.2, would.
+- **Collecting lines is quadratic.** `std.list.append` copies the list, so a recursion that reads every line with
+  `std.console.read_line` and appends it takes time proportional to the square of the line count. `split` of a
+  whole file does not have the problem.
+- **No path helpers.** Joining with `std.string.concat` and `/` works on every system; a parent directory, a file
+  name or an extension cannot be taken apart without searching text, which std lacks.
+- **File logic has no examples** (5.4): every function that touches a file has `examples: none`. The shape that
+  works is a thin `main` around pure functions with examples, as in `examples/lines.alang` (`sorted`).
+- **The cases of `std.fs.Error` cannot grow.** E0227 forbids a catch-all and 3.8 freezes signatures, so a case added
+  later would break every `match`. A finer classification (not a directory, already exists, not empty) needs a new
+  type and new function names.
+- **A text ending in a line break** splits into an empty last part (`split("a\n", "\n")` is `a` and `""`). Every
+  program reading lines must drop it; a `lines` function in std breadth could.
+- **The MCP server has no `run` tool.** One would need `args` and a closed stdin (`RunOptions.stdin`), so that a
+  program waiting for input does not hang the server.
+
 ## Spec observations
 
 - `config.load_port` (section 2) uses `LoadError`, `FileUnreadable`, `InvalidPort` and `std.fs.read_text` /
@@ -492,11 +539,13 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 
 - **std covers two of eight effects.** Only `console` (`std.console.print_line`) and `fs.read` (`std.fs.read_text`)
   have functions. `fs.write`, `net`, `time`, `random`, `env`, `log` need std functions, and each needs a host
-  function in `runtime.ts` that works on Deno and Node.js alike.
+  function in `runtime.ts` that works on Deno and Node.js alike. Resolved (2026-11-13, `std-io`): every effect has a
+  function now (`net` through `std.http.serve`).
 - **`time`, `random`, `log`, `console` are not enforced at runtime.** Deno has no permission for them, so only the
   checker guards them. An `extern fn` that reads the clock without declaring `time` goes unnoticed.
 - **`log` vs `console`.** Both end up on the process output. The spec should say what `log` writes to (stderr?
-  structured lines?) so the two stay distinguishable.
+  structured lines?) so the two stay distinguishable. Resolved (2026-11-13, `std-io`): `std.log.print_line` writes
+  plain lines to stderr, `std.console.print_line` to stdout.
 - **Over-declared effects are allowed** (decision). A linter-style hint ("`console` is declared but nothing triggers
   it") would still help readers; it is not an error because of signature stability.
 - **Permissions are all-or-nothing per effect.** `--allow-read` grants every path. The recorded capability
@@ -506,13 +555,15 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **Examples for effectful functions** are now rejected by 5.4. The spec's "To revisit later" has two alternatives
   (fixed answers, capabilities); with E0233 in place, such examples fail loudly instead of running effects.
 - **The run entry file** (`out/<name>.run.ts`) exits with code 70 on a trap. Node.js would need its own entry if
-  programs should be started there too; the generated module itself is runtime-neutral.
+  programs should be started there too; the generated module itself is runtime-neutral. Resolved: the entry finds `Deno.exit` or
+  `process.exit` itself, and the tests start it with `node` (`http_test.ts`, `io_test.ts`).
 - **Examples run with the tool's permissions.** The checker runs examples in its own process, which has broad
   permissions. That is safe only while purity is checked; an `extern fn` declared `effects: none` could do IO at
   every acceptance. Running examples in a subprocess without permissions would close this.
 - **Case names in `std.fs` are taken.** Case names are unique per module, so `std.fs.NotFound` and `std.fs.Other`
   belong to `ReadError`; a later `WriteError` in `std.fs` cannot reuse them. Either give each error type its own
-  module (`std.fs.read.NotFound`) or revisit the per-module rule for std.
+  module (`std.fs.read.NotFound`) or revisit the per-module rule for std. Resolved (2026-11-13, `std-io`, the user's choice D2): one
+  type, `std.fs.Error`, for every `std.fs` function.
 - **Under-declared effects surface one layer at a time.** When a callee gains an effect, only its direct callers
   report E0230; their callers report after those are fixed. Transactions (6.4) will want the whole chain at once:
   the checker could compute the transitive closure and list every definition that needs the effect.

@@ -465,11 +465,11 @@ These forms are common in other languages but do not exist in alang. Write the f
 | `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
 | List literals | `std.list.append(list: std.list.empty<Int>(), item: 1)`, nested for more items |
 | Functions on `Map` | A `List` of records |
-| `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6), `std.int.min`, `std.int.max`, splitting or searching text | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
+| `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6), `std.int.min`, `std.int.max`, searching text or reading its characters | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
 | Function types in your own signatures | Only std functions take functions (`with`, `by`, `handler`) |
-| Writing files, reading the console, the clock, random values, environment variables, log output | The effects `fs.write`, `time`, `random`, `env` and `log` exist, but std has no functions for them yet, and `console` only writes lines (`std.console.print_line`) |
+| Waiting, an HTTP client, binary files, renaming and copying files, console output without a line break | Nothing yet. A text file is copied or renamed with `std.fs.read_text`, `std.fs.write_text` and `std.fs.remove`; the console and the log take whole lines |
 | Static proofs (5.2) and prefix checking (1.6) | Every `requires`, `ensures` and `where` is checked at runtime |
 | The depth limit (4.8) | Not enforced yet; keep to it anyway |
 | Concurrency | Everything runs in order; `std.http.serve` answers one request at a time |
@@ -536,6 +536,10 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 - **Declaration (2.1).** `effects` includes the effects of every function that is called, directly or as a handler (E0230, with the corrected line). Declaring more than needed is allowed.
 - **Running.** `main` runs in its own process with exactly the Deno permissions of its effects (Toolchain); an operation without permission traps. The program runs in the directory it was started from, so a relative path such as `notes.txt` is read from there. A trap ends the program with exit code 70 and a diagnostic as JSON on stderr.
+- **Arguments.** `alang run <file> -- <args>` and `alang db run [<main>] -- <args>`: the words after the first `--` reach the program unchanged through `std.env.args()`, a further `--` included, without the program's name. A word before `--` other than `-o <out>` is refused with exit code 2. `std.env.args` needs the effect `env`, like `std.env.get`.
+- **Files.** A path is relative to the directory the program was started in and uses `/` on every system. Files hold UTF-8 text, read and written exactly: `std.fs.write_text` and `std.fs.append_text` add nothing (no line break, no byte order mark), and a byte order mark a file starts with stays in the text that `std.fs.read_text` returns.
+- **Refused or not allowed.** What the system refuses (a missing file, a file mode, a directory where a file belongs) is an `Err` of `std.fs.Error`, for the program to handle. What `main`'s effects do not cover traps, as above.
+- **Console and log.** `std.console.print_line` writes to stdout and `std.log.print_line` to stderr, so output and log separate in a pipe. `std.console.read_line` reads stdin line by line.
 - **Ending with an error.** `main` has `out: Unit` or `out: Result<Unit, String>` (E0305). With the `Result`, `let ... else return Err(...)` works in `main`, where every I/O error ends up: `Err(message)` writes the message to stderr and ends the program with exit code 1. The exit codes are 0 when `main` returned (`Unit` or `Ok`), 1 for an `Err` from `main` and also when the tool refuses a program (its diagnostics as JSON on stderr), 2 for a command line the tool does not understand, and 70 for a trap.
 - **Values as text.** `std.text.show` gives `42`, `2.5`, `"a\"b"` (quoted), `Some(3)`, `Less`, `Unit`, `["a", "b"]` for a list, and `(x: 1, y: -2)` for a record, without its type name. A case shows without its module: `PermissionDenied`, `Other("disk full")`. Numbers show without `_` grouping (`12345`), and a whole `Float` without its fraction: `2.0` gives `2`.
 
@@ -641,6 +645,10 @@ end type std.http.ServeError
 
 `std.http.serve` returns only when serving ends: with `Ok(Unit)` after SIGINT or SIGTERM, or with `Err` if it cannot listen. Code after it runs after the server has stopped. It prints nothing itself. A request's header names arrive in lowercase and sorted. Without a `content-type` header, content is sent as `text/plain; charset=utf-8`. A trap in a handler ends the whole program; that request gets status 500.
 
+Every `std.fs` function reports a failure the same way. Nothing at the path, a missing parent directory and the empty path are `NotFound`. A refusal by the system is `PermissionDenied`: a file mode, and on Deno also a path it guards beyond its permissions, such as `/proc/version`. A directory where a file is needed is `IsADirectory`. Anything else is `Other` with the host's message, which differs between runtimes: a path that runs through a file, a file where `create_directory` wants a directory, a directory with entries for `remove`, a full disk. An operation outside `main`'s effects traps instead. `write_text` replaces a file without asking; `write_text` and `append_text` follow links, `remove` removes a link itself. `list_directory` gives names, hidden ones included, without `.` and `..`, not recursive; for a file it is `Other`. `kind` follows links (a broken one is `NotFound`), and everything that is not a directory is a `File`, `/dev/null` included; `std.fs.kind(path: p) == Err(std.fs.NotFound)` tests whether a path exists. `create_directory` creates the missing parents and is `Ok` for an existing directory.
+
+`std.console.read_line` ends a line at a line feed and drops a carriage return right before it. An empty line is `Some("")`, and a last line without a line break is returned too; after that, every call is `None`. Invalid UTF-8 reads as U+FFFD. `std.env.get` is `None` for a variable that is not set and for a name no variable can have (empty, or with `=`), and `Some("")` for one set to the empty text. `std.random.int` traps if `low > high` and if the range holds more than 2^53 − 1 values. `std.string.split(text: "a,b,,c", separator: ",")` gives `"a"`, `"b"`, `""`, `"c"`; the empty text gives one empty part, and a text that ends in the separator ends in an empty part (`"x\n"` split at `"\n"` gives `"x"` and `""`).
+
 ### 7.9 A complete program
 
 An HTTP server in the recommended shape. `route` is pure and has examples, `handle` is a thin function with an effect, and `main` passes `handle` by name. `alang db run server.main` starts it, and Ctrl-C ends it.
@@ -739,7 +747,7 @@ Section 6 in practice. `alang mcp` offers the queries and operations as tools fo
 - **Interface changes.** Every section of a function except `doc`, `examples` and `body` belongs to its interface; so do a type's shape and `where`. Removing an effect is not an interface change. A change to the interface is rejected while callers outside the transaction exist (E0506). Submit them in the same transaction, adapted or unchanged.
 - **Departures from section 6.** References are stored as names, not hashes, so `rename` rewrites every caller, and each caller gets a new version (6.1). `search(type)` is `search_type`. std can be read but not changed, and has no history.
 - **Export.** `export/<module>.alang` holds each module as canonical text for Git, and it is the source of truth. The database and the export follow each other automatically. If both changed, E0513 is reported, and which side wins is the user's call.
-- **Running.** `alang db run` runs the program the database holds. If there are several `main` functions, name one: `alang db run web.main` (E0304).
+- **Running.** `alang db run` runs the program the database holds. If there are several `main` functions, name one: `alang db run web.main` (E0304). Arguments for the program go after `--`: `alang db run web.main -- <args>`.
 
 ### 7.11 Diagnostics
 

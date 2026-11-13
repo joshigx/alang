@@ -477,3 +477,23 @@ Deno.test("io: main returns Unit or Result<Unit, String>, and takes nothing (E03
   const withParam = assertThrows(() => findMain(main("Unit", "  in:\n    text: String")), AlangError);
   assertEquals(withParam.diagnostic.code, "E0305");
 });
+
+Deno.test("io: examples/lines.alang sorts the lines of a file into another", async () => {
+  const source = await Deno.readTextFile(new URL("../examples/lines.alang", import.meta.url));
+  const built = (await accept(source, `${OUT}lines.ts`)).built;
+  const cwd = await Deno.makeTempDir({ prefix: "alang-io-lines-" });
+  try {
+    await Deno.writeTextFile(join(cwd, "in.txt"), "pear\napple\n\nfig");
+    const start = async (args: string[]) => {
+      const out = await run(built, { stdio: "piped", cwd, args });
+      return [out.code, decode(out.stdout), decode(out.stderr)];
+    };
+    assertEquals(await start(["in.txt", "out.txt"]), [0, "", ""]);
+    assertEquals(await Deno.readTextFile(join(cwd, "out.txt")), "apple\nfig\npear\n");
+    assertEquals(await start(["in.txt"]), [1, "", "usage: lines <source> <target>\n"]);
+    assertEquals(await start(["missing.txt", "out.txt"]), [1, "", "cannot read the source: NotFound\n"]);
+    assertEquals(await start(["in.txt", "no/such/dir.txt"]), [1, "", "cannot write the target: NotFound\n"]);
+  } finally {
+    await Deno.remove(cwd, { recursive: true });
+  }
+});

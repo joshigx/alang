@@ -1,0 +1,36 @@
+fn lines.main
+  doc: "Writes the lines of the file named by the first argument, sorted, to the file named by the second."
+  in: none
+  out: Result<Unit, String>
+  effects: fs.read, fs.write, env
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let args: List<String> = std.env.args()
+    let source: String = std.list.get(list: args, index: 0) else return Err("usage: lines <source> <target>")
+    let target: String = std.list.get(list: args, index: 1) else return Err("usage: lines <source> <target>")
+    let text: String = std.fs.read_text(path: source) else return Err(std.string.concat(left: "cannot read the source: ", right: std.text.show(value: error)))
+    let written: Unit = std.fs.write_text(path: target, text: sorted(text: text)) else return Err(std.string.concat(left: "cannot write the target: ", right: std.text.show(value: error)))
+    return Ok(Unit)
+end fn lines.main
+
+fn lines.sorted
+  doc: "The lines of a text in order, each ended by a line break; empty lines are dropped."
+  in:
+    text: String
+  out: String
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    sorted(text: "pear\napple\n\nfig\n") == "apple\nfig\npear\n"
+    sorted(text: "b\na") == "a\nb\n"
+    sorted(text: "") == ""
+  body:
+    let all: List<String> = std.string.split(text: text, separator: "\n")
+    let kept: List<String> = std.list.filter(list: all, with: fn(line: String): Bool => line != "")
+    let ordered: List<String> = std.list.sort(list: kept, by: std.string.compare)
+    let ended: List<String> = std.list.map(list: ordered, with: fn(line: String): String => std.string.concat(left: line, right: "\n"))
+    return std.string.join(parts: ended, separator: "")
+end fn lines.sorted

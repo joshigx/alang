@@ -24,8 +24,10 @@ deno task alang ts examples/port.alang       # generated TypeScript
 deno task alang test examples/port.alang     # list every example, with the actual value of failing ones
 deno task alang run examples/hello.alang     # run main with the permissions of its effects
 deno task alang run examples/server.alang    # a web server on localhost:8080, Ctrl-C stops it
+deno task alang run examples/lines.alang -- in.txt out.txt   # program arguments go after --
 deno task alang db --dir project list        # database queries and operations (section 6), JSON out
 deno task alang db --dir project run         # run the program the database holds (main's full name if several)
+deno task alang db --dir project run app.main -- <args>      # with arguments for the program
 deno task alang mcp --dir project            # the same as an MCP server on stdio
 deno task test                               # test suite
 ```
