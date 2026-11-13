@@ -12,7 +12,8 @@ Read this first when picking up the work in a new session. Update it when a phas
 phase branches are kept as they are. Start each new phase on its own branch from `main`; pushing is the user's call.
 Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed. List
 literals and pure std (item 15) were built on `list-literals` and fast-forwarded into `main` the same way. The
-language card (item 16) is built on `card`, from `main`, not merged yet.
+language card (item 16) was built on `card` and is merged into `main`. Maps, options and more std (item 17) are built
+on `std-maps`, from `main`, not merged yet.
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -75,28 +76,38 @@ language card (item 16) is built on `card`, from `main`, not merged yet.
     Examples and acceptance (Actual values), and the section Text, numbers and lists in std. Its playground round
     (`wordcount`, see "From the wordcount round") was accepted on the first try without the advisor; the two gaps it
     showed, what list operations cost and counting without a Map, are now in the spec (7.8, 7.1).
-16. The language card, on branch `card` (the first layer of "Language knowledge served by the tool"): `src/card.ts`
-    exports `CARD`, about 155 lines and 9 KB of Markdown with the rules every definition needs and one complete
-    accepted program (`temp`), and no std listing beyond the names its rules use. The MCP tool `card` returns it;
-    the instructions start by sending the model there and to `list("std")`, `search`, `search_type` and `context`
-    for std, and name the spec only as the full reference. Served by a tool, not inside the instructions as briefed,
-    because Claude Code cuts server instructions at 4,096 characters (see "From the card"). `tests/card_test.ts`
-    parses and accepts the card's program and checks every code, std name and tool call it names. The card restates
-    spec section 7 and changes with it. Decisions in `decisions.md`, MCP server (Card, Instructions, Results, Scope).
+16. The language card, built on branch `card`, merged into `main` (the first layer of "Language knowledge served by the
+    tool"): `src/card.ts` exports `CARD`, about 155 lines and 9 KB of Markdown with the rules every definition needs and
+    one complete accepted program (`temp`), and no std listing beyond the names its rules use. The MCP tool `card`
+    returns it; the instructions start by sending the model there and to `list("std")`, `search`, `search_type` and
+    `context` for std, and name the spec only as the full reference. Served by a tool, not inside the instructions as
+    briefed, because Claude Code cuts server instructions at 4,096 characters (see "From the card").
+    `tests/card_test.ts` parses and accepts the card's program and checks every code, std name and tool call it names.
+    The card restates spec section 7 and changes with it. Decisions in `decisions.md`, MCP server (Card, Instructions,
+    Results, Scope).
+17. Maps, options and more std, on branch `std-maps` (phase 2 of the roadmap; plan in `docs/plans/std-maps.md`, the
+    main session took every recommendation of its section 5): `Map` values as a persistent AVL tree in key order
+    (`$rt.SortedMap`), the ten `std.map` functions, the map literal `["a": 1, "b": 2]` (`[:]` is E0228, keys are Int
+    or String, E0229, a literal key twice is E0234), actual values of maps as literals, `for` typing a literal it
+    iterates, `std.list` `any`, `all`, `find`, `filter_map`, `take_while`, `drop_while`, `std.option.with_default`
+    and `map`, `std.order.then_by`, `std.string` `repeat`, `pad_left`, `pad_right`, `trim_characters`,
+    `code_points`, `from_code_points`, and `std.float` `compare`, `parse`, `round`, `ceil`, `trunc`, `abs`, `min`,
+    `max`, `sqrt`, `to_fixed`. Every trap, cost and order rule is in the doc line (W1). `examples/words.alang` counts
+    the words of a file with a Map, alike on Deno and Node.js. The card names the map literal and the unwrapping
+    functions. Decisions in `decisions.md`, section Maps, options and more std, and the rows it names.
 
-**Next:** a playground round with the card: the playground's `CLAUDE.md` sends the model to the `card` tool instead
-of the spec. Measure first-try acceptance and tool calls as before, and above all whether the model calls `card`
-(it is not always loaded) and finds std through `list`, `search` and `context` instead of reading the spec or the
-sources. Then the roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1 (`list-literals`) is item
-15, and its playground round is done (see "From the wordcount round"). The following phase is `std-maps` (Map
-functions and literal, `std.float`, the remaining text helpers), planned by Opus while the Fable limit is near its
-end; then `std-net` (HTTP client, waiting, console output without a line break; ask the user about N3, reopening
-`std.fs.Error`, before it starts), `statements`, `fn-types`, `const`, `generics`, `extern-fn`. Earlier proposed
-order for the user's six goals, still standing after std breadth and the language forms libraries need: the spec
-served by the MCP server (card plus `explain(code)`; the card is item 16), then the plan/build/test agent
-loop (needs an example time limit, a scored task suite, a gate for language decisions), then shipping (JSR package,
-`alang init`, quickstart, CI; std names freeze per 3.8), and self-hosting last. Suggested first step: goal 4 as one
-hand-run round of the loop.
+**Next:** the playground round of `std-maps` (its plan, section 6: the `logstat` task, with the card instead of the spec
+and without the advisor), which is also the first round with the card: the playground's `CLAUDE.md` sends the model to
+the `card` tool instead of the spec. Measure first-try acceptance and tool calls as before, and above all whether the
+model calls `card` (it is not always loaded) and finds std through `list`, `search` and `context` instead of reading the
+spec or the sources. Then the roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1
+(`list-literals`) is item 15, and its playground round is done (see "From the wordcount round"). Phase 2, `std-maps`, is
+item 17; then `std-net` (HTTP client, waiting, console output without a line break; ask the user about N3, reopening
+`std.fs.Error`, before it starts), `statements`, `fn-types`, `const`, `generics`, `extern-fn`. Earlier proposed order
+for the user's six goals, still standing after std breadth and the language forms libraries need: the spec served by the
+MCP server (card plus `explain(code)`; the card is item 16), then the plan/build/test agent loop (needs an example time
+limit, a scored task suite, a gate for language decisions), then shipping (JSR package, `alang init`, quickstart, CI;
+std names freeze per 3.8), and self-hosting last. Suggested first step: goal 4 as one hand-run round of the loop.
 
 Phase 3 of the HTTP work, an HTTP client (`std.http.fetch` or similar, on fetch), was postponed by the
 user (2026-11-12); async output makes it possible now. Reconnect the playground's MCP server to pick up the merged
@@ -107,7 +118,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (256 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (282 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -200,6 +211,18 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   Markdown instead of JSON and without a sync; the first paragraph of the instructions; the example program `temp`
   (a variant type, a pure function with four examples, a `main` with `Result<Unit, String>`); which rules made the
   card and which codes it names. In `decisions.md`, MCP server.
+- Maps, options and more std (item 17, 2026-11-13; the main session took every recommendation of
+  `docs/plans/std-maps.md`). Language changes first: M1 map keys are `Int` or `String` (E0229, wherever the type
+  arises); M2 the literal `["a": 1, "b": 2]` with at least one entry, on one line, `[:]` and `[]` E0228 with the fix
+  chosen by the expected type (H6); M3 two equal literal keys are E0234, computed duplicates and duplicates in
+  `from_list` trap (kind `key`); M8 a bare unknown name as a key gets E0203 with the quoted text as fix, and `{` and
+  index access name the map forms; H4 `for x: T in [...]` passes `List<T>` to the literal. The others: M4 the AVL
+  tree and its costs; M5 key order everywhere; M6 `show` and actual values as literals; M7 the names; H1
+  `with_default`, `option.map`, `filter_map`; H2 `then_by`; H3 the stopping rule; H5 empty collections with function
+  types print through `show`, and the E0209 guess offers no such type; P1 to P3 padding, code points, trimming; R1 to
+  R5 Float rounding, `parse`, `to_fixed`, `sqrt`; W1 every rule in the doc line. Mine beyond the plan: E0234 skipped
+  for a key that failed its type; the `for` hint only for a `Map`; `[:]` may hold a line break; `words.alang` keeps
+  its top three fixed. In `decisions.md`, Maps, options and more std, "Beyond the plan".
 
 ## Database phase: open points (2026-11-12)
 
@@ -534,10 +557,13 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **A `for` does not type a literal it iterates.** In `for x: Option<Int> in [None, Some(1)] do`, the declared type
   stands left of the list, yet the literal gets no expected type and `None` first is E0210. Passing
   `List<declared>` as the expected type would follow 1.4; it would also change where a wrong declared type is
-  reported (today E0204 at the declared type, with a fix).
+  reported (today E0204 at the declared type, with a fix). Resolved (item 17, H4): a literal gets `List<declared>`;
+  a non-literal iterable keeps E0204 at the declared type.
 - **An empty actual list of function values** would print as `std.list.empty<Unit>()`: `toTypeRef` writes every
   non-named type as `Unit`. A non-empty one falls back to `std.text.show`. Rare, since examples cannot compare
-  function values (E0222); the E0228 fix avoids the same mistake by offering no fix for such item types.
+  function values (E0222); the E0228 fix avoids the same mistake by offering no fix for such item types. Resolved
+  (item 17, H5): such an empty list or map prints through `std.text.show` (`[]`, `[:]`), and the E0209 guess offers
+  no type argument that holds a function type.
 - **`std.list.range` is limited by memory, not by its trap.** The trap fires above 4_294_967_295 items, the length
   limit of a JavaScript array (checked: `new Array(2 ** 32 - 1)` works, `2 ** 32` is "Invalid array length"), but
   filling even a tenth of that exhausts memory first, with the host's own error, not a trap.
@@ -598,9 +624,10 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
 - **Unwrapping an `Option` inside a lambda** needed a helper function of its own, since a lambda is one expression
   and `match` or `if` cannot stand inside an expression (E0303). `std.list.filter_map` (or similar) and Option
   helpers such as `std.option.with_default` would remove it. Phase `std-maps`, next to `any`, `all` and `find`.
+  Resolved (item 17): `std.option.with_default`, `std.option.map` and `std.list.filter_map`.
 - **Trimming a given set of characters took seven `let` lines**, since `std.string.trim` removes whitespace only.
   `take_while` and `drop_while`, or a trim that takes the characters, belong to phase `std-maps` ("remaining text
-  helpers").
+  helpers"). Resolved (item 17): `std.string.trim_characters`, and `std.list.take_while` and `drop_while`.
 - **No std way to turn a `std.fs.Error` into text**, so every program repeats the same four-arm `match`. Phase
   `std-net`, which reopens `std.fs.Error` anyway (N3).
 - **Discovery through the tools is untested for the second round.** The playground's `CLAUDE.md` and the MCP
@@ -631,6 +658,19 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
   to its program instead of showing the one-line form.
 - **Keywords name nothing, fields included.** A record field `in` or `type` fails with "A record has at least one
   field"; `result` and `error` work as fields, as 7.2 says.
+
+## From std-maps (2026-11-13)
+
+- **A non-empty list or map of function values shows as JavaScript source.** `showValue` falls back to
+  `std.text.show` for a value without an alang form, and `show` of a function value is `String(fn)`, the generated
+  TypeScript of the lambda. Only reachable in an actual value, since examples cannot compare function values
+  (E0222); an empty one now prints `[]` or `[:]` (H5).
+- **The card is at 157 of its 160 lines** (9,279 bytes of 10,240) after the two edits of this phase. The next rule
+  on it needs a line taken out elsewhere, or a higher guard.
+- **A duplicate map key is reported at the later entry** (`"a": 2`), which is canonical text; like E0228, a fix
+  located by quoted text could match the wrong place, but E0234 has no fix.
+- **Discovery is still the open question for the next round** (plan, section 6): every new rule is in a doc line,
+  but `context` of a std function is one call per function.
 
 ## Spec observations
 
