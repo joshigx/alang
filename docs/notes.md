@@ -10,7 +10,8 @@ Read this first when picking up the work in a new session. Update it when a phas
 **Branches.** `main` holds everything below (2026-11-13: the user chose to merge; `spec` was fast-forwarded into
 `main`, which contains the whole chain `type-checker`, `effects`, `examples`, `database`, `mcp`, `async`, `spec`). The
 phase branches are kept as they are. Start each new phase on its own branch from `main`; pushing is the user's call.
-Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed.
+Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed. List
+literals and pure std (item 15) are on `list-literals`, branched from `main`, not merged.
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -60,12 +61,25 @@ Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `
     and console. After its playground round ("From the ledger round"), three fixes (plan, section 7): the doc of
     `std.int.parse` states exactly what it accepts, E0005 gives the `\u{...}` form as the fix for `\r`, `\0`, `\a`,
     `\b`, `\f`, `\v` and `\e`, and overflow, division and NaN traps name the definition they occur in.
+15. List literals and pure std breadth, on branch `list-literals` (phase 1 of `docs/plans/list-literals.md`; the
+    main session took every recommendation, L1 to L7 and S1 to S14): the literal `[a, b, c]` (at least one item; `[]`
+    is E0228 with the fix `std.list.empty<T>()`; `xs[0]` and `Int[]` are E0006 from the parser), actual values
+    printed as literals, the server example shortened; an `Int` is never `-0`; `std.int` `min`, `max`, `abs` and
+    checked arithmetic; `std.string` `contains`, `starts_with`, `ends_with`, `find`, `cut` (record
+    `std.string.Cut`), `take`, `drop`, `characters`, `lines`, `replace`, `to_upper`, `to_lower`; `std.list` `first`,
+    `last`, `take`, `drop`, `reverse`, `concat`, `flatten`, `contains`, `range`, `window`, `zip`, `enumerate`. A std
+    signature's `withoutFunctions` replaces the by-name E0222 check of `std.text.show`. Lists are
+    `ReadonlyArray<T>` in the generated TypeScript, and each literal carries its checked type there. Decisions in
+    `decisions.md`: Syntax (List literal), Type checking (List literals), Semantics and runtime (`Int` zero),
+    Examples and acceptance (Actual values), and the section Text, numbers and lists in std.
 
-**Next:** proposed order for the user's six goals (2026-11-13; the merge is done, the rest awaits the user's
-choice): file and program I/O in std is built on `std-io` (item 14); its playground round (plan, section 6) is
-done, see "From the ledger round". Then std breadth (text searching and characters, `int.min`/`max`, Map
-functions, list helpers, the HTTP client) and the
-language forms libraries need (`extern fn`, `const`, function types, list literals, generic definitions), then the
+**Next:** the roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1 (`list-literals`) is item
+15; then `std-maps` (Map functions and literal, `std.float`, the remaining text helpers), `std-net` (HTTP client,
+waiting, console output without a line break; ask the user about N3, reopening `std.fs.Error`, before it starts),
+`statements`, `fn-types`, `const`, `generics`, `extern-fn`. A playground round after phase 1 (the main session's
+call): a word-count task over a file, run without the advisor, watching whether the model uses `list("std")` and
+`context`. Earlier proposed order for the user's six goals, still standing after std breadth and the language forms
+libraries need: the
 spec served by the MCP server (card plus `explain(code)`, generated from the spec), then the plan/build/test agent
 loop (needs an example time limit, a scored task suite, a gate for language decisions), then shipping (JSR package,
 `alang init`, quickstart, CI; std names freeze per 3.8), and self-hosting last. Suggested first step: goal 4 as one
@@ -80,7 +94,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (223 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (246 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -148,6 +162,20 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   environment names as `None`; `Math.random`; the synchronous runtime functions; `--` as the separator in both
   commands, with other words before it a usage error; a test's console empty unless it gives one; the example only in
   `examples/`. Everything in `decisions.md`, Files, arguments and console.
+- List literals and pure std (phase 1 of `docs/plans/list-literals.md`, 2026-11-13; the main session took every
+  recommendation). Language changes first: L1 the literal `[a, b, c]`; L2 at least one item, `[]` is E0228 with the
+  fix `std.list.empty<T>()`; L3 the item type from the expected type, otherwise from the first item; L4 `xs[0]` and
+  `Int[]` stay E0006, now from the parser; L5 no trailing comma, line breaks inside the brackets ignored, printed on
+  one line; S1 an `Int` is never `-0`. The others: L6 the append chain stays legal; L7 actual values print literals;
+  S2 positions and counts in Unicode scalar values; S3 `take` and `drop` clamp above the length and trap below zero;
+  S4 the empty part occurs everywhere, `replace` traps on it; S5 `cut` with the record `std.string.Cut`; S6 no
+  `slice` and no `concat_all`; S7 `lines` follows `read_line`; S8 `zip` and `enumerate` take a function; S9 `zip`
+  traps on different lengths; S10 `range` includes both ends; S11 `contains` needs a type without function values;
+  S12 checked arithmetic returns `Option<Int>`; S13 the name `find`; S14 case mapping by Unicode's default rules.
+  Mine beyond the plan: the E0228 fix only for an item type that can be written (no function type inside), else
+  the fix-less form; the `range` trap names `low to high` and fires before any memory is taken; lists as
+  `ReadonlyArray<T>` everywhere in the TypeScript (the plan's fallback), which also fixes a `for` that collects lists;
+  E0006 for `[` after any type, also inside type arguments (`List<Int[]>`); no fix for the trailing comma.
 - Fixes after the ledger round (2026-11-13, mine beyond the plan): `\0` before a digit gets no E0005 fix, since it
   is a C octal escape (`\033`) that `\u{0}` would misread; the seven C escapes add one sentence to the message
   (`` `\r` is written `\u{D}` ``). In `decisions.md`, Lexical, String escapes.
@@ -361,9 +389,9 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **Routing is by exact path only.** std has no `starts_with`, `split` or query parsing, so `/users/42` cannot be
   taken apart, and `query` is one raw string. The next std functions a server wants: `std.string.split`,
   `std.string.starts_with`, and a query reader returning `List<std.http.Header>`-like pairs (or a `Map`, once maps
-  have functions).
+  have functions). Since items 14 and 15, `split`, `starts_with` and `cut` exist; a query reader does not.
 - **Handler examples are long.** A `Request` needs all five fields, headers as `std.list.empty<std.http.Header>()`;
-  one example line of `examples/server.alang` is ~200 characters. List literals (open question) would shorten it;
+  one example line of `examples/server.alang` is ~200 characters. List literals (item 15) shorten it somewhat;
   so would a pure helper in the user's module. It is still the strongest part of the design: the server's logic is
   tested at acceptance, before any request.
 - **Content is text only.** No binary bodies (images, files); the runtime decodes UTF-8. Bytes would need a byte
@@ -467,16 +495,35 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   `std.console.read_line` and appends it takes time proportional to the square of the line count. `split` of a
   whole file does not have the problem.
 - **No path helpers.** Joining with `std.string.concat` and `/` works on every system; a parent directory, a file
-  name or an extension cannot be taken apart without searching text, which std lacks.
+  name or an extension cannot be taken apart without searching text, which std lacks. Since item 15, `std.string.cut`
+  and `find` can take a path apart, by hand.
 - **File logic has no examples** (5.4): every function that touches a file has `examples: none`. The shape that
   works is a thin `main` around pure functions with examples, as in `examples/lines.alang` (`sorted`).
 - **The cases of `std.fs.Error` cannot grow.** E0227 forbids a catch-all and 3.8 freezes signatures, so a case added
   later would break every `match`. A finer classification (not a directory, already exists, not empty) needs a new
   type and new function names.
 - **A text ending in a line break** splits into an empty last part (`split("a\n", "\n")` is `a` and `""`). Every
-  program reading lines must drop it; a `lines` function in std breadth could.
+  program reading lines must drop it; a `lines` function in std breadth could. Resolved (item 15):
+  `std.string.lines` adds no empty last line.
 - **The MCP server has no `run` tool.** One would need `args` and a closed stdin (`RunOptions.stdin`), so that a
   program waiting for input does not hang the server.
+
+## From list literals and pure std (2026-11-13)
+
+- **A `for` does not type a literal it iterates.** In `for x: Option<Int> in [None, Some(1)] do`, the declared type
+  stands left of the list, yet the literal gets no expected type and `None` first is E0210. Passing
+  `List<declared>` as the expected type would follow 1.4; it would also change where a wrong declared type is
+  reported (today E0204 at the declared type, with a fix).
+- **An empty actual list of function values** would print as `std.list.empty<Unit>()`: `toTypeRef` writes every
+  non-named type as `Unit`. A non-empty one falls back to `std.text.show`. Rare, since examples cannot compare
+  function values (E0222); the E0228 fix avoids the same mistake by offering no fix for such item types.
+- **`std.list.range` is limited by memory, not by its trap.** The trap fires above 4_294_967_295 items, the length
+  limit of a JavaScript array (checked: `new Array(2 ** 32 - 1)` works, `2 ** 32` is "Invalid array length"), but
+  filling even a tenth of that exhausts memory first, with the host's own error, not a trap.
+- **Collecting lines is no longer quadratic** when a file is read whole: `std.string.lines(text: content)` instead
+  of appending each `read_line`.
+- **E0228 quotes `[]` as printed.** Like every diagnostic it quotes canonical text, so `[ ]` or `[` and `]` on two
+  lines are quoted as `[]`; the fix's `replace` then does not occur in the submitted text literally.
 
 ## From the ledger round (2026-11-13)
 
@@ -494,15 +541,19 @@ Left for later:
 - **`AlreadyExists` and an exclusive create.** An `AlreadyExists` case together with a function that creates a file
   only if none exists. `std.fs.Error` keeps its four cases, as the user decided in D2; settle this before
   publishing, since 3.8 freezes the cases.
-- **Checked arithmetic.** An overflow traps, so a program cannot turn it into a message.
+- **Checked arithmetic.** An overflow traps, so a program cannot turn it into a message. Resolved (item 15):
+  `std.int.checked_add`, `checked_subtract` and `checked_multiply` return `Option<Int>`.
 - **E0227 duplicates arms.** When every case but one is handled alike, each of them still needs its own arm.
 - **Propagating a `Result<Unit, E>`** takes a dummy binding: `let x: Unit = ... else return Err(error)`.
 - **Verbosity** from the missing list literals, the two-argument `std.string.concat` and no `std.string.lines`.
+  Resolved (item 15): list literals, `std.string.join(parts: [a, b, c], separator: "")` for several texts, and
+  `std.string.lines`.
 - **`cat` instead of the query tools.** The model read `export/*.alang` with `cat`; this belongs to the phase that
   serves the spec through the MCP server.
 - **Negative zero.** `std.int.parse("-0")`, `0 * -1` and `-7 % 7` give JavaScript's `-0`. `std.text.show` prints it
   as `0` and `==` treats it as 0, but `std.int.to_float` of it is `-0.0`, and `1.0 / that` is `-Infinity`. A general
-  Int issue: normalizing `-0` to `0` in the Int operations and `parse` would close it.
+  Int issue: normalizing `-0` to `0` in the Int operations and `parse` would close it. Resolved (item 15): an `Int`
+  is never `-0`; the runtime normalizes every Int result.
 - **A fix's `replace` text can match elsewhere.** The E0005 fix replaces `\r`, which also occurs inside an escaped
   backslash (`\\r`). This holds for every E0005 fix; a fix located by position would not have it.
 
@@ -512,8 +563,8 @@ Left for later:
   `std.fs.ReadError` without defining them. It parses, but cannot type-check on its own. Either define them in the
   spec or mark the block as an excerpt.
 - The two `let` fragments in sections 3 and 4 use free names (`paths`, `names`); they are excerpts of a body.
-- The grammar has no list literal and no syntax for function types; both are needed by the std library
-  (`std.list.sort(by: ...)`) and by examples that mention non-empty lists.
+- The grammar has no syntax for function types, which the std library needs (`std.list.sort(by: ...)`). The list
+  literal is in the grammar since item 15.
 - The grammar has no way to declare a generic function or a generic type. Only builtins are generic.
 - 5.5 shows a diagnostic with a `fix`; the spec does not say whether a fix may span several places.
 - The grammar excerpt has no `"(" expr ")"`, although 3.5 requires parentheses, and does not say how `* / %` group
@@ -550,7 +601,7 @@ Left for later:
   function values needed a function reference (`g == g`) because nothing else can produce one.
 - **List literals are needed for examples.** `calc.sorted` in the tests needs a 170-character example built from
   `std.list.append` chains. This hits rule 5.1 (mandatory examples) directly: list-heavy functions get unreadable
-  examples.
+  examples. Resolved by list literals (item 15).
 - **Self-verifying fixes.** The checker could apply each suggested `fix` to the definition text and re-check it, and
   only offer fixes that make the diagnostic go away. For an LLM caller a verified fix is worth much more than a
   guess.
@@ -629,7 +680,7 @@ Left for later:
   (section 6). A changed body can still break a caller's example, so acceptance must re-run the examples of every
   definition that depends on the changed one, transitively.
 - **Long lists are unreadable.** An actual value of type `List<T>` prints as a chain of `std.list.append` calls
-  (`vals.ports` in the tests). List literals (open question) would make both examples and diagnostics readable.
+  (`vals.ports` in the tests). Resolved (item 15): actual values print list literals.
 - **`expected` of E0401 mixes types into value positions** (`twice(n: Int) == Int`). An LLM might copy it literally;
   watch for this once the MCP server is used. Alternative: a placeholder spelling, or none.
 - **No structured field for the actual value.** 5.5 fixes the fields of a diagnostic, so the actual value of E0402 sits
