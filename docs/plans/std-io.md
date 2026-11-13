@@ -449,3 +449,30 @@ Answered 2026-11-13; the user took every recommendation:
 - **D3:** add `std.string.split` in this phase.
 - **D4/D5:** all names as proposed (`std.env.args` under `env`, `std.fs.kind`, `list_directory`, `create_directory`,
   ...), and log, clock and random go in now.
+
+## 7. Fixes from the playground round (2026-11-13)
+
+The ledger task (section 6) succeeded with one accepted submit of 14 definitions and no diagnostic, but the model
+read the whole spec and used no query tool, so discovery and the D5 names were not tested. An analysis of the session
+found three small defects, fixed in this batch on `std-io`, one commit each:
+
+1. **`std.int.parse` doc.** The doc line in `src/std.ts` and the 7.8 row say only "Reads a decimal integer". The
+   runtime accepts an optional `-` and decimal digits inside the `Int` range, leading zeros included (`"007"` is 7,
+   `"-0"` is 0), and rejects `+`, `_` and whitespace, unlike alang's own literals (4.7, 7.2). State exactly that in
+   the doc line and the 7.8 row (same commit; `tests/spec_test.ts` compares them). Do not change what it accepts.
+2. **E0005 for an unknown escape** (`src/lexer.ts`, the `else` branch that reports "Unknown escape") has no `fix`.
+   For the common C escapes give `expected` and `fix: { replace, with }` with the `\u{...}` form: `\r` → `\u{D}`,
+   `\0` → `\u{0}`, `\a` → `\u{7}`, `\b` → `\u{8}`, `\f` → `\u{C}`, `\v` → `\u{B}`, `\e` → `\u{1B}`. Other unknown
+   escapes keep today's message without a fix. Do not add new escapes to the language.
+3. **Arithmetic traps name no definition.** `int`, `int_div`, `int_rem` and `float` in `src/runtime.ts` pass
+   `definition: null`, while contract, `where` and `match` traps (emitted in `src/emit.ts`) pass the definition's
+   name. Make the emitted calls pass the definition's full name so an overflow, a division by zero or a NaN trap
+   names its definition. This changes the emitted TypeScript at every arithmetic site: check the emit tests, keep
+   runtime neutrality, and stop at the definition name if adding the expression text gets costly. Own commit.
+
+Left for later (recorded in `docs/notes.md`, "From the ledger round"): an `AlreadyExists` case together with an
+exclusive-create function (`std.fs.Error` keeps four cases as the user decided in D2; settle before publishing, 3.8);
+checked arithmetic (an overflow cannot become a message); E0227 forcing duplicated arms when every case but one is
+handled alike; a dummy `let x: Unit = ... else return Err(error)` to propagate a `Result<Unit, E>`; verbosity from
+missing list literals, two-argument `concat` and no `std.string.lines`; the model reading `export/*.alang` with `cat`
+instead of the query tools (belongs to the served-spec phase).

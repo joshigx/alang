@@ -221,7 +221,13 @@ export const STD: readonly Signature[] = [
     ["time"],
   ),
 
-  sig("std.int.parse", "Reads a decimal integer; `None` if the text is not one.", [], [["text", STRING]], option(INT)),
+  sig(
+    "std.int.parse",
+    "Reads an integer written as an optional `-` and the digits `0` to `9`; leading zeros are allowed (`007` is 7, `-0` is 0). `None` for anything else (`+`, `_`, whitespace, the empty text) and outside the Int range.",
+    [],
+    [["text", STRING]],
+    option(INT),
+  ),
   sig("std.int.to_float", "The same number as a Float.", [], [["value", INT]], FLOAT),
   sig("std.int.compare", "Orders two integers.", [], [["left", INT], ["right", INT]], ORDER),
 

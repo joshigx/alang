@@ -564,7 +564,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | `std.log.print_line(text: String): Unit` | log | Writes a line to the log, which is the standard error stream. |
 | `std.random.int(low: Int, high: Int): Int` | random | A random integer from `low` to `high`, both included; traps if `low > high`. Not for secrets. |
 | `std.time.now_milliseconds(): Int` | time | The clock's time in milliseconds since 1970-01-01T00:00:00Z. |
-| `std.int.parse(text: String): Option<Int>` | none | Reads a decimal integer; `None` if the text is not one. |
+| `std.int.parse(text: String): Option<Int>` | none | Reads an integer written as an optional `-` and the digits `0` to `9`; leading zeros are allowed (`007` is 7, `-0` is 0). `None` for anything else (`+`, `_`, whitespace, the empty text) and outside the Int range. |
 | `std.int.to_float(value: Int): Float` | none | The same number as a Float. |
 | `std.int.compare(left: Int, right: Int): Order` | none | Orders two integers. |
 | `std.float.floor(value: Float): Int` | none | The largest integer not above the value; traps outside the Int range. |

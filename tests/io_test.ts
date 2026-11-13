@@ -19,6 +19,7 @@ import {
   std$fs$read_text,
   std$fs$remove,
   std$fs$write_text,
+  std$int$parse,
   std$random$int,
   std$string$join,
   std$string$split,
@@ -224,6 +225,21 @@ Deno.test("io: env.get reads a variable; None if it is not set or cannot exist",
     Deno.env.delete("ALANG_IO_GET");
     Deno.env.delete("ALANG_IO_EMPTY");
   }
+});
+
+Deno.test("io: int.parse reads an optional - and the digits 0 to 9, as its doc says", () => {
+  assertEquals(std$int$parse("42"), Some(42));
+  assertEquals(std$int$parse("-17"), Some(-17));
+  // Leading zeros are allowed, unlike in a literal (4.7).
+  assertEquals(std$int$parse("007"), Some(7));
+  const zero = std$int$parse("-0");
+  assert_(zero.tag === "Some" && zero.value === 0, JSON.stringify(zero));
+  assertEquals(std$int$parse("9007199254740991"), Some(Number.MAX_SAFE_INTEGER));
+  assertEquals(std$int$parse("-9007199254740991"), Some(-Number.MAX_SAFE_INTEGER));
+  for (const text of ["+1", "1_000", " 1", "1 ", "1\n", "", "-", "--1", "1.0", "0x10", "\u0661", "9007199254740992"]) {
+    assertEquals(std$int$parse(text), None, JSON.stringify(text));
+  }
+  assertEquals(std$int$parse("-9007199254740992"), None);
 });
 
 Deno.test("io: split is the inverse of join", () => {
