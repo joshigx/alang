@@ -9,7 +9,7 @@ fn server.route
   examples:
     route(request: std.http.Request(method: "GET", path: "/", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: "Hello from alang")
     route(request: std.http.Request(method: "POST", path: "/echo", query: "", headers: std.list.empty<std.http.Header>(), content: "hi")) == std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: "hi")
-    route(request: std.http.Request(method: "GET", path: "/echo", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 405, headers: std.list.append(list: std.list.empty<std.http.Header>(), item: std.http.Header(name: "allow", value: "POST")), content: "")
+    route(request: std.http.Request(method: "GET", path: "/echo", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 405, headers: [std.http.Header(name: "allow", value: "POST")], content: "")
     route(request: std.http.Request(method: "GET", path: "/nope", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 404, headers: std.list.empty<std.http.Header>(), content: "Not found")
   body:
     let no_headers: List<std.http.Header> = std.list.empty<std.http.Header>()
@@ -20,7 +20,7 @@ fn server.route
       if request.method == "POST" then
         return std.http.Response(status: 200, headers: no_headers, content: request.content)
       end if
-      let allow: List<std.http.Header> = std.list.append(list: no_headers, item: std.http.Header(name: "allow", value: "POST"))
+      let allow: List<std.http.Header> = [std.http.Header(name: "allow", value: "POST")]
       return std.http.Response(status: 405, headers: allow, content: "")
     end if
     return std.http.Response(status: 404, headers: no_headers, content: "Not found")
@@ -37,8 +37,7 @@ fn server.handle
   examples: none
   body:
     let response: std.http.Response = route(request: request)
-    let line: String = std.string.concat(left: std.string.concat(left: request.method, right: " "), right: request.path)
-    std.console.print_line(text: std.string.concat(left: std.string.concat(left: line, right: " -> "), right: std.text.show(value: response.status)))
+    std.console.print_line(text: std.string.join(parts: [request.method, " ", request.path, " -> ", std.text.show(value: response.status)], separator: ""))
     return response
 end fn server.handle
 

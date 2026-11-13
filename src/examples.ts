@@ -153,27 +153,18 @@ export function valueExpr(
       return inner && construct([tagged.tag], inner);
     }
     case "List": {
-      // No list literal yet (see docs/notes.md): the list is built by appending.
-      let e: Expr = {
-        kind: "call",
-        path: ["std", "list", "empty"],
-        typeArgs: [toTypeRef(t.args[0], module)],
-        args: [],
-      };
-      for (const item of value as readonly unknown[]) {
+      // A literal; the empty list has its one spelling with the item type (E0228).
+      const values = value as readonly unknown[];
+      if (values.length === 0) {
+        return { kind: "call", path: ["std", "list", "empty"], typeArgs: [toTypeRef(t.args[0], module)], args: [] };
+      }
+      const items: Expr[] = [];
+      for (const item of values) {
         const v = go(item, t.args[0]);
         if (!v) return null;
-        e = {
-          kind: "call",
-          path: ["std", "list", "append"],
-          typeArgs: [],
-          args: [{ name: "list", value: e }, {
-            name: "item",
-            value: v,
-          }],
-        };
+        items.push(v);
       }
-      return e;
+      return { kind: "list", items };
     }
     case "Map":
       return null;

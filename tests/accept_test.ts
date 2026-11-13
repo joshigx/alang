@@ -256,13 +256,10 @@ Deno.test("accept: actual values print as alang text written from the example's 
   const failed = outcomes.filter((o) => !o.passed);
   assertEquals(Object.fromEntries(failed.map((o) => [o.definition, o.actual])), {
     "vals.pair": "Pair(whole: -300_000, part: 0.75)",
-    "vals.ratio": "std.list.append(list: std.list.append(list: std.list.empty<Float>(), item: 1.0 / 0.0), " +
-      "item: -1.0 / 0.0)",
+    "vals.ratio": "[1.0 / 0.0, -1.0 / 0.0]",
     "vals.quote": '"line\\n\\tx\\"\\\\é"',
     "vals.order": "Some(Less)",
-    "vals.ports": "std.list.append(list: std.list.append(list: std.list.append(list: " +
-      "std.list.empty<Result<net.port.Port, net.port.ParseError>>(), item: Ok(net.port.Port(value: 80))), " +
-      "item: Err(net.port.OutOfRange(0))), item: Err(net.port.NotANumber))",
+    "vals.ports": "[Ok(net.port.Port(value: 80)), Err(net.port.OutOfRange(0)), Err(net.port.NotANumber)]",
     "vals.read_error": 'Err(std.fs.Other("disk"))',
   });
 
@@ -282,6 +279,10 @@ Deno.test("accept: values without a failing example print canonically too", () =
     showValue({ tag: "Some", value: [] }, option(list(STRING)), shapes, "m"),
     "Some(std.list.empty<String>())",
   );
+  // A non-empty list is a literal; an empty one keeps its item type.
+  assertEquals(showValue([], list(FLOAT), shapes, "m"), "std.list.empty<Float>()");
+  assertEquals(showValue([[1, 2], []], list(list(INT)), shapes, "m"), "[[1, 2], std.list.empty<Int>()]");
+  assertEquals(showValue(["a"], list(STRING), shapes, "m"), '["a"]');
   // Maps have no constructor in std yet; they fall back to std.text.show.
   assertEquals(showValue(new Map([[1, 2]]), con("Map", INT, INT), shapes, "m"), "{1: 2}");
 });
