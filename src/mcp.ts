@@ -14,10 +14,12 @@
 //
 // Every query first brings the database in step with the export
 // (`Codebase.sync`): a long-running server would otherwise answer from a
-// database that a pull has left behind. Submits sync by themselves. Tool
-// calls run one at a time. Diagnostics and rejected transactions are tool
-// results with `isError`, so the model sees them and can correct itself;
-// JSON-RPC errors are left for malformed requests and unknown tools.
+// database that a pull has left behind. Submits sync by themselves. Before
+// each call, an `alang.db` that was moved or deleted is opened again, as at
+// startup (`Codebase.reopenIfMoved`). Tool calls run one at a time.
+// Diagnostics and rejected transactions are tool results with `isError`, so
+// the model sees them and can correct itself; JSON-RPC errors are left for
+// malformed requests and unknown tools.
 
 import { fileURLToPath } from "node:url";
 import { CARD } from "./card.ts";
@@ -388,6 +390,9 @@ async function callTool(cb: Codebase, tool: Tool, args: unknown): Promise<CallRe
   if (tool.plain) return { content: [{ type: "text", text: tool.run(cb, {}) as string }], isError: false };
   const warning = [];
   try {
+    // `alang.db` moved to the Trash or deleted while the server runs: the old
+    // handle would answer queries from the moved file and refuse every write.
+    await cb.reopenIfMoved();
     if (tool.query) {
       const synced = await cb.sync();
       if (!synced.ok) {
@@ -402,6 +407,13 @@ async function callTool(cb: Codebase, tool: Tool, args: unknown): Promise<CallRe
   } catch (e) {
     if (e instanceof AlangError) return { content: [json({ diagnostics: e.diagnostics }), ...warning], isError: true };
     if (e instanceof InvalidInput) return { content: [json({ error: e.message })], isError: true };
+    // Moved during the call, after the check above: a diagnostic in the
+    // shape of the tool's answers, and the next call opens the file again.
+    const moved = cb.movedDiagnostic(e);
+    if (moved) {
+      const diagnostics = [moved];
+      return { content: [json(tool.query ? { diagnostics } : { ok: false, diagnostics, current: [] })], isError: true };
+    }
     if (!(e instanceof Error)) throw e;
     // A fault of the tool: the model learns that it failed, the log why.
     console.error(e);

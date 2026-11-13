@@ -364,6 +364,28 @@ function rejected(diagnostics: readonly Diagnostic[], current: readonly Version[
   return { ok: false, diagnostics, current };
 }
 
+// The file a database handle has open, so that a long-running server notices
+// when `alang.db` is moved, deleted or replaced under it. `ino` is null where
+// the host has none (Windows); then only a missing file counts.
+interface FileId {
+  readonly dev: number;
+  readonly ino: number | null;
+}
+
+function openDatabase(path: string): { db: DatabaseSync; file: FileId } {
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(SCHEMA);
+  const { dev, ino } = Deno.statSync(path);
+  return { db, file: { dev, ino } };
+}
+
+// SQLite refuses every write to a database file that was moved or deleted
+// while it was open (SQLITE_READONLY_DBMOVED); reads still answer from the
+// old file. node:sqlite in Deno reports only the message, which a read-only
+// file gives too, so `movedDiagnostic` also looks at the file.
+const READONLY = /attempt to write a readonly database/;
+
 // ---- the codebase ----
 
 export class Codebase {
@@ -372,7 +394,8 @@ export class Codebase {
 
   private constructor(
     readonly dir: string,
-    private readonly db: DatabaseSync,
+    private db: DatabaseSync,
+    private file: FileId,
     private readonly clock: () => Date,
     private readonly during: OpenOptions["during"],
   ) {
@@ -383,15 +406,55 @@ export class Codebase {
   // `dir/export/`, generated TypeScript in `dir/out/`.
   static async open(dir: string, options: OpenOptions = {}): Promise<Codebase> {
     await Deno.mkdir(dir, { recursive: true });
-    const db = new DatabaseSync(join(dir, "alang.db"));
-    db.exec("PRAGMA foreign_keys = ON");
-    db.exec(SCHEMA);
-    return new Codebase(dir, db, options.clock ?? (() => new Date()), options.during);
+    const { db, file } = openDatabase(join(dir, "alang.db"));
+    return new Codebase(dir, db, file, options.clock ?? (() => new Date()), options.during);
   }
 
   close(): void {
-    this.db.close();
+    if (this.db.isOpen) this.db.close();
     this.removeAcceptFile();
+  }
+
+  // Whether `dir/alang.db` is no longer the file this codebase has open: it
+  // was moved (say, to the Trash), deleted or replaced by another file.
+  moved(): boolean {
+    let now: Deno.FileInfo;
+    try {
+      now = Deno.statSync(join(this.dir, "alang.db"));
+    } catch (e) {
+      if (e instanceof Deno.errors.NotFound) return true;
+      throw e;
+    }
+    return now.dev !== this.file.dev || now.ino !== this.file.ino;
+  }
+
+  // If `dir/alang.db` was moved, deleted or replaced, closes the old handle
+  // and opens `dir/alang.db` as `open` does: a new database if the file is
+  // gone, which the next sync fills from `export/` as on a fresh start (the
+  // history of the old file stays in that file). Returns whether it did. The
+  // MCP server calls it before each tool call; a short-lived `alang db`
+  // command does not need it.
+  async reopenIfMoved(): Promise<boolean> {
+    if (!this.moved()) return false;
+    if (this.db.isOpen) this.db.close();
+    await Deno.mkdir(this.dir, { recursive: true });
+    ({ db: this.db, file: this.file } = openDatabase(join(this.dir, "alang.db")));
+    return true;
+  }
+
+  // The diagnostic for a write that failed because the database file was
+  // moved or deleted while it was open (see READONLY); null for any other
+  // error. Nothing was written: the transaction rolled back, and the export
+  // follows only a commit.
+  movedDiagnostic(e: unknown): Diagnostic | null {
+    if (!(e instanceof Error) || !READONLY.test(e.message) || !this.moved()) return null;
+    const path = join(this.dir, "alang.db");
+    return diagnostic({
+      code: "E0514",
+      at: path,
+      message: `The database file \`${path}\` was moved or deleted while the server ran, so nothing was written. ` +
+        "The next call opens it again, filled from `export/`; then send the change again.",
+    });
   }
 
   // Acceptance writes the program here and runs its examples from it. One

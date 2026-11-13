@@ -847,4 +847,4 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | E0234 | A key written twice in a map literal |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0403 | Missing, failing and trapping examples |
-| E0501 to E0513 | Codebase operations |
+| E0501 to E0514 | Codebase operations |

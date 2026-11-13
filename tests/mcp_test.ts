@@ -4,9 +4,20 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assert_, assertEquals } from "./assert.ts";
-import { done, fresh, LOAD_PORT, PARSE, PARSE_ERROR, PARSE_REORDERED, PORT, withPort } from "./db_helpers.ts";
+import {
+  CLOCK,
+  done,
+  fn,
+  fresh,
+  LOAD_PORT,
+  PARSE,
+  PARSE_ERROR,
+  PARSE_REORDERED,
+  PORT,
+  withPort,
+} from "./db_helpers.ts";
 import { CARD } from "../src/card.ts";
-import { type Codebase, hashText } from "../src/codebase.ts";
+import { Codebase, hashText } from "../src/codebase.ts";
 import { LEGACY_VERSIONS, McpServer, MODERN_VERSIONS, type Response, TOOLS } from "../src/mcp.ts";
 
 let ids = 0;
@@ -275,6 +286,66 @@ Deno.test("mcp: every query sees the export as it is now", async () => {
   const refused = await call(server, "add", { text: PORT.replaceAll("net.port.Port", "net.port.Other") });
   assertEquals(refused.isError, true);
   await Deno.writeTextFile(file, `${PARSE_ERROR}\n\n${PORT}\n\n${PARSE_REORDERED}\n`);
+  await done(cb);
+});
+
+// The tasks round (2026-11-14): the user moved alang.db to the Trash while
+// the server ran; queries answered from the moved file, every write failed.
+Deno.test("mcp: an alang.db moved or deleted while the server runs is opened again from the export", async () => {
+  const cb = await withPort();
+  const server = new McpServer(cb);
+  const db = join(cb.dir, "alang.db");
+  const double = fn("demo.double", {
+    params: ["n: Int"],
+    out: "Int",
+    examples: ["double(n: 2) == 4"],
+    body: "return n * 2",
+  });
+
+  // Moved: the next call opens a new alang.db, filled from the export as on
+  // a fresh start, and the submit is written there.
+  await Deno.rename(db, `${db}.moved`);
+  const added = await call(server, "add", { text: double });
+  assertEquals(added.isError, false, JSON.stringify(added.json));
+  assertEquals(((await call(server, "list", { module: "net.port" })).json.definitions as unknown[]).length, 3);
+  assertEquals(await Deno.readTextFile(join(cb.dir, "export", "demo.alang")), `${double}\n`);
+  assert_((await Deno.stat(db)).isFile);
+
+  // Deleted: a query answers from the export.
+  await Deno.remove(db);
+  const parse = await call(server, "definition", { name: "net.port.parse" });
+  assertEquals([parse.isError, parse.json.text], [false, PARSE]);
+  assertEquals((await call(server, "definition", { name: "demo.double" })).json.text, double);
+  await done(cb);
+});
+
+Deno.test("mcp: a database file moved during a submit is a diagnostic, not an internal error", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "alang-db-" });
+  let moveTo: string | null = null;
+  const cb = await Codebase.open(dir, {
+    clock: CLOCK,
+    during: async (stage) => {
+      if (stage !== "accepted" || moveTo === null) return;
+      await Deno.rename(join(dir, "alang.db"), moveTo);
+      moveTo = null;
+    },
+  });
+  const server = new McpServer(cb);
+  // After the check before the call: the write itself fails.
+  moveTo = join(dir, "alang.db.moved");
+  const refused = await call(server, "add", { text: PORT });
+  assertEquals([refused.isError, refused.json.ok, codesOf(refused), refused.json.current], [
+    true,
+    false,
+    ["E0514"],
+    [],
+  ]);
+  const message = (refused.json.diagnostics as { message: string }[])[0].message;
+  assert_(message.includes("was moved or deleted while the server ran"), message);
+  // The next call opens the file again, and the change goes through.
+  assertEquals((await call(server, "add", { text: PORT })).isError, false);
+  // A file that cannot be written for another reason is not reported as moved.
+  assertEquals(cb.movedDiagnostic(new Error("attempt to write a readonly database")), null);
   await done(cb);
 });
 
