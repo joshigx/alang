@@ -956,6 +956,88 @@ export function std$string$compare(left: string, right: string): Order {
   return toOrder(str_compare(left, right));
 }
 
+// Positions and counts are in Unicode scalar values, like `length`; the
+// host's indexOf, slice and length count UTF-16 units. A question about the
+// empty part has its mathematical answer (it occurs everywhere, first at 0);
+// an operation that would act at every position traps instead (`replace`,
+// like `split`).
+
+export type std$string$Cut = { readonly before: string; readonly after: string };
+export function std$string$Cut($fields: std$string$Cut): std$string$Cut {
+  return $fields;
+}
+
+export function std$string$contains(text: string, part: string): boolean {
+  return text.includes(part);
+}
+
+export function std$string$starts_with(text: string, prefix: string): boolean {
+  return text.startsWith(prefix);
+}
+
+export function std$string$ends_with(text: string, suffix: string): boolean {
+  return text.endsWith(suffix);
+}
+
+export function std$string$find(text: string, part: string): Option<number> {
+  const i = text.indexOf(part);
+  return i < 0 ? None : Some(std$string$length(text.slice(0, i)));
+}
+
+export function std$string$cut(text: string, separator: string): Option<std$string$Cut> {
+  const i = text.indexOf(separator);
+  return i < 0 ? None : Some({ before: text.slice(0, i), after: text.slice(i + separator.length) });
+}
+
+// A count above the length takes or drops everything; a negative count is a
+// programming error.
+function countAtLeastZero(name: string, count: number): void {
+  if (count < 0) trap("requires", name, "count >= 0", `Precondition of ${name} violated: count >= 0`);
+}
+
+export function std$string$take(text: string, count: number): string {
+  countAtLeastZero("std.string.take", count);
+  return Array.from(text).slice(0, count).join("");
+}
+
+export function std$string$drop(text: string, count: number): string {
+  countAtLeastZero("std.string.drop", count);
+  return Array.from(text).slice(count).join("");
+}
+
+export function std$string$characters(text: string): readonly string[] {
+  return Array.from(text);
+}
+
+// The lines as std.console.read_line reads them: a line ends at a line feed,
+// a carriage return right before it goes too, and a last line without a line
+// break counts. Unlike `split`, a final line feed adds no empty line.
+export function std$string$lines(text: string): readonly string[] {
+  const parts = text.split("\n");
+  // After the last line feed: a line without a break, or nothing.
+  const last = parts.pop()!;
+  const lines = parts.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+  if (last !== "") lines.push(last);
+  return lines;
+}
+
+// Not replaceAll, which reads `$&` in the replacement as a pattern.
+export function std$string$replace(text: string, part: string, replacement: string): string {
+  if (part === "") {
+    trap("requires", "std.string.replace", 'part != ""', 'Precondition of std.string.replace violated: part != ""');
+  }
+  return text.split(part).join(replacement);
+}
+
+// The locale-free forms: the same result on every system.
+export function std$string$to_upper(text: string): string {
+  return text.toUpperCase();
+}
+
+export function std$string$to_lower(text: string): string {
+  return text.toLowerCase();
+}
+
 export function std$list$empty<T>(): readonly T[] {
   return [];
 }

@@ -78,6 +78,14 @@ type std.http.ServeError
     Other: String
   where: none
 end type std.http.ServeError
+
+type std.string.Cut
+  doc: "A text cut at a separator: the part before it and the part after it."
+  record:
+    before: String
+    after: String
+  where: none
+end type std.string.Cut
 `;
 
 export const STD_TYPES: readonly Definition[] = parseProgram(STD_TYPES_SOURCE);
@@ -284,6 +292,90 @@ export const STD: readonly Signature[] = [
     "right",
     STRING,
   ]], ORDER),
+  sig(
+    "std.string.contains",
+    "Whether the part occurs in the text; the empty part occurs in every text.",
+    [],
+    [["text", STRING], ["part", STRING]],
+    BOOL,
+  ),
+  sig(
+    "std.string.starts_with",
+    "Whether the text begins with the prefix.",
+    [],
+    [["text", STRING], ["prefix", STRING]],
+    BOOL,
+  ),
+  sig(
+    "std.string.ends_with",
+    "Whether the text ends with the suffix.",
+    [],
+    [["text", STRING], ["suffix", STRING]],
+    BOOL,
+  ),
+  sig(
+    "std.string.find",
+    "The position of the first occurrence of the part, counted in Unicode scalar values from 0; `None` if it does not occur.",
+    [],
+    [["text", STRING], ["part", STRING]],
+    option(INT),
+  ),
+  sig(
+    "std.string.cut",
+    "The text before and after the first occurrence of the separator; `None` if it does not occur.",
+    [],
+    [["text", STRING], ["separator", STRING]],
+    option(con("std.string.Cut")),
+  ),
+  sig(
+    "std.string.take",
+    "The first `count` Unicode scalar values, or the whole text if it is shorter. A negative count traps.",
+    [],
+    [["text", STRING], ["count", INT]],
+    STRING,
+  ),
+  sig(
+    "std.string.drop",
+    'The text without its first `count` Unicode scalar values; `""` if it is shorter. A negative count traps.',
+    [],
+    [["text", STRING], ["count", INT]],
+    STRING,
+  ),
+  sig(
+    "std.string.characters",
+    "The Unicode scalar values of the text, each as a text of length 1.",
+    [],
+    [["text", STRING]],
+    list(STRING),
+  ),
+  sig(
+    "std.string.lines",
+    "The lines of the text. A line ends at a line feed, and a carriage return right before it is dropped; a last line without a line break counts, and the empty text has no lines.",
+    [],
+    [["text", STRING]],
+    list(STRING),
+  ),
+  sig(
+    "std.string.replace",
+    "The text with every occurrence of the part replaced, found from left to right without overlap. An empty part traps.",
+    [],
+    [["text", STRING], ["part", STRING], ["with", STRING]],
+    STRING,
+  ),
+  sig(
+    "std.string.to_upper",
+    "The text in upper case by Unicode's rules, the same on every system.",
+    [],
+    [["text", STRING]],
+    STRING,
+  ),
+  sig(
+    "std.string.to_lower",
+    "The text in lower case by Unicode's rules, the same on every system.",
+    [],
+    [["text", STRING]],
+    STRING,
+  ),
 
   sig("std.list.empty", "The empty list.", ["T"], [], list(T)),
   sig("std.list.append", "The list with the item added at the end.", ["T"], [["list", list(T)], ["item", T]], list(T)),

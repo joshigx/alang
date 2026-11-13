@@ -34,7 +34,7 @@ const statementBlocks = letBlocks.filter((b) => !prefixBlocks.includes(b));
 Deno.test("spec: block inventory", () => {
   // Guards against blocks silently dropping out of the test set.
   assertEquals(definitionBlocks.length, 6);
-  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 15);
+  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 16);
   assertEquals(statementBlocks.length, 2);
   assertEquals(prefixBlocks.length, 1);
 });

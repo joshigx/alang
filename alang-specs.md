@@ -465,7 +465,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | --- | --- |
 | `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
 | Functions on `Map` | A `List` of records |
-| `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6), searching text or reading its characters | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
+| `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6) | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
 | Function types in your own signatures | Only std functions take functions (`with`, `by`, `handler`) |
@@ -581,6 +581,18 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | `std.string.join(parts: List<String>, separator: String): String` | none | The parts joined with the separator between them; `""` for no parts. |
 | `std.string.split(text: String, separator: String): List<String>` | none | The parts of the text between the separators; `std.string.join` with the same separator gives the text back. An empty separator traps. |
 | `std.string.compare(left: String, right: String): Order` | none | Orders two texts by Unicode scalar values. |
+| `std.string.contains(text: String, part: String): Bool` | none | Whether the part occurs in the text; the empty part occurs in every text. |
+| `std.string.starts_with(text: String, prefix: String): Bool` | none | Whether the text begins with the prefix. |
+| `std.string.ends_with(text: String, suffix: String): Bool` | none | Whether the text ends with the suffix. |
+| `std.string.find(text: String, part: String): Option<Int>` | none | The position of the first occurrence of the part, counted in Unicode scalar values from 0; `None` if it does not occur. |
+| `std.string.cut(text: String, separator: String): Option<std.string.Cut>` | none | The text before and after the first occurrence of the separator; `None` if it does not occur. |
+| `std.string.take(text: String, count: Int): String` | none | The first `count` Unicode scalar values, or the whole text if it is shorter. A negative count traps. |
+| `std.string.drop(text: String, count: Int): String` | none | The text without its first `count` Unicode scalar values; `""` if it is shorter. A negative count traps. |
+| `std.string.characters(text: String): List<String>` | none | The Unicode scalar values of the text, each as a text of length 1. |
+| `std.string.lines(text: String): List<String>` | none | The lines of the text. A line ends at a line feed, and a carriage return right before it is dropped; a last line without a line break counts, and the empty text has no lines. |
+| `std.string.replace(text: String, part: String, with: String): String` | none | The text with every occurrence of the part replaced, found from left to right without overlap. An empty part traps. |
+| `std.string.to_upper(text: String): String` | none | The text in upper case by Unicode's rules, the same on every system. |
+| `std.string.to_lower(text: String): String` | none | The text in lower case by Unicode's rules, the same on every system. |
 | `std.list.empty<T>(): List<T>` | none | The empty list. |
 | `std.list.append<T>(list: List<T>, item: T): List<T>` | none | The list with the item added at the end. |
 | `std.list.length<T>(list: List<T>): Int` | none | Number of items. |
@@ -648,6 +660,14 @@ type std.http.ServeError
     Other: String
   where: none
 end type std.http.ServeError
+
+type std.string.Cut
+  doc: "A text cut at a separator: the part before it and the part after it."
+  record:
+    before: String
+    after: String
+  where: none
+end type std.string.Cut
 ```
 
 `std.http.serve` returns only when serving ends: with `Ok(Unit)` after SIGINT or SIGTERM, or with `Err` if it cannot listen. Code after it runs after the server has stopped. It prints nothing itself. A request's header names arrive in lowercase and sorted. Without a `content-type` header, content is sent as `text/plain; charset=utf-8`. A trap in a handler ends the whole program; that request gets status 500.
