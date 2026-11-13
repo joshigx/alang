@@ -237,3 +237,7 @@ These are not language decisions, only what the implementation does not do yet.
 - **Exit code 1 means three things.** An `Err` from `main` (its message on stderr), a program the tool refused
   (diagnostics as JSON on stderr), and a JavaScript crash. stderr tells them apart; a distinct code for the tool's
   refusals would make them testable without reading it.
+- **Invisible characters in strings (7.2).** `\u{...}` is only for control characters, so a byte order mark,
+  `"\u{FEFF}"`, is E0005, and its fix inserts the invisible character itself, which no reader of the text can see
+  (the wordcount round, 2026-11-13). Open: write invisible format characters (Unicode category Cf, such as U+FEFF and
+  U+200B) only as `\u{...}`, like control characters, so each string keeps one spelling (3).

@@ -71,16 +71,17 @@ literals and pure std (item 15) are on `list-literals`, branched from `main`, no
     signature's `withoutFunctions` replaces the by-name E0222 check of `std.text.show`. Lists are
     `ReadonlyArray<T>` in the generated TypeScript, and each literal carries its checked type there. Decisions in
     `decisions.md`: Syntax (List literal), Type checking (List literals), Semantics and runtime (`Int` zero),
-    Examples and acceptance (Actual values), and the section Text, numbers and lists in std.
+    Examples and acceptance (Actual values), and the section Text, numbers and lists in std. Its playground round
+    (`wordcount`, see "From the wordcount round") was accepted on the first try without the advisor; the two gaps it
+    showed, what list operations cost and counting without a Map, are now in the spec (7.8, 7.1).
 
 **Next:** the roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1 (`list-literals`) is item
-15; then `std-maps` (Map functions and literal, `std.float`, the remaining text helpers), `std-net` (HTTP client,
-waiting, console output without a line break; ask the user about N3, reopening `std.fs.Error`, before it starts),
-`statements`, `fn-types`, `const`, `generics`, `extern-fn`. A playground round after phase 1 (the main session's
-call): a word-count task over a file, run without the advisor, watching whether the model uses `list("std")` and
-`context`. Earlier proposed order for the user's six goals, still standing after std breadth and the language forms
-libraries need: the
-spec served by the MCP server (card plus `explain(code)`, generated from the spec), then the plan/build/test agent
+15, and its playground round is done (see "From the wordcount round"). The following phase is `std-maps` (Map
+functions and literal, `std.float`, the remaining text helpers), planned by Opus while the Fable limit is near its
+end; then `std-net` (HTTP client, waiting, console output without a line break; ask the user about N3, reopening
+`std.fs.Error`, before it starts), `statements`, `fn-types`, `const`, `generics`, `extern-fn`. Earlier proposed
+order for the user's six goals, still standing after std breadth and the language forms libraries need: the spec
+served by the MCP server (card plus `explain(code)`, generated from the spec), then the plan/build/test agent
 loop (needs an example time limit, a scored task suite, a gate for language decisions), then shipping (JSR package,
 `alang init`, quickstart, CI; std names freeze per 3.8), and self-hosting last. Suggested first step: goal 4 as one
 hand-run round of the loop.
@@ -179,6 +180,9 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
 - Fixes after the ledger round (2026-11-13, mine beyond the plan): `\0` before a digit gets no E0005 fix, since it
   is a C octal escape (`\033`) that `\u{0}` would misread; the seven C escapes add one sentence to the message
   (`` `\r` is written `\u{D}` ``). In `decisions.md`, Lexical, String escapes.
+- List costs (after the wordcount round, 2026-11-13): what list functions cost, as 7.8 states it, is part of the std
+  contract; the alternative was a persistent list with a cheap `append`. In `decisions.md`, Text, numbers and lists
+  in std.
 
 ## Database phase: open points (2026-11-12)
 
@@ -556,6 +560,39 @@ Left for later:
   is never `-0`; the runtime normalizes every Int result.
 - **A fix's `replace` text can match elsewhere.** The E0005 fix replaces `\r`, which also occurs inside an escaped
   backslash (`\\r`). This holds for every E0005 fix; a fix located by position would not have it.
+
+## From the wordcount round (2026-11-13)
+
+The playground round of phase 1 (`list-literals`): a model wrote a `wordcount` tool through the MCP tools.
+
+- **Accepted on the first try.** One submit of 13 definitions was accepted; no diagnostic appeared. 10 tool calls,
+  3 min 50 s. The advisor was not called, so the result is the model's own.
+- **The spec instead of the tools.** The model read the whole spec and used no query tool. To learn what list
+  operations cost, it grepped alang's own `src/runtime.ts`; the costs are now in 7.8 and in the doc lines of
+  `std.list.append` and `std.list.concat`.
+- **List literals took.** They appear in bodies and in examples. Every empty list was written
+  `std.list.empty<T>()`, so E0228 never fired.
+- **std breadth was used.** 13 of the 30 new std functions appear in the program.
+- **Counting by sort and runs.** Without a Map, the model counted words by sorting them and counting runs of equal
+  neighbours. 7.1 now names this way, in the row "Functions on `Map`".
+
+Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md`, section 0):
+
+- **Unwrapping an `Option` inside a lambda** needed a helper function of its own, since a lambda is one expression
+  and `match` or `if` cannot stand inside an expression (E0303). `std.list.filter_map` (or similar) and Option
+  helpers such as `std.option.with_default` would remove it. Phase `std-maps`, next to `any`, `all` and `find`.
+- **Trimming a given set of characters took seven `let` lines**, since `std.string.trim` removes whitespace only.
+  `take_while` and `drop_while`, or a trim that takes the characters, belong to phase `std-maps` ("remaining text
+  helpers").
+- **No std way to turn a `std.fs.Error` into text**, so every program repeats the same four-arm `match`. Phase
+  `std-net`, which reopens `std.fs.Error` anyway (N3).
+- **Discovery through the tools is untested for the second round.** The playground's `CLAUDE.md` and the MCP
+  instructions (`SPEC_LINE` in `src/mcp.ts`) send the model to the full spec, whose 7.8 lists all of std, so
+  `list("std")` and `context` add nothing. The phase that serves the spec through the MCP server; to test discovery,
+  replace the spec pointer with a short card.
+- **A byte order mark cannot be written readably.** `"\u{FEFF}"` is E0005 ("`\u{...}` is only for control
+  characters"), and its fix inserts the invisible character itself. An open language question for 7.2: allow
+  `\u{...}` for invisible format characters too. Listed in `decisions.md`, Open questions.
 
 ## Spec observations
 
