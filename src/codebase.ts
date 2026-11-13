@@ -374,6 +374,14 @@ function operationText(change: Change, name: string | null): string {
   }
 }
 
+// The name an add's text gives in its first line (`fn net.port.parse`,
+// `type net.port.Port`), read without the lexer, which may be what failed;
+// null if that line is not such a header.
+function headerName(text: string): string | null {
+  const first = text.trimStart().split("\n", 1)[0];
+  return /^(?:fn|type) ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$/.exec(first)?.[1] ?? null;
+}
+
 function list(names: Iterable<string>): string {
   return [...names].map((n) => `\`${n}\``).join(", ");
 }
@@ -984,7 +992,14 @@ export class Codebase {
         defs = parseProgram(text);
       } catch (e) {
         if (!(e instanceof AlangError)) throw e;
-        diagnostics.push(...e.diagnostics);
+        // The lexer reads the whole text before the parser reads a header,
+        // so its diagnostics (and those of a broken header) name no
+        // definition; in a transaction of many texts, the change's name, or
+        // an add's header, tells which one it is.
+        const named = change.op === "add" ? headerName(text) : change.name;
+        diagnostics.push(
+          ...e.diagnostics.map((d) => (d.definition === null && named ? { ...d, definition: named } : d)),
+        );
         return null;
       }
       if (defs.length !== 1) {

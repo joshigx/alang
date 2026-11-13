@@ -411,6 +411,32 @@ Deno.test("codebase: unknown names, existing names, and malformed submissions", 
   const broken = await fails(cb, [add("fn m.x\n  doc: 1"), { op: "remove", name: "m.nope", hash: h }]);
   assertEquals(broken.diagnostics.length, 2);
   assertEquals(broken.diagnostics[1].code, "E0502");
+  assertEquals(broken.diagnostics[0].definition, "m.x");
+
+  // The lexer reads a text before its header is parsed: its diagnostics name
+  // the change's definition, an add's from its first line (the tasks round:
+  // E0005 for `\r` in one of 21 adds came with `definition: null`).
+  const one = fn("m.one", { out: "Int", examples: ["one() == 1"], body: "return 1" });
+  const cr = fn("m.cr", {
+    params: ["text: String"],
+    out: "String",
+    examples: ['cr(text: "a\\rb") == "a"'],
+    body: "return text",
+  });
+  const lexed = await fails(cb, [
+    add(one),
+    add(cr),
+    { op: "replace", name: "net.port.parse", hash: h, text: PARSE.replace('"8080"', '"80\\r80"') },
+    { op: "rename", name: "net.port.parse", hash: h, to: "net.port.read", text: '"\\r"' },
+    add('  doc: "a\\rb"'),
+  ]);
+  assertEquals(lexed.diagnostics.map((d) => [d.code, d.definition]), [
+    ["E0005", "m.cr"],
+    ["E0005", "net.port.parse"],
+    ["E0005", "net.port.parse"],
+    // No header to read.
+    ["E0005", null],
+  ]);
   await done(cb);
 });
 
