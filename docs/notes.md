@@ -13,7 +13,8 @@ phase branches are kept as they are. Start each new phase on its own branch from
 Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed. List
 literals and pure std (item 15) were built on `list-literals` and fast-forwarded into `main` the same way. The
 language card (item 16) was built on `card` and is merged into `main`. Maps, options and more std (item 17) were built
-on `std-maps` and fast-forwarded into `main` too.
+on `std-maps` and fast-forwarded into `main` too. The fixes after its playground round (item 18) are on
+`logstat-fixes`, branched from `main`, not merged.
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -95,14 +96,20 @@ on `std-maps` and fast-forwarded into `main` too.
     `max`, `sqrt`, `to_fixed`. Every trap, cost and order rule is in the doc line (W1). `examples/words.alang` counts
     the words of a file with a Map, alike on Deno and Node.js. The card names the map literal and the unwrapping
     functions. Decisions in `decisions.md`, section Maps, options and more std, and the rows it names.
+18. Fixes after the logstat round (the playground round of item 17; see "From the logstat round"), on branch
+    `logstat-fixes`: the doc lines of `std.float.to_fixed` (rounds the exact binary value, `1.005` gives `1.00` with
+    2, `0.125` gives `0.13`) and `std.float.parse` (`-0` gives `-0.0`) state their rules (W1); a function's hit in
+    `list` and `search` carries `signature`, its one-line signature without the doc, and the card, the MCP
+    instructions and the tool descriptions say so and leave `context` for examples, the body and uses. Decision in
+    `decisions.md`, MCP server, Hits.
 
-**Next:** the playground round of `std-maps` (its plan, section 6: the `logstat` task, with the card instead of the spec
-and without the advisor), which is also the first round with the card: the playground's `CLAUDE.md` sends the model to
-the `card` tool instead of the spec. Measure first-try acceptance and tool calls as before, and above all whether the
-model calls `card` (it is not always loaded) and finds std through `list`, `search` and `context` instead of reading the
-spec or the sources. Then the roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1
-(`list-literals`) is item 15, and its playground round is done (see "From the wordcount round"). Phase 2, `std-maps`, is
-item 17; then `std-net` (HTTP client, waiting, console output without a line break; ask the user about N3, reopening
+**Next:** the main session reviews `logstat-fixes` and decides on merging it. Then a playground round from an empty
+codebase (the logstat round's was not, see "From the logstat round"), to check that std `context` calls drop from 21
+to near zero now that hits carry signatures, that the card alone teaches `main` and fs errors, and to try `search` and
+`search_type`, which no round has used yet. The logstat round itself (plan of `std-maps`, section 6) is done. Then the
+roadmap in `docs/plans/list-literals.md`, section 0 (2026-11-13): phase 1 (`list-literals`) is item 15, and its
+playground round is done (see "From the wordcount round"). Phase 2, `std-maps`, is item 17, and its round is done
+(see "From the logstat round"); then `std-net` (HTTP client, waiting, console output without a line break; ask the user about N3, reopening
 `std.fs.Error`, before it starts), `statements`, `fn-types`, `const`, `generics`, `extern-fn`. Earlier proposed order
 for the user's six goals, still standing after std breadth and the language forms libraries need: the spec served by the
 MCP server (card plus `explain(code)`; the card is item 16), then the plan/build/test agent loop (needs an example time
@@ -223,6 +230,10 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   R5 Float rounding, `parse`, `to_fixed`, `sqrt`; W1 every rule in the doc line. Mine beyond the plan: E0234 skipped
   for a key that failed its type; the `for` hint only for a `Map`; `[:]` may hold a line break; `words.alang` keeps
   its top three fixed. In `decisions.md`, Maps, options and more std, "Beyond the plan".
+- Hits with signatures (item 18, 2026-11-13; the brief was the main session's, the shape is mine): a separate
+  `signature` field on function hits only, the `search_type` line cut before its doc, rather than the whole line in
+  place of `doc` or a form without `fn <name>`; types get none; `search_type` keeps its shape; search does not read
+  the signature. In `decisions.md`, MCP server, Hits.
 
 ## Database phase: open points (2026-11-12)
 
@@ -666,20 +677,90 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
   TypeScript of the lambda. Only reachable in an actual value, since examples cannot compare function values
   (E0222); an empty one now prints `[]` or `[:]` (H5).
 - **The card is at 157 of its 160 lines** (9,279 bytes of 10,240) after the two edits of this phase. The next rule
-  on it needs a line taken out elsewhere, or a higher guard.
+  on it needs a line taken out elsewhere, or a higher guard. (158 lines and 9,372 bytes after item 18.)
 - **A duplicate map key is reported at the later entry** (`"a": 2`), which is canonical text; like E0228, a fix
   located by quoted text could match the wrong place, but E0234 has no fix.
 - **Discovery is still the open question for the next round** (plan, section 6): every new rule is in a doc line,
   but `context` of a std function is one call per function. Checked against the plan's table with `alang db search`:
   every word finds what it predicts except two. "look up" finds nothing, since the doc of `std.map.get` says "Looks
-  up" (the substring "look" finds it); "tie" also finds `std.float.to_fixed`, through "Infinities". `search_type`
-  gives exactly the plan's hits for all seven patterns.
+  up" (the substring "look" finds it); "tie" also finds `std.float.to_fixed`, through "Infinities" (since item 18
+  through "tie" itself; rerun after item 18, every word finds what it found before). `search_type` gives exactly the
+  plan's hits for all seven patterns.
 - **A mistyped local as a map key gets the quote fix.** `[nmae: 1]` with a local `name` is E0203 with the fix
   `"nmae"`, not the closest-name fix `name`, since the hint applies to every unknown one-segment name (as planned).
   A key is far more often meant as text than as a misspelled local, but both readings fit the message.
 - **The plan's `logstat` key lines are accepted** (checked in a scratch program, not a test): a lambda nested in the
   lambda of a `fold`, a record-valued `Map` updated through `std.option.map` and `with_default`, `with: parse_line`
   passed to `filter_map`, and a sort by two keys with `then_by`.
+
+## From the logstat round (2026-11-13)
+
+The playground round of `std-maps` (its plan, section 6): a fresh Opus session wrote a log summarizer, `logstat`,
+through the MCP tools only, with the card instead of the spec and without the advisor.
+
+- **Accepted after one wrong example.** The first submit failed one example (E0402; the model's own arithmetic in the
+  expected value), and one resubmit was accepted: 13 definitions, 46 tool calls (`card` 1, `list` 15, `context` 23,
+  `submit` 2), 3 min 27 s. No reads of the repository or the spec. The output is byte-identical to a Python reference
+  on Deno and Node.js, and 13 edge-case logs agree as well.
+- **The card worked for syntax and maps.** The map literal appears in 5 examples, never `{}` or `[:]`; `then_by` and
+  `with_default` were used; counting with `fold` and `std.map.insert` was trusted from the documented costs, with no
+  sort-and-count.
+- **Confounded: the codebase was not fresh.** The playground database still held `ledger`, `wordcount` and others,
+  and the model copied its fs error handling from `ledger.fs_problem`. So the round does not show that the card alone
+  teaches `main` and fs errors. The next round should start from an empty codebase.
+- **Discovery was `list` plus `context` per function.** The model called `card` first, then found std through `list`
+  (15 calls) and `context` (23, 21 of them on std). 20 of the 21 std answers had `uses: []` and gave nothing beyond the
+  signature line, and about 9 parameter lists were guessed from the `list` docs alone. Fixed (item 18): function hits
+  carry their signature.
+- **`search` and `search_type` were unused**, so the search word table of the plan is still untested by a model.
+- **A slip worth knowing.** The model rejected negative numbers by checking the parsed value, so `-0` passed as a
+  status and as milliseconds: `std.int.parse("-0")` is 0 by design (7.8), and 0 is not negative.
+- **Two doc lines broke W1.** Edge tests showed that `std.float.to_fixed` rounds the exact binary value (`2.675`,
+  `1.005` and `1.115` give `2.67`, `1.00` and `1.11` with 2 decimals, while the exact ties `0.125` and `0.625` give
+  `0.13` and `0.63`), and that `std.float.parse("-0")` gives `-0.0`. Both were decided (R3, R4) and in 7.8's prose, but
+  not in the doc lines, which are all a model reading std through the tools sees. Fixed (item 18), docs only;
+  reproduced on Deno and Node.js before the change.
+- **`-0.0` does not show.** `std.text.show` of the `-0.0` from `std.float.parse("-0")` prints `0`, and a failing
+  example prints the actual value `Some(0.0)`; only `1.0 / x` giving `-Infinity` reveals the sign. Not changed.
+
+What item 18 changed: the two doc lines; a `signature` field on every function hit of `list` and `search`
+(`fn std.option.with_default<T>(option: Option<T>, default: T): T, effects: none`); the card, the MCP instructions and
+the tool descriptions saying that hits carry it and that `context` is for examples, the body and uses (for a std
+function only the types it mentions). Size of the MCP `list` results, in characters, before and after:
+
+| Query | Before | After |
+| --- | ---: | ---: |
+| `list("")` | 59 | 59 |
+| `list("std")` | 309 | 309 |
+| `list("std.console")` | 411 | 580 |
+| `list("std.env")` | 370 | 519 |
+| `list("std.float")` | 2,355 | 3,254 |
+| `list("std.fs")` | 1,680 | 2,450 |
+| `list("std.http")` | 1,186 | 1,363 |
+| `list("std.int")` | 1,488 | 2,258 |
+| `list("std.list")` | 4,737 | 7,239 |
+| `list("std.log")` | 234 | 312 |
+| `list("std.map")` | 1,957 | 2,902 |
+| `list("std.option")` | 419 | 627 |
+| `list("std.order")` | 276 | 370 |
+| `list("std.random")` | 265 | 348 |
+| `list("std.string")` | 5,092 | 7,378 |
+| `list("std.text")` | 220 | 295 |
+| `list("std.time")` | 241 | 314 |
+| Total | 21,299 | 30,577 (+44%) |
+
+**Success metric for the next round:** std `context` calls drop from 21 to near zero, left only for examples or
+uses.
+
+Left for later:
+
+- **No std way to turn a `std.fs.Error` into text.** The third program with the same four-arm `match`. Planned as
+  N3 in phase `std-net`.
+- **Taking a list apart by position.** `case [a, b, c, d, e]` (or similar) would replace lines of `std.list.get` that
+  cannot fail after a length check. Phase `statements`.
+- **Cheaper recovery after a rejected submit.** The resend of all 13 definitions after one failing example cost about
+  25% of the round's output tokens. A way to resend only the failing definitions (or to keep the accepted part of a
+  transaction) would cut it.
 
 ## Spec observations
 
