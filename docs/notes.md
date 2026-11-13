@@ -57,12 +57,14 @@ Files and program I/O (item 14) are on `std-io`, branched from `main`; merging i
     pass arguments; `RunOptions` takes `args` and `stdin`. `main` may return `Result<Unit, String>`: an `Err` goes to
     stderr with exit code 1. Every effect now has a std function. One program gives the same output on Deno and
     Node.js (`tests/io_test.ts`). Example in `examples/lines.alang`. Decisions in `decisions.md`, Files, arguments
-    and console.
+    and console. After its playground round ("From the ledger round"), three fixes (plan, section 7): the doc of
+    `std.int.parse` states exactly what it accepts, E0005 gives the `\u{...}` form as the fix for `\r`, `\0`, `\a`,
+    `\b`, `\f`, `\v` and `\e`, and overflow, division and NaN traps name the definition they occur in.
 
 **Next:** proposed order for the user's six goals (2026-11-13; the merge is done, the rest awaits the user's
 choice): file and program I/O in std is built on `std-io` (item 14); its playground round (plan, section 6) is
-next. Then std breadth (text searching and characters, `int.min`/`max`, Map functions, list helpers, the HTTP
-client) and the
+done, see "From the ledger round". Then std breadth (text searching and characters, `int.min`/`max`, Map
+functions, list helpers, the HTTP client) and the
 language forms libraries need (`extern fn`, `const`, function types, list literals, generic definitions), then the
 spec served by the MCP server (card plus `explain(code)`, generated from the spec), then the plan/build/test agent
 loop (needs an example time limit, a scored task suite, a gate for language decisions), then shipping (JSR package,
@@ -78,7 +80,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (221 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (223 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -146,6 +148,9 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   environment names as `None`; `Math.random`; the synchronous runtime functions; `--` as the separator in both
   commands, with other words before it a usage error; a test's console empty unless it gives one; the example only in
   `examples/`. Everything in `decisions.md`, Files, arguments and console.
+- Fixes after the ledger round (2026-11-13, mine beyond the plan): `\0` before a digit gets no E0005 fix, since it
+  is a C octal escape (`\033`) that `\u{0}` would misread; the seven C escapes add one sentence to the message
+  (`` `\r` is written `\u{D}` ``). In `decisions.md`, Lexical, String escapes.
 
 ## Database phase: open points (2026-11-12)
 
@@ -472,6 +477,29 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   program reading lines must drop it; a `lines` function in std breadth could.
 - **The MCP server has no `run` tool.** One would need `args` and a closed stdin (`RunOptions.stdin`), so that a
   program waiting for input does not hang the server.
+
+## From the ledger round (2026-11-13)
+
+The playground round of the files and program I/O phase: the `ledger` task of `docs/plans/std-io.md`, section 6.
+The three defects it showed are fixed on `std-io` (plan, section 7).
+
+- **Accepted on the first try.** One submit of 14 definitions was accepted; no diagnostic appeared over MCP.
+- **Discovery was not tested.** The model read the whole spec and used no query tool, so neither discovery
+  (`list("std")`, `search`, `context`) nor the D5 names were put to the test.
+- **The advisor confounds the result.** The playground model also consulted the advisor, so the first-try
+  acceptance is not the model's alone. Run the next round without it.
+
+Left for later:
+
+- **`AlreadyExists` and an exclusive create.** An `AlreadyExists` case together with a function that creates a file
+  only if none exists. `std.fs.Error` keeps its four cases, as the user decided in D2; settle this before
+  publishing, since 3.8 freezes the cases.
+- **Checked arithmetic.** An overflow traps, so a program cannot turn it into a message.
+- **E0227 duplicates arms.** When every case but one is handled alike, each of them still needs its own arm.
+- **Propagating a `Result<Unit, E>`** takes a dummy binding: `let x: Unit = ... else return Err(error)`.
+- **Verbosity** from the missing list literals, the two-argument `std.string.concat` and no `std.string.lines`.
+- **`cat` instead of the query tools.** The model read `export/*.alang` with `cat`; this belongs to the phase that
+  serves the spec through the MCP server.
 
 ## Spec observations
 
