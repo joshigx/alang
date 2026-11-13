@@ -45,6 +45,31 @@ Deno.test("strings: one spelling per character", () => {
   assertEquals(code(() => parseExpression('"\\u{a}"')), "E0005");
 });
 
+Deno.test("strings: a C escape gets its \\u{...} form as the fix (E0005)", () => {
+  const cases: [string, string, number][] = [
+    ["\\r", "\\u{D}", 0x0d],
+    ["\\0", "\\u{0}", 0x00],
+    ["\\a", "\\u{7}", 0x07],
+    ["\\b", "\\u{8}", 0x08],
+    ["\\f", "\\u{C}", 0x0c],
+    ["\\v", "\\u{B}", 0x0b],
+    ["\\e", "\\u{1B}", 0x1b],
+  ];
+  for (const [written, fixed, cp] of cases) {
+    const source = `"a${written}b"`;
+    const d = assertThrows(() => parseExpression(source), AlangError).diagnostic;
+    assertEquals([d.code, d.at, d.expected, d.fix], ["E0005", written, fixed, { replace: written, with: fixed }]);
+    // Applied, the fix gives the character the C escape stands for.
+    const repaired = parseExpression(source.replace(d.fix!.replace, d.fix!.with));
+    assertEquals(repaired, { kind: "string", value: `a${String.fromCodePoint(cp)}b` });
+  }
+  // Other unknown escapes, and `\0` before a digit (a C octal escape), have no fix.
+  for (const written of ["\\q", "\\x", "\\'", "\\u0041", "\\012"]) {
+    const d = assertThrows(() => parseExpression(`"${written}"`), AlangError).diagnostic;
+    assertEquals([d.code, d.at, d.expected, d.fix], ["E0005", written.slice(0, 2), null, null]);
+  }
+});
+
 Deno.test("foreign habits get dedicated diagnostics (5.7)", () => {
   assertEquals(code(() => parseExpression("a === b")), "E0006");
   assertEquals(code(() => parseExpression("a && b")), "E0006");

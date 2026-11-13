@@ -151,6 +151,18 @@ export function escapeChar(ch: string): string | null {
   return null;
 }
 
+// Escapes of C and its descendants that alang spells as `\u{...}`, with the
+// code point each stands for.
+const C_ESCAPES: ReadonlyMap<string, number> = new Map([
+  ["r", 0x0d],
+  ["0", 0x00],
+  ["a", 0x07],
+  ["b", 0x08],
+  ["f", 0x0c],
+  ["v", 0x0b],
+  ["e", 0x1b],
+]);
+
 export function lex(source: string): Token[] {
   const tokens: Token[] = [];
   const lines = source.split("\n");
@@ -292,11 +304,23 @@ export function lex(source: string): Token[] {
             value += decoded;
             j = close + 1;
           } else {
-            fail(
-              "E0005",
-              'Unknown escape. The escapes are `\\"`, `\\\\`, `\\n`, `\\t` and `\\u{...}` for control characters.',
-              source.slice(j, j + 2),
-            );
+            const written = source.slice(j, j + 2);
+            const message =
+              'Unknown escape. The escapes are `\\"`, `\\\\`, `\\n`, `\\t` and `\\u{...}` for control characters.';
+            // A C escape names a control character, so its fix is that
+            // character's one spelling. `\0` before a digit is a C octal
+            // escape (`\033`), which `\u{0}` would misread.
+            const cp = C_ESCAPES.get(next);
+            const octal = next === "0" && /[0-9]/.test(source[j + 2] ?? "");
+            const fixed = cp === undefined || octal ? null : escapeChar(String.fromCodePoint(cp));
+            if (fixed === null) {
+              fail("E0005", message, written);
+            } else {
+              fail("E0005", `${message} \`${written}\` is written \`${fixed}\`.`, written, {
+                expected: fixed,
+                fix: { replace: written, with: fixed },
+              });
+            }
           }
           continue;
         }
