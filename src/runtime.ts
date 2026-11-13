@@ -111,42 +111,44 @@ function toOrder(n: number): Order {
 }
 
 // ---- Int ----
-// Integers from -(2^53 - 1) to 2^53 - 1; leaving the range traps.
+// Integers from -(2^53 - 1) to 2^53 - 1; leaving the range traps. Generated
+// code passes the full name of the definition the operation is written in,
+// so that the trap names it.
 
-function int(op: string, a: number, b: number, r: number): number {
-  if (!Number.isSafeInteger(r)) trap("overflow", null, `${a} ${op} ${b}`, "Int overflow.");
+function int(op: string, a: number, b: number, r: number, definition: string): number {
+  if (!Number.isSafeInteger(r)) trap("overflow", definition, `${a} ${op} ${b}`, "Int overflow.");
   return r;
 }
 
-export const int_add = (a: number, b: number): number => int("+", a, b, a + b);
-export const int_sub = (a: number, b: number): number => int("-", a, b, a - b);
-export const int_mul = (a: number, b: number): number => int("*", a, b, a * b);
+export const int_add = (a: number, b: number, definition: string): number => int("+", a, b, a + b, definition);
+export const int_sub = (a: number, b: number, definition: string): number => int("-", a, b, a - b, definition);
+export const int_mul = (a: number, b: number, definition: string): number => int("*", a, b, a * b, definition);
 
 // Rounds toward zero.
-export function int_div(a: number, b: number): number {
-  if (b === 0) trap("division", null, `${a} / ${b}`, "Int division by zero.");
-  return int("/", a, b, Math.trunc(a / b));
+export function int_div(a: number, b: number, definition: string): number {
+  if (b === 0) trap("division", definition, `${a} / ${b}`, "Int division by zero.");
+  return int("/", a, b, Math.trunc(a / b), definition);
 }
 
 // Has the sign of the dividend: -7 % 2 == -1.
-export function int_rem(a: number, b: number): number {
-  if (b === 0) trap("division", null, `${a} % ${b}`, "Int remainder by zero.");
-  return int("%", a, b, a % b);
+export function int_rem(a: number, b: number, definition: string): number {
+  if (b === 0) trap("division", definition, `${a} % ${b}`, "Int remainder by zero.");
+  return int("%", a, b, a % b, definition);
 }
 
 // ---- Float ----
 // IEEE 754 doubles without NaN: a NaN result traps. Infinities are values.
 
-function float(op: string, a: number, b: number, r: number): number {
-  if (Number.isNaN(r)) trap("nan", null, `${a} ${op} ${b}`, "Float operation produced NaN.");
+function float(op: string, a: number, b: number, r: number, definition: string): number {
+  if (Number.isNaN(r)) trap("nan", definition, `${a} ${op} ${b}`, "Float operation produced NaN.");
   return r;
 }
 
-export const float_add = (a: number, b: number): number => float("+", a, b, a + b);
-export const float_sub = (a: number, b: number): number => float("-", a, b, a - b);
-export const float_mul = (a: number, b: number): number => float("*", a, b, a * b);
-export const float_div = (a: number, b: number): number => float("/", a, b, a / b);
-export const float_rem = (a: number, b: number): number => float("%", a, b, a % b);
+export const float_add = (a: number, b: number, definition: string): number => float("+", a, b, a + b, definition);
+export const float_sub = (a: number, b: number, definition: string): number => float("-", a, b, a - b, definition);
+export const float_mul = (a: number, b: number, definition: string): number => float("*", a, b, a * b, definition);
+export const float_div = (a: number, b: number, definition: string): number => float("/", a, b, a / b, definition);
+export const float_rem = (a: number, b: number, definition: string): number => float("%", a, b, a % b, definition);
 
 // ---- examples ----
 

@@ -127,7 +127,9 @@ Deno.test("db run: a trap ends the program with code 70 and its description on s
   const where = await setUp(DIV, CRASH_MAIN);
   const r = await dbRun(where);
   assertEquals([r.code, r.stdout], [70, ""]);
-  assertEquals(JSON.parse(r.stderr).trap, "division");
+  // The trap names the definition that divides, not main.
+  const trap = JSON.parse(r.stderr);
+  assertEquals([trap.trap, trap.definition, trap.at], ["division", "calc.div", "1 / 0"]);
   await Deno.remove(join(where.dir, ".."), { recursive: true });
 });
 

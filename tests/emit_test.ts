@@ -538,10 +538,15 @@ Deno.test("emit: match, if, for, let-else and lambdas", async () => {
 
 Deno.test("emit: Int and Float arithmetic are separate", async () => {
   const mod = await load("calc");
-  assertEquals(assertThrows(() => mod.calc$divide(1, 0), Trap).kind, "division");
-  assertEquals(assertThrows(() => mod.calc$remainder(1, 0), Trap).kind, "division");
+  // An arithmetic trap names the definition the operation is written in.
+  const kindAndDefinition = (fn: () => unknown) => {
+    const trap = assertThrows(fn, Trap);
+    return [trap.kind, trap.definition];
+  };
+  assertEquals(kindAndDefinition(() => mod.calc$divide(1, 0)), ["division", "calc.divide"]);
+  assertEquals(kindAndDefinition(() => mod.calc$remainder(1, 0)), ["division", "calc.remainder"]);
   assertEquals(mod.calc$ratio(1, 0), Infinity);
-  assertEquals(assertThrows(() => mod.calc$ratio(0, 0), Trap).kind, "nan");
+  assertEquals(kindAndDefinition(() => mod.calc$ratio(0, 0)), ["nan", "calc.ratio"]);
   // Large integral Floats are not Ints and do not overflow.
   assertEquals(mod.calc$ratio(2 ** 60, 0.5), 2 ** 61);
 });
@@ -557,7 +562,9 @@ Deno.test("emit: the test programs are themselves canonical", () => {
 
 Deno.test("emit: Int overflow traps", async () => {
   const mod = await load("blocks");
-  assertEquals(assertThrows(() => mod.shapes$total([Number.MAX_SAFE_INTEGER, 1]), Trap).kind, "overflow");
+  const trap = assertThrows(() => mod.shapes$total([Number.MAX_SAFE_INTEGER, 1]), Trap);
+  // The addition is in a lambda, which belongs to the definition around it.
+  assertEquals([trap.kind, trap.definition, trap.at], ["overflow", "shapes.total", "9007199254740991 + 1"]);
 });
 
 Deno.test("emit: method calls get a dedicated diagnostic (5.7)", () => {

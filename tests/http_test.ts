@@ -282,7 +282,7 @@ Deno.test("http: a trap in a handler ends the program with its diagnostic", asyn
   assertEquals(out.code, 70);
   assertEquals(decode(out.stdout), "GET /crash");
   const diagnostic = JSON.parse(decode(out.stderr));
-  assertEquals([diagnostic.trap, diagnostic.definition], ["division", null]);
+  assertEquals([diagnostic.trap, diagnostic.definition], ["division", "web.handle"]);
 });
 
 Deno.test("http: serving without the net permission traps", async () => {

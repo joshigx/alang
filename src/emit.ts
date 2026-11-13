@@ -141,7 +141,8 @@ class DefinitionEmitter {
         const kind = typeEquals(t, INT) ? "int" : typeEquals(t, FLOAT) ? "float" : null;
         if (kind === null) throw new Error(`arithmetic on unchecked type in ${this.name}`);
         const name = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem" }[e.op];
-        return `${RT}.${kind}_${name}(${l}, ${r})`;
+        // The trap names the definition, as those of contracts and `match` do.
+        return `${RT}.${kind}_${name}(${l}, ${r}, ${JSON.stringify(this.name)})`;
       }
     }
   }
