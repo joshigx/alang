@@ -576,7 +576,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | `std.int.checked_multiply(left: Int, right: Int): Option<Int>` | none | The product; `None` if it is outside the Int range. |
 | `std.float.floor(value: Float): Int` | none | The largest integer not above the value; traps outside the Int range. |
 | `std.float.compare(left: Float, right: Float): Order` | none | Orders two numbers. |
-| `std.float.parse(text: String): Option<Float>` | none | Reads a decimal number written as an optional `-`, the digits `0` to `9`, and optionally `.` and more digits (`3`, `-0.25`, `007.5`). `None` for anything else (`+`, `.5`, `1.`, `1e3`, whitespace, the empty text) and for a number too large to be finite. |
+| `std.float.parse(text: String): Option<Float>` | none | Reads a decimal number written as an optional `-`, the digits `0` to `9`, and optionally `.` and more digits (`3`, `-0.25`, `007.5`; `-0` gives `-0.0`). `None` for anything else (`+`, `.5`, `1.`, `1e3`, whitespace, the empty text) and for a number too large to be finite. |
 | `std.float.round(value: Float): Int` | none | The nearest integer, halves away from zero (`2.5` gives 3, `-2.5` gives -3); traps outside the Int range. |
 | `std.float.ceil(value: Float): Int` | none | The smallest integer not below the value; traps outside the Int range. |
 | `std.float.trunc(value: Float): Int` | none | The value without its fraction, toward zero; traps outside the Int range. |
@@ -584,7 +584,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | `std.float.min(left: Float, right: Float): Float` | none | The smaller of two numbers. |
 | `std.float.max(left: Float, right: Float): Float` | none | The larger of two numbers. |
 | `std.float.sqrt(value: Float): Float` | none | The square root. A negative value traps. |
-| `std.float.to_fixed(value: Float, decimals: Int): String` | none | Formats the value as decimal text with exactly `decimals` digits after the point (`1.5` with 2 gives `1.50`), rounded half away from zero; never in exponent form, and without a minus sign when only zeros show. Infinities give `Infinity` and `-Infinity`. A `decimals` below 0 or above 100 traps. |
+| `std.float.to_fixed(value: Float, decimals: Int): String` | none | Formats the value as decimal text with exactly `decimals` digits after the point (`1.5` with 2 gives `1.50`). It rounds the exact binary value, halves away from zero: `1.005`, stored just below the tie, gives `1.00` with 2, and the exact tie `0.125` gives `0.13`. Never in exponent form, and without a minus sign when only zeros show. Infinities give `Infinity` and `-Infinity`. A `decimals` below 0 or above 100 traps. |
 | `std.string.trim(text: String): String` | none | Removes leading and trailing whitespace, line breaks included. |
 | `std.string.length(text: String): Int` | none | Number of Unicode scalar values. |
 | `std.string.concat(left: String, right: String): String` | none | The two texts joined. |

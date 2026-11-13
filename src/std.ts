@@ -278,7 +278,7 @@ export const STD: readonly Signature[] = [
   sig("std.float.compare", "Orders two numbers.", [], [["left", FLOAT], ["right", FLOAT]], ORDER),
   sig(
     "std.float.parse",
-    "Reads a decimal number written as an optional `-`, the digits `0` to `9`, and optionally `.` and more digits (`3`, `-0.25`, `007.5`). `None` for anything else (`+`, `.5`, `1.`, `1e3`, whitespace, the empty text) and for a number too large to be finite.",
+    "Reads a decimal number written as an optional `-`, the digits `0` to `9`, and optionally `.` and more digits (`3`, `-0.25`, `007.5`; `-0` gives `-0.0`). `None` for anything else (`+`, `.5`, `1.`, `1e3`, whitespace, the empty text) and for a number too large to be finite.",
     [],
     [["text", STRING]],
     option(FLOAT),
@@ -310,7 +310,7 @@ export const STD: readonly Signature[] = [
   sig("std.float.sqrt", "The square root. A negative value traps.", [], [["value", FLOAT]], FLOAT),
   sig(
     "std.float.to_fixed",
-    "Formats the value as decimal text with exactly `decimals` digits after the point (`1.5` with 2 gives `1.50`), rounded half away from zero; never in exponent form, and without a minus sign when only zeros show. Infinities give `Infinity` and `-Infinity`. A `decimals` below 0 or above 100 traps.",
+    "Formats the value as decimal text with exactly `decimals` digits after the point (`1.5` with 2 gives `1.50`). It rounds the exact binary value, halves away from zero: `1.005`, stored just below the tie, gives `1.00` with 2, and the exact tie `0.125` gives `0.13`. Never in exponent form, and without a minus sign when only zeros show. Infinities give `Infinity` and `-Infinity`. A `decimals` below 0 or above 100 traps.",
     [],
     [["value", FLOAT], ["decimals", INT]],
     STRING,
