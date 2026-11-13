@@ -87,6 +87,15 @@ and need their form decided.
 - Each phase on its own branch; commit locally with explicit paths (never `git add -A`); do not push.
 - The user also commits and pushes; check `git log` and `git status` before committing.
 - Decisions go to `decisions.md`, observations and ideas to this file, both as you go.
+- One task, fresh agents (2026-11-13): the main session orchestrates; a Fable agent plans, a new Opus agent builds
+  and reports, the main session verifies (checks, running the result) before reporting to the user. Plans go to
+  `docs/plans/<phase>.md`.
+- Design decisions (2026-11-13): take the recommendation instead of asking the user; in an automated run never wait
+  on the user (ask the advisor when no option is clearly better, then pick one). Record each in `decisions.md`, list
+  it below for review, and keep it revertible (own branch, small commits). Ask first only for pushing, publishing,
+  deleting data or settings outside the repo.
+- Usage limits: pause new agents at 95% of the 5-hour limit, stop at 98% of the weekly limit and of the Fable weekly
+  limit (the user reports the Fable figure; `~/.claude/usage/latest.json` has the others).
 
 **Decisions awaiting the user's review.** All are recorded in `decisions.md` and were reported, but not explicitly
 confirmed. Do not build on them as if settled; raise them if a new phase depends on one.
