@@ -2,12 +2,13 @@
 // name and tool call it mentions exists and answers as it says, and it stays
 // short enough to be a card.
 
-import { assert_, assertEquals } from "./assert.ts";
+import { assert_, assertEquals, assertThrows } from "./assert.ts";
 import { done, fresh } from "./db_helpers.ts";
 import { EFFECTS, pathText } from "../src/ast.ts";
 import { CARD } from "../src/card.ts";
 import { McpServer, TOOLS } from "../src/mcp.ts";
-import { parseProgram } from "../src/parser.ts";
+import { AlangError } from "../src/diagnostic.ts";
+import { parseExpression, parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
 import { STD, STD_TYPES } from "../src/std.ts";
 import { accept } from "../src/toolchain.ts";
@@ -143,5 +144,10 @@ Deno.test("card: it stays a card", () => {
   // The escapes are text on the card, not characters the template made.
   assert_([...CARD].every((c) => c === "\n" || (c >= " " && c !== "\u007F")));
   for (const escape of ['`\\"`', "`\\\\`", "`\\n`", "`\\t`", "`\\u{1B}`"]) assert_(CARD.includes(escape), escape);
+  // \r is the C escape a model reaches for (the tasks round): the card gives
+  // the form that E0005's fix gives.
+  const r = assertThrows(() => parseExpression('"a\\rb"'), AlangError).diagnostic;
+  assertEquals([r.code, r.fix], ["E0005", { replace: "\\r", with: "\\u{D}" }]);
+  assert_(CARD.includes(`\`${r.fix!.replace}\` is \`${r.fix!.with}\``));
   assert_(!CARD.includes("${"));
 });

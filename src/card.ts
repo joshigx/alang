@@ -82,8 +82,8 @@ from it. The standard library is not on it; find it with the tools.
   Only std functions take functions; a pure function's name works too: \`by: std.string.compare\`. An \`Option\` inside
   one is unwrapped with \`std.option.with_default\` or \`std.list.filter_map\`.
 - Strings: double quotes, on one line. The escapes are only \`\\"\`, \`\\\\\`, \`\\n\`, \`\\t\` and \`\\u{1B}\` (uppercase hex) for
-  other control characters; every other character is itself (\`"é"\`). Join texts with \`std.string.concat\` or
-  \`std.string.join(parts: [a, b], separator: "")\`, never \`+\`. A value as text: \`std.text.show(value: v)\`.
+  other control characters (\`\\r\` is \`\\u{D}\`); every other character is itself (\`"é"\`). Join with \`std.string.concat\`
+  or \`std.string.join(parts: [a, b], separator: "")\`, never \`+\`. A value as text: \`std.text.show(value: v)\`.
 - Numbers: more than four digits are grouped with \`_\` (\`65_535\`; but \`1000\`, never \`1_000\`), no leading zeros;
   floats \`1.0\`, \`0.25\`. Also \`true\`, \`false\` and \`Unit\`.
 
