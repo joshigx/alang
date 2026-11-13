@@ -12,8 +12,8 @@ Read this first when picking up the work in a new session. Update it when a phas
 phase branches are kept as they are. Start each new phase on its own branch from `main`; pushing is the user's call.
 Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed. List
 literals and pure std (item 15) were built on `list-literals` and fast-forwarded into `main` the same way. The
-language card (item 16) was built on `card` and is merged into `main`. Maps, options and more std (item 17) are built
-on `std-maps`, from `main`, not merged yet.
+language card (item 16) was built on `card` and is merged into `main`. Maps, options and more std (item 17) were built
+on `std-maps` and fast-forwarded into `main` too.
 
 **Done** (phases from CLAUDE.md, in order):
 
