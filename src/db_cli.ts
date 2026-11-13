@@ -23,9 +23,11 @@
 //                                    are imported first, not overwritten
 //   import [<dir>]                   rebuild the database from export/ (or <dir>)
 //
-//   run [<main>]                     accept the program the database holds and
+//   run [<main>] [-- <args>...]      accept the program the database holds and
 //                                    start its `main` (the full name, if there
-//                                    are several), as `alang run` does
+//                                    are several), as `alang run` does; the
+//                                    words after the first `--` go to the
+//                                    program unchanged (`std.env.args`)
 //
 // Every command but `run` prints one JSON value. Operations print the submit
 // result and exit with 1 if it was rejected; a query on an unknown name prints
@@ -43,7 +45,8 @@
 import { Codebase, type ExportResult, parseChanges, type SubmitResult } from "./codebase.ts";
 
 export const DB_USAGE = "usage: alang db [--dir <dir>] <definition|signature|context|callers|list|search|" +
-  "search-type|history|add|replace|remove|rename|submit|export|import|run> ...";
+  "search-type|history|add|replace|remove|rename|submit|export|import|run> ..., " +
+  "alang db [--dir <dir>] run [<main>] [-- <args>...]";
 
 async function readText(path: string): Promise<string> {
   return path === "-" ? await new Response(Deno.stdin.readable).text() : await Deno.readTextFile(path);
@@ -66,6 +69,10 @@ export async function dbMain(args: string[]): Promise<number> {
     dir = args[1];
     args = args.slice(2);
   }
+  // As in `alang run`: the first `--` ends the tool's own words.
+  const split = args.indexOf("--");
+  const programArgs = split < 0 ? [] : args.slice(split + 1);
+  if (split >= 0) args = args.slice(0, split);
   const [command, ...rest] = args;
   const arity: Record<string, [number, number]> = {
     definition: [1, 1],
@@ -87,7 +94,7 @@ export async function dbMain(args: string[]): Promise<number> {
   };
   const range = arity[command];
   const usage = !range || rest.length < range[0] || rest.length > range[1] ||
-    (command === "export" && rest.length === 1 && rest[0] !== "--force");
+    (command === "export" && rest.length === 1 && rest[0] !== "--force") || (split >= 0 && command !== "run");
   if (!dir || usage) {
     console.error(DB_USAGE);
     return 2;
@@ -157,7 +164,7 @@ export async function dbMain(args: string[]): Promise<number> {
       case "import":
         return result(await cb.importAll(a));
       case "run":
-        return (await cb.run(a)).code;
+        return (await cb.run(a, { args: programArgs })).code;
     }
     return 2;
   } finally {

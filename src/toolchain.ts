@@ -160,6 +160,12 @@ export interface RunOptions {
   readonly effects?: readonly Effect[];
   // The full name of the `main` to start, if the program has several.
   readonly main?: string;
+  // The program's arguments (`std.env.args`), passed on unchanged.
+  readonly args?: readonly string[];
+  // Text the program reads from the console; then its input ends. Without
+  // it, the program reads the tool's console, or nothing if `stdio` is
+  // "piped", so that a test never waits on a terminal.
+  readonly stdin?: string;
 }
 
 // Writes the entry file that starts main (`out/<name>.run.ts`) and returns
@@ -202,12 +208,18 @@ export async function run(built: Built, options: RunOptions = {}): Promise<Deno.
   const entry = await writeEntry(built, options.main);
   const permissions = permissionsFor(options.effects ?? main.effects);
   const stdio = options.stdio ?? "inherit";
+  // The arguments follow the entry as they are: Deno passes everything after
+  // the script to the program, a `--` included.
   const child = new Deno.Command(Deno.execPath(), {
-    args: ["run", "--no-prompt", ...permissions, entry],
+    args: ["run", "--no-prompt", ...permissions, entry, ...(options.args ?? [])],
     cwd: options.cwd,
+    stdin: options.stdin !== undefined ? "piped" : stdio === "piped" ? "null" : "inherit",
     stdout: stdio,
     stderr: stdio,
   }).spawn();
+  // Written while the program runs, so that neither waits for the other. A
+  // program that ends without reading it all breaks the pipe; that is fine.
+  const feeding = options.stdin === undefined ? Promise.resolve() : feed(child.stdin, options.stdin);
   // A Ctrl-C in the terminal reaches the program itself (same process
   // group), which may end on its own terms: a server answers the requests
   // in progress and returns from `std.http.serve`. The tool waits for that
@@ -226,7 +238,18 @@ export async function run(built: Built, options: RunOptions = {}): Promise<Deno.
   try {
     return await child.output();
   } finally {
+    await feeding;
     for (const [signal, listener] of listening) Deno.removeSignalListener(signal, listener);
+  }
+}
+
+async function feed(stdin: WritableStream<Uint8Array>, text: string): Promise<void> {
+  const writer = stdin.getWriter();
+  try {
+    await writer.write(new TextEncoder().encode(text));
+    await writer.close();
+  } catch {
+    // The program ended first.
   }
 }
 

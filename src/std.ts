@@ -108,6 +108,24 @@ function sig(
 
 export const STD: readonly Signature[] = [
   sig("std.console.print_line", "Writes a line to the console.", [], [["text", STRING]], UNIT, ["console"]),
+  sig(
+    "std.console.read_line",
+    "Reads the next line from the console, without its line break; `None` at the end of the input.",
+    [],
+    [],
+    option(STRING),
+    ["console"],
+  ),
+
+  sig("std.env.args", "The arguments the program was started with.", [], [], list(STRING), ["env"]),
+  sig(
+    "std.env.get",
+    "The value of an environment variable; `None` if it is not set.",
+    [],
+    [["name", STRING]],
+    option(STRING),
+    ["env"],
+  ),
 
   sig(
     "std.fs.read_text",

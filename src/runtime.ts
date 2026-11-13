@@ -214,6 +214,119 @@ export function std$console$print_line(text: string): Unit {
   return Unit;
 }
 
+// ---- std.console input, std.env ----
+// The program's input from the host: the console (stdin), its arguments and
+// the environment. None of them needs a permission but the environment.
+
+type InputHost = {
+  Deno?: {
+    readonly stdin: { readSync(buffer: Uint8Array): number | null };
+    readonly args: readonly string[];
+    readonly env: { get(name: string): string | undefined };
+  };
+  process?: {
+    readonly argv: readonly string[];
+    readonly env: Record<string, string | undefined>;
+    getBuiltinModule(name: "node:fs"): { readSync(fd: number, buffer: Uint8Array): number };
+  };
+};
+
+// What was read from the console but not returned yet; the runtime is the
+// only reader of stdin.
+let consolePending = new Uint8Array(0);
+let consoleEnded = false;
+const consoleText = new TextDecoder("utf-8", { ignoreBOM: true });
+
+// Reads the next bytes of the console into `buffer`; 0 at the end. A console
+// that cannot be read counts as ended.
+function readConsole(buffer: Uint8Array): number {
+  const host = globalThis as InputHost;
+  try {
+    if (host.Deno) return host.Deno.stdin.readSync(buffer) ?? 0;
+    if (host.process) {
+      const fs = host.process.getBuiltinModule("node:fs");
+      for (;;) {
+        try {
+          return fs.readSync(0, buffer);
+        } catch (e) {
+          // A non-blocking stdin with nothing to read yet.
+          if ((e as { code?: string }).code !== "EAGAIN") throw e;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+        }
+      }
+    }
+  } catch {
+    // Closed or not readable: the end of the input.
+  }
+  return 0;
+}
+
+// A line ends at a line feed; a carriage return right before it goes too. A
+// last line without a line break is a line; after it, every call is `None`.
+// A line feed never occurs inside a UTF-8 sequence, so each line decodes on
+// its own, invalid bytes as U+FFFD.
+export function std$console$read_line(): Option<string> {
+  for (;;) {
+    const end = consolePending.indexOf(0x0a);
+    if (end >= 0) {
+      const cut = end > 0 && consolePending[end - 1] === 0x0d ? end - 1 : end;
+      const line = consoleText.decode(consolePending.subarray(0, cut));
+      consolePending = consolePending.slice(end + 1);
+      return Some(line);
+    }
+    if (consoleEnded) {
+      if (consolePending.length === 0) return None;
+      const line = consoleText.decode(consolePending);
+      consolePending = new Uint8Array(0);
+      return Some(line);
+    }
+    const buffer = new Uint8Array(4096);
+    const n = readConsole(buffer);
+    if (n === 0) {
+      consoleEnded = true;
+    } else {
+      const joined = new Uint8Array(consolePending.length + n);
+      joined.set(consolePending);
+      joined.set(buffer.subarray(0, n), consolePending.length);
+      consolePending = joined;
+    }
+  }
+}
+
+// The words after the program's own name (after `--` in `alang run`).
+export function std$env$args(): readonly string[] {
+  const host = globalThis as InputHost;
+  if (host.Deno) return [...host.Deno.args];
+  if (host.process) return host.process.argv.slice(2);
+  return trap("effect", "std.env.args", "", "This runtime has no program arguments.");
+}
+
+export function std$env$get(name: string): Option<string> {
+  const host = globalThis as InputHost;
+  if (host.Deno) {
+    let value: string | undefined;
+    try {
+      value = host.Deno.env.get(name);
+    } catch (e) {
+      const err = e as { name?: string };
+      // Refused for lack of the permission: more than `main` declares (2.5).
+      if (err.name === "NotCapable") {
+        return trap("effect", "std.env.get", name, "Reading environment variables needs the effect `env` on `main`.");
+      }
+      // A name no variable can have (empty, with `=` or NUL) is not set.
+      if (err.name === "TypeError") return None;
+      throw e;
+    }
+    return value === undefined ? None : Some(value);
+  }
+  if (host.process) {
+    // Own properties only: `process.env.toString` is a function, not a variable.
+    const env = host.process.env;
+    return Object.hasOwn(env, name) ? Some(env[name] ?? "") : None;
+  }
+  return trap("effect", "std.env.get", name, "This runtime has no environment variables.");
+}
+
 // ---- std.fs ----
 // Files are one of the places where the runtime touches the host; the
 // network (std.http) and the program's input (std.env, std.console) are the

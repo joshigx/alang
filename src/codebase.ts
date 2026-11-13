@@ -685,7 +685,8 @@ export class Codebase {
   // codebase's. Throws an AlangError and runs nothing if the sync fails (an
   // export file that does not parse or check, or E0513: the files contradict
   // the database, so neither side is run), if there is no such `main`, or if
-  // the program is not accepted.
+  // the program is not accepted. `options` go to the run as they are: the
+  // program's arguments and console input among them.
   async run(name?: string, options: Omit<RunOptions, "main"> = {}): Promise<Deno.CommandOutput> {
     const synced = await this.sync();
     if (!synced.ok) throw new AlangError(synced.diagnostics);

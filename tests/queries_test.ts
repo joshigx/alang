@@ -200,6 +200,7 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
   // list: std is reached by name, and is not one of the codebase's modules.
   assertEquals(cb.list("std").submodules, [
     "std.console",
+    "std.env",
     "std.float",
     "std.fs",
     "std.http",
@@ -275,7 +276,7 @@ Deno.test("queries: search(type) matches signatures by pattern", async () => {
   assertEquals(names("List<Int>, Int -> List<Int>"), ["std.list.append"]);
   assertEquals(names("List<Int>, String -> List<Int>"), []);
   assertEquals(names("List<String>, _ -> List<Int>"), ["std.list.map"]);
-  assertEquals(names("-> _"), ["std.list.empty"]);
+  assertEquals(names("-> _"), ["std.console.read_line", "std.env.args", "std.list.empty"]);
   assertEquals(cb.searchType("String -> Result<_, ParseError>")[0], {
     name: "net.port.parse",
     hash: hashOf(cb, "net.port.parse"),

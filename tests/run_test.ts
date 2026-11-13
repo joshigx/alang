@@ -65,8 +65,16 @@ async function dbRun(
   where: { dir: string; cwd: string },
   ...args: string[]
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  return await dbRunCommand(where, "run", ...args);
+}
+
+// `alang db --dir <dir> <args>` from the directory `cwd`.
+async function dbRunCommand(
+  where: { dir: string; cwd: string },
+  ...args: string[]
+): Promise<{ code: number; stdout: string; stderr: string }> {
   const out = await new Deno.Command(Deno.execPath(), {
-    args: ["run", "--allow-read", "--allow-write", "--allow-run", CLI, "db", "--dir", where.dir, "run", ...args],
+    args: ["run", "--allow-read", "--allow-write", "--allow-run", CLI, "db", "--dir", where.dir, ...args],
     cwd: where.cwd,
     stdout: "piped",
     stderr: "piped",
@@ -144,4 +152,28 @@ Deno.test("db run: runs what the export holds, and nothing when export and datab
   db.close();
   assertEquals(refused(await dbRun(where)).map((d) => [d.code, d.at]), [["E0513", "export/greet.alang"]]);
   await Deno.remove(join(where.dir, ".."), { recursive: true });
+});
+
+// Prints its arguments.
+const ARGS_MAIN = fn("args.main", {
+  out: "Unit",
+  effects: "env, console",
+  body: "std.console.print_line(text: std.text.show(value: std.env.args()))\nreturn Unit",
+});
+
+Deno.test("db run: the words after -- go to the program", async () => {
+  const one = await setUp(ARGS_MAIN);
+  assertEquals(await dbRun(one, "--", "a", "b c", "--"), { code: 0, stdout: '["a", "b c", "--"]\n', stderr: "" });
+  assertEquals(await dbRun(one), { code: 0, stdout: "[]\n", stderr: "" });
+  await Deno.remove(join(one.dir, ".."), { recursive: true });
+
+  const several = await setUp(GREET, APP_MAIN, ARGS_MAIN);
+  assertEquals(await dbRun(several, "args.main", "--", "x"), { code: 0, stdout: '["x"]\n', stderr: "" });
+  // Program words before `--`, or `--` with another command, are usage errors.
+  const stray = await dbRun(several, "args.main", "x");
+  assertEquals([stray.code, stray.stdout], [2, ""]);
+  assert_(stray.stderr.includes("run [<main>] [-- <args>...]"), stray.stderr);
+  const misplaced = await dbRunCommand(several, "list", "--", "x");
+  assertEquals([misplaced.code, misplaced.stdout], [2, ""]);
+  await Deno.remove(join(several.dir, ".."), { recursive: true });
 });

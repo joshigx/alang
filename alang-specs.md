@@ -545,6 +545,9 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | Function | Effects | Meaning |
 | --- | --- | --- |
 | `std.console.print_line(text: String): Unit` | console | Writes a line to the console. |
+| `std.console.read_line(): Option<String>` | console | Reads the next line from the console, without its line break; `None` at the end of the input. |
+| `std.env.args(): List<String>` | env | The arguments the program was started with. |
+| `std.env.get(name: String): Option<String>` | env | The value of an environment variable; `None` if it is not set. |
 | `std.fs.read_text(path: String): Result<String, std.fs.Error>` | fs.read | Reads a whole file as UTF-8 text. |
 | `std.fs.write_text(path: String, text: String): Result<Unit, std.fs.Error>` | fs.write | Writes the text to a file as UTF-8, creating the file or replacing its content. |
 | `std.fs.append_text(path: String, text: String): Result<Unit, std.fs.Error>` | fs.write | Adds the text to the end of a file as UTF-8, creating the file if it is missing. |

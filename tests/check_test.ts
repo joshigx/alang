@@ -595,6 +595,9 @@ Deno.test("effects: a caller declares the effects of its callees (2.1)", () => {
 
 // Every std function with an effect, as a statement that binds its result.
 const EFFECTFUL: [string, string][] = [
+  ["let r: Option<String> = std.console.read_line()", "console"],
+  ["let r: List<String> = std.env.args()", "env"],
+  ['let r: Option<String> = std.env.get(name: "HOME")', "env"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.write_text(path: "x", text: "y")', "fs.write"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.append_text(path: "x", text: "y")', "fs.write"],
   ['let r: Result<List<String>, std.fs.Error> = std.fs.list_directory(path: "x")', "fs.read"],

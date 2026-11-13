@@ -1,13 +1,15 @@
 // Files and program I/O in std: the runtime in this process (Deno), one
 // temporary directory per test, then compiled programs as their own
-// processes, for the permission traps.
+// processes, for the program's input and the permission traps.
 
 import { join } from "node:path";
-import type { Effect } from "../src/ast.ts";
 import { assert_, assertEquals } from "./assert.ts";
 import {
   Err,
+  None,
   Ok,
+  Some,
+  std$env$get,
   std$fs$append_text,
   std$fs$create_directory,
   type std$fs$Error,
@@ -18,7 +20,7 @@ import {
   std$fs$write_text,
   Unit,
 } from "../src/runtime.ts";
-import { accept, type Built, run } from "../src/toolchain.ts";
+import { accept, type Built, run, type RunOptions } from "../src/toolchain.ts";
 
 const OUT = new URL("../out/test/io/", import.meta.url).pathname;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -199,7 +201,24 @@ Deno.test("io: remove takes a file, a link or an empty directory", async () => {
   });
 });
 
-// ---- programs: the permissions of main's effects ----
+Deno.test("io: env.get reads a variable; None if it is not set or cannot exist", () => {
+  Deno.env.set("ALANG_IO_GET", "a value");
+  Deno.env.set("ALANG_IO_EMPTY", "");
+  try {
+    assertEquals(std$env$get("ALANG_IO_GET"), Some("a value"));
+    assertEquals(std$env$get("ALANG_IO_EMPTY"), Some(""));
+    assertEquals(std$env$get("ALANG_IO_UNSET"), None);
+    // Names no variable can have.
+    assertEquals(std$env$get(""), None);
+    assertEquals(std$env$get("A=B"), None);
+    assertEquals(std$env$get("A\0B"), None);
+  } finally {
+    Deno.env.delete("ALANG_IO_GET");
+    Deno.env.delete("ALANG_IO_EMPTY");
+  }
+});
+
+// ---- programs: input and the permissions of main's effects ----
 
 // A `main` in module `name` with the given body.
 function mainWith(name: string, effects: string, body: string[]): string {
@@ -231,14 +250,18 @@ const UNIT_RESULT = "Result<Unit, std.fs.Error>";
 
 // Each needs its effect; started with `console` only, each traps.
 const NEEDING: [string, string, string, string][] = [
-  ["read_text", "fs.read", "Result<String, std.fs.Error>", 'std.fs.read_text(path: "a.txt")'],
-  ["write_text", "fs.write", UNIT_RESULT, 'std.fs.write_text(path: "a.txt", text: "x")'],
-  ["append_text", "fs.write", UNIT_RESULT, 'std.fs.append_text(path: "a.txt", text: "x")'],
-  ["create_directory", "fs.write", UNIT_RESULT, 'std.fs.create_directory(path: "a")'],
-  ["remove", "fs.write", UNIT_RESULT, 'std.fs.remove(path: "a.txt")'],
-  ["list_directory", "fs.read", "Result<List<String>, std.fs.Error>", 'std.fs.list_directory(path: ".")'],
-  ["kind", "fs.read", "Result<std.fs.Kind, std.fs.Error>", 'std.fs.kind(path: "a.txt")'],
+  ["std.fs.read_text", "fs.read", "Result<String, std.fs.Error>", 'std.fs.read_text(path: "a.txt")'],
+  ["std.fs.write_text", "fs.write", UNIT_RESULT, 'std.fs.write_text(path: "a.txt", text: "x")'],
+  ["std.fs.append_text", "fs.write", UNIT_RESULT, 'std.fs.append_text(path: "a.txt", text: "x")'],
+  ["std.fs.create_directory", "fs.write", UNIT_RESULT, 'std.fs.create_directory(path: "a")'],
+  ["std.fs.remove", "fs.write", UNIT_RESULT, 'std.fs.remove(path: "a.txt")'],
+  ["std.fs.list_directory", "fs.read", "Result<List<String>, std.fs.Error>", 'std.fs.list_directory(path: ".")'],
+  ["std.fs.kind", "fs.read", "Result<std.fs.Kind, std.fs.Error>", 'std.fs.kind(path: "a.txt")'],
+  ["std.env.get", "env", "Option<String>", 'std.env.get(name: "HOME")'],
 ];
+
+// The module of the `main` that calls a std function.
+const moduleFor = (fn: string) => fn.split(".").pop()!;
 
 let builds = 0;
 async function program(...texts: string[]): Promise<Built> {
@@ -247,22 +270,22 @@ async function program(...texts: string[]): Promise<Built> {
 
 async function runIn(
   built: Built,
-  options: { main?: string; effects?: readonly Effect[] } = {},
+  options: Omit<RunOptions, "stdio" | "cwd"> = {},
 ): Promise<{ code: number; stdout: string; stderr: string; cwd: string }> {
   const cwd = await Deno.makeTempDir({ prefix: "alang-io-run-" });
   const out = await run(built, { stdio: "piped", cwd, ...options });
   return { code: out.code, stdout: decode(out.stdout), stderr: decode(out.stderr), cwd };
 }
 
-Deno.test("io: a file operation outside main's effects traps", async () => {
+Deno.test("io: a file or environment operation outside main's effects traps", async () => {
   const built = await program(
-    ...NEEDING.map(([name, effect, type, call]) => mainCalling(name, `${effect}, console`, type, call)),
+    ...NEEDING.map(([fn, effect, type, call]) => mainCalling(moduleFor(fn), `${effect}, console`, type, call)),
   );
-  for (const [name, effect] of NEEDING) {
-    const r = await runIn(built, { main: `${name}.main`, effects: ["console"] });
+  for (const [fn, effect] of NEEDING) {
+    const r = await runIn(built, { main: `${moduleFor(fn)}.main`, effects: ["console"] });
     assertEquals([r.code, r.stdout], [70, ""], r.stderr);
     const trap = JSON.parse(r.stderr);
-    assertEquals([trap.trap, trap.definition], ["effect", `std.fs.${name}`]);
+    assertEquals([trap.trap, trap.definition], ["effect", fn]);
     assert_(trap.message.includes(`\`${effect}\``), trap.message);
     await Deno.remove(r.cwd, { recursive: true });
   }
@@ -301,4 +324,32 @@ Deno.test("io: a path the host guards is refused by the system with fs.read, a t
   const refused = await runIn(built, { effects: ["console"] });
   assertEquals([refused.code, JSON.parse(refused.stderr).trap], [70, "effect"]);
   for (const r of [allowed, refused]) await Deno.remove(r.cwd, { recursive: true });
+});
+
+Deno.test("io: a program reads its arguments and the lines of its console", async () => {
+  const built = await program(mainWith("input", "env, console", [
+    "std.console.print_line(text: std.text.show(value: std.env.args()))",
+    ...Array(6).fill("std.console.print_line(text: std.text.show(value: std.console.read_line()))"),
+    "return Unit",
+  ]));
+  // The arguments arrive unchanged, a `--` and an empty one included. A
+  // carriage return before the line feed goes too; an empty line is a line;
+  // a last line without a line break is one; then the input has ended.
+  const r = await runIn(built, { args: ["one", "two words", "--", "--flag", ""], stdin: "first\r\nsecond ä\n\nlast" });
+  assertEquals([r.code, r.stderr], [0, ""]);
+  assertEquals(r.stdout.split("\n"), [
+    '["one", "two words", "--", "--flag", ""]',
+    'Some("first")',
+    'Some("second ä")',
+    'Some("")',
+    'Some("last")',
+    "None",
+    "None",
+    "",
+  ]);
+  // Without input (`stdio: "piped"`), the console has ended at once; the
+  // arguments need no permission.
+  const bare = await runIn(built, { effects: ["console"] });
+  assertEquals([bare.code, bare.stdout, bare.stderr], [0, "[]\nNone\nNone\nNone\nNone\nNone\nNone\n", ""]);
+  for (const done of [r, bare]) await Deno.remove(done.cwd, { recursive: true });
 });

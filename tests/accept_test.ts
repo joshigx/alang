@@ -289,7 +289,15 @@ Deno.test("accept: values without a failing example print canonically too", () =
 // ---- the command line ----
 
 async function cli(...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  const out = await new Deno.Command(Deno.execPath(), {
+  return await cliFed(null, ...args);
+}
+
+// The command line with `stdin` as its console input (null: none).
+async function cliFed(
+  stdin: string | null,
+  ...args: string[]
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const child = new Deno.Command(Deno.execPath(), {
     args: [
       "run",
       "--allow-read",
@@ -298,9 +306,16 @@ async function cli(...args: string[]): Promise<{ code: number; stdout: string; s
       new URL("../src/cli.ts", import.meta.url).pathname,
       ...args,
     ],
+    stdin: stdin === null ? "null" : "piped",
     stdout: "piped",
     stderr: "piped",
-  }).output();
+  }).spawn();
+  if (stdin !== null) {
+    const writer = child.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(stdin));
+    await writer.close();
+  }
+  const out = await child.output();
   const text = (b: Uint8Array) => new TextDecoder().decode(b).trim();
   return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
 }
@@ -329,6 +344,44 @@ Deno.test("accept: check, ts, build and run refuse a program whose example fails
   assertEquals(await cli("check", file, "-o", `${OUT}failing.ts`), { code: 0, stdout: "ok", stderr: "" });
   const run = await cli("run", file, "-o", `${OUT}failing.ts`);
   assertEquals([run.code, run.stdout], [0, "Hello, world"], run.stderr);
+});
+
+const ECHO = `fn echo.main
+  doc: "Prints its arguments, then the first line of its console."
+  in: none
+  out: Unit
+  effects: env, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    std.console.print_line(text: std.text.show(value: std.env.args()))
+    std.console.print_line(text: std.text.show(value: std.console.read_line()))
+    return Unit
+end fn echo.main
+`;
+
+Deno.test("accept: alang run passes the words after -- and its console to the program", async () => {
+  await Deno.mkdir(OUT, { recursive: true });
+  const file = `${OUT}echo.alang`;
+  await Deno.writeTextFile(file, ECHO);
+  const out = `${OUT}echo.ts`;
+  assertEquals(await cli("run", file, "-o", out, "--", "a", "b c", "--x", "--"), {
+    code: 0,
+    stdout: '["a", "b c", "--x", "--"]\nNone',
+    stderr: "",
+  });
+  assertEquals((await cli("run", file, "--")).stdout, "[]\nNone");
+  assertEquals((await cliFed("typed line\nnext\n", "run", file, "-o", out)).stdout, '[]\nSome("typed line")');
+  // Program words before `--` are refused, as is `--` for another command.
+  for (const args of [[file, "a"], [file, "-o", out, "a"], [file, "-o"]]) {
+    const r = await cli("run", ...args);
+    assertEquals([r.code, r.stdout], [2, ""], args.join(" "));
+    assert_(r.stderr.includes("alang run <file> [-o out] [-- <args>...]"), r.stderr);
+  }
+  assert_((await cli("run", file, "a")).stderr.includes("arguments for the program go after `--`"));
+  const check = await cli("check", file, "--", "a");
+  assertEquals([check.code, check.stdout], [2, ""]);
 });
 
 Deno.test("accept: every file in examples/ is canonical and accepted", async () => {
