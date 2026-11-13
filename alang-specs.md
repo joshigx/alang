@@ -464,7 +464,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | Not available | Instead |
 | --- | --- |
 | `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
-| Functions on `Map` | A `List` of records |
+| Functions on `Map` | A `List` of records. To count or group without a Map, sort with `std.list.sort` and count the runs of equal neighbours, comparing each item with the one before it |
 | Float functions beyond `std.float.floor` (rounding, square root, parsing), padding and repeating text, character codes | A helper function of your own, with recursion and `std.string.concat`; character codes have no replacement yet |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
