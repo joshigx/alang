@@ -811,10 +811,10 @@ Section 6 in practice. `alang mcp` offers the queries and operations as tools fo
 
 | Query | Result |
 | --- | --- |
-| `list(module)` | The module's definitions (name, hash, kind, doc) and submodules; without a module, the codebase's top level; `std` for the library |
-| `search(text)` | Definitions whose name or `doc` contains the text, std included |
+| `list(module)` | The module's definitions (name, hash, kind, doc, and for a function its `signature` on one line, such as `fn std.string.split(text: String, separator: String): List<String>, effects: none`) and submodules; without a module, the codebase's top level; `std` for the library |
+| `search(text)` | Definitions whose name or `doc` contains the text, std included, shown as `list` shows them |
 | `search_type(pattern)` | Functions by signature, such as `String -> Option<Int>`, `Int, Int -> Bool`, or `-> Unit` for none. `_` matches any type; `Port` matches by last segment. The parameter count and the result type must match exactly, so `String -> Int` does not find `std.int.parse` |
-| `context(name)` | The text and hash, and the signatures of everything it uses (std as one line or as alang text). Read this before a change |
+| `context(name)` | The text and hash, and the signatures of everything it uses (std as one line or as alang text). Read this before a change. To call a std function, its `signature` in a hit is enough; `context` of it adds the types it mentions |
 | `definition(name)`, `signature(name)` | The text, or every section but `body` |
 | `callers(name)` | The definitions that use it |
 | `history(name)` | Every version with time and operation (`add`, `replace`, `remove`, `rename`, `follow`, `import`) |

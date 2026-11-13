@@ -212,7 +212,13 @@ end fn app.port`;
   const newHash = (renamed.json.written as { name: string; hash: string }[])
     .find((w) => w.name === "app.default_port")!.hash;
   assertEquals((await call(server, "search", { text: "without a config" })).json as unknown, [
-    { name: "app.default_port", hash: newHash, kind: "fn", doc: "The port used without a config." },
+    {
+      name: "app.default_port",
+      hash: newHash,
+      kind: "fn",
+      signature: "fn app.default_port(): Result<net.port.Port, net.port.ParseError>, effects: none",
+      doc: "The port used without a config.",
+    },
   ]);
   const byType = (await call(server, "search_type", { pattern: "-> Result<Port, _>" })).json as unknown as {
     name: string;
@@ -412,6 +418,8 @@ Deno.test("mcp: the instructions name the card first, then the spec, in both era
     assert_(instructions.length - spec.length < 3_000, `${instructions.length} characters`);
     // The rest of the instructions follows unchanged.
     for (const kept of ["context(name)", "E0501", "E0506", "E0513"]) assert_(instructions.includes(kept), kept);
+    // Hits carry the signature, so std needs no context call per function.
+    assert_(instructions.includes("comes with its signature (parameters, result, effects) and doc"));
   }
   await done(cb);
 });

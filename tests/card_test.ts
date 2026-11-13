@@ -119,13 +119,16 @@ Deno.test("card: the tool calls it shows find what it says", async () => {
   ) assert_(CARD.includes(shown), shown);
   const std = await call("list", { module: "std" }) as { submodules: string[] };
   assert_(std.submodules.includes("std.string"));
+  // Each function hit holds its signature (parameters, result, effects) and its doc.
+  const split = "fn std.string.split(text: String, separator: String): List<String>, effects: none";
   const module = await call("list", { module: "std.string" }) as { definitions: { name: string; doc: string }[] };
   assert_(module.definitions.some((d) => d.name === "std.string.split" && d.doc !== ""));
-  assert_(names(await call("search", { text: "split" })).includes("std.string.split"));
+  const hits = [module.definitions, await call("search", { text: "split" })] as { name: string; signature: string }[][];
+  for (const found of hits) assertEquals(found.find((h) => h.name === "std.string.split")?.signature, split);
   assertEquals(names(await call("search_type", { pattern: "String, String -> List<String>" })), [
     "std.string.split",
   ]);
-  // A std name: its signature, effects and doc, and the types it mentions.
+  // A std name: its signature line with the doc, and the types it mentions.
   const context = await call("context", { name: "std.fs.read_text" }) as { text: string; uses: unknown };
   assert_(context.text.startsWith("fn std.fs.read_text(path: String): Result<String, std.fs.Error>, effects: fs.read"));
   assert_(context.text.includes("doc: "));

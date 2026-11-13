@@ -61,6 +61,12 @@ Deno.test("db cli: submit, query, a stale guard, export and import", async () =>
     ]),
   );
   assertEquals((await alang(dir, "submit", changes)).code, 0);
+  // A function's entry in list shows its signature as it is now.
+  const listed = (await alang(dir, "list", "net.port")).json as { definitions: { name: string; signature?: string }[] };
+  assertEquals(
+    listed.definitions.find((d) => d.name === "net.port.parse")?.signature,
+    "fn net.port.parse(source: String): Result<net.port.Port, net.port.ParseError>, effects: none",
+  );
 
   // The old hash is stale now.
   const stale = await alang(dir, "remove", "net.port.parse", hash);

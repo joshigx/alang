@@ -698,12 +698,18 @@ export const STD: readonly Signature[] = [
 
 export const STD_BY_NAME: ReadonlyMap<string, Signature> = new Map(STD.map((s) => [s.name, s]));
 
-// A std function on one line, for queries (`context`, `search`). Not alang
-// syntax: std signatures have type parameters and function types, which the
-// surface language cannot write yet.
+// A std function on one line, for queries (`context`, `search_type`). Not
+// alang syntax: std signatures have type parameters and function types, which
+// the surface language cannot write yet.
 export function signatureLine(s: Signature): string {
+  return `${signatureHead(s)}, doc: ${printString(s.doc)}`;
+}
+
+// The same line without the doc, which a hit of `list` and `search` carries
+// beside its own `doc` field.
+export function signatureHead(s: Signature): string {
   const typeParams = s.typeParams.length === 0 ? "" : `<${s.typeParams.join(", ")}>`;
   const params = s.params.map((p) => `${p.name}: ${showType(p.type)}`).join(", ");
   const effects = s.effects.length === 0 ? "none" : s.effects.join(", ");
-  return `fn ${s.name}${typeParams}(${params}): ${showType(s.out)}, effects: ${effects}, doc: ${printString(s.doc)}`;
+  return `fn ${s.name}${typeParams}(${params}): ${showType(s.out)}, effects: ${effects}`;
 }

@@ -9,9 +9,9 @@ import { checkProgram } from "../src/check.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import { casesOf } from "../src/interface.ts";
 import { parseProgram } from "../src/parser.ts";
-import { printDefinition, printSignature } from "../src/printer.ts";
+import { printDefinition, printSignature, printString } from "../src/printer.ts";
 import { dependencies } from "../src/refs.ts";
-import { signatureLine, STD_BY_NAME, STD_TYPES } from "../src/std.ts";
+import { signatureLine, STD, STD_BY_NAME, STD_TYPES } from "../src/std.ts";
 
 function throwsCode(f: () => unknown, code: string): AlangError {
   try {
@@ -165,6 +165,19 @@ Deno.test("queries: list gives a module's definitions and submodules", async () 
     kind: "type",
     doc: "A valid TCP port number.",
   });
+  // A function also shows its signature, types in full: search_type's line up
+  // to the doc.
+  assertEquals(l.definitions[2], {
+    name: "net.port.parse",
+    hash: hashOf(cb, "net.port.parse"),
+    kind: "fn",
+    signature: "fn net.port.parse(text: String): Result<net.port.Port, net.port.ParseError>, effects: none",
+    doc: "Reads a TCP port number from decimal text.",
+  });
+  assertEquals(
+    `${l.definitions[2].signature}, doc: ${printString(l.definitions[2].doc)}`,
+    cb.searchType("String -> Result<Port, ParseError>")[0].line,
+  );
   assertEquals(l.submodules, []);
   assertEquals(cb.list("net"), { module: "net", definitions: [], submodules: ["net.port"] });
   assertEquals(cb.list("").submodules, ["config", "net"]);
@@ -222,6 +235,19 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
     ["std.http.ServeError", "type", null],
     ["std.http.serve", "fn", null],
   ]);
+  // Every std function's hit shows its signature: the line of context and
+  // search_type without the doc, which the hit has as a field of its own.
+  // Types show none.
+  const stdHits = cb.searchText("");
+  for (const s of STD) {
+    const hit = stdHits.find((h) => h.name === s.name)!;
+    assertEquals(`${hit.signature}, doc: ${printString(hit.doc)}`, signatureLine(s));
+  }
+  for (const t of STD_TYPES) assert_(!("signature" in stdHits.find((h) => h.name === pathText(t.path))!));
+  assertEquals(
+    cb.list("std.option").definitions.find((d) => d.name === "std.option.with_default")!.signature,
+    "fn std.option.with_default<T>(option: Option<T>, default: T): T, effects: none",
+  );
   assertEquals(cb.list("").submodules, ["config", "net"]);
   // Misspelled std names and modules get a fix.
   assertEquals(throwsCode(() => cb.context("std.http.Requst"), "E0502").diagnostic.fix, {
@@ -256,6 +282,12 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
     ["std.fs.write_text", true],
   ]);
   assertEquals(cb.searchText("no such words"), []);
+  // Hits look as in list; the signature is shown, not searched.
+  assertEquals(
+    cb.searchText("decimal text").find((h) => h.name === "net.port.parse"),
+    cb.list("net.port").definitions[2],
+  );
+  assertEquals(cb.searchText("effects: none"), []);
   await done(cb);
 });
 

@@ -16,7 +16,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Definition, Effect } from "./ast.ts";
+import type { Definition, Effect, FnDef } from "./ast.ts";
 import { moduleOf, pathText } from "./ast.ts";
 import { checkProgram, type CheckResult, closest } from "./check.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
@@ -25,7 +25,7 @@ import { parseProgram } from "./parser.ts";
 import { printDefinition, printSignature, printString } from "./printer.ts";
 import { dependencies, mapReferences, type Ref, shortenOwnNames } from "./refs.ts";
 import { matchesFn, namedTypes, parseFnPattern, showTree, treeOfRef, treeOfType, type TypeTree } from "./search.ts";
-import { signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
+import { signatureHead, signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
 import { acceptDefinitions, type Accepted, findMain, run as runBuilt, type RunOptions } from "./toolchain.ts";
 import { BUILTIN_TYPES, type Type } from "./types.ts";
 
@@ -129,11 +129,15 @@ export interface Used {
   readonly text: string;
 }
 
-// An entry of `list` and `search`; std entries have no hash.
+// An entry of `list` and `search`; std entries have no hash. A function's
+// entry carries its signature on one line without the doc (`fn name(params):
+// Out, effects: ...`, the line `search_type` gives up to its doc), so that a
+// listing shows how to call each function without a `context` call per name.
 export interface Hit {
   readonly name: string;
   readonly hash: string | null;
   readonly kind: "fn" | "type";
+  readonly signature?: string;
   readonly doc: string;
 }
 
@@ -257,6 +261,23 @@ function signatureTypes(def: Definition): TypeTree[] {
   return def.shape.cases.flatMap((c) => (c.payload ? [treeOfRef(c.payload, module)] : []));
 }
 
+// A stored function's signature on one line without the doc, its types in
+// full (as a caller outside its module writes them): the stored counterpart
+// of `signatureHead`.
+function storedHead(name: string, def: FnDef): string {
+  const module = def.path.slice(0, -1);
+  const params = def.params.map((q) => `${q.name}: ${showTree(treeOfRef(q.type, module))}`).join(", ");
+  const effects = def.effects.length === 0 ? "none" : def.effects.join(", ");
+  return `fn ${name}(${params}): ${showTree(treeOfRef(def.out, module))}, effects: ${effects}`;
+}
+
+// The `list` and `search` entry of a stored definition.
+function storedHit(r: Stored): Hit {
+  return r.def.kind === "fn"
+    ? { name: r.name, hash: r.hash, kind: "fn", signature: storedHead(r.name, r.def), doc: r.def.doc }
+    : { name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc };
+}
+
 // ---- the standard library in queries ----
 //
 // std is not stored in the database: its entries come from std.ts and have no
@@ -267,7 +288,7 @@ const byName = (a: { name: string }, b: { name: string }) => (a.name < b.name ? 
 const STD_TYPE_BY_NAME: ReadonlyMap<string, Definition> = new Map(STD_TYPES.map((d) => [pathText(d.path), d]));
 
 const STD_HITS: readonly Hit[] = [
-  ...STD.map((s): Hit => ({ name: s.name, hash: null, kind: "fn", doc: s.doc })),
+  ...STD.map((s): Hit => ({ name: s.name, hash: null, kind: "fn", signature: signatureHead(s), doc: s.doc })),
   ...STD_TYPES.map((d): Hit => ({ name: pathText(d.path), hash: null, kind: "type", doc: d.doc })),
 ].sort(byName);
 
@@ -544,18 +565,18 @@ export class Codebase {
     return owner ? pathText(owner.path) : null;
   }
 
-  // The definitions of `module` itself (name, hash, kind, doc) and the names
-  // of its direct submodules. `list("")` gives the top-level modules of the
-  // codebase (std not among them), and works on an empty codebase too;
-  // `list("std")` and below list the standard library. Any other unknown
-  // module is E0502.
+  // The definitions of `module` itself (name, hash, kind, a function's
+  // signature, doc; see `Hit`) and the names of its direct submodules.
+  // `list("")` gives the top-level modules of the codebase (std not among
+  // them), and works on an empty codebase too; `list("std")` and below list
+  // the standard library. Any other unknown module is E0502.
   list(module: string): { module: string; definitions: Hit[]; submodules: string[] } {
     const prefix = module === "" ? "" : `${module}.`;
     const definitions: Hit[] = [];
     const submodules = new Set<string>();
     const entries = module === "std" || module.startsWith("std.")
       ? STD_HITS.filter((h) => h.name.startsWith(prefix))
-      : this.rowsUnder(prefix).map((r): Hit => ({ name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc }));
+      : this.rowsUnder(prefix).map(storedHit);
     for (const e of entries) {
       const rest = e.name.slice(prefix.length);
       if (rest.includes(".")) submodules.add(prefix + rest.slice(0, rest.indexOf(".")));
@@ -580,12 +601,12 @@ export class Codebase {
   }
 
   // Definitions and std entries whose name or `doc` contains `text`, ignoring
-  // case, sorted by name.
+  // case, sorted by name; the signature is shown, not searched.
   searchText(text: string): Hit[] {
     const needle = text.toLowerCase();
     const hit = (h: Hit) => h.name.toLowerCase().includes(needle) || h.doc.toLowerCase().includes(needle);
     return [
-      ...this.rowsUnder("").map((r): Hit => ({ name: r.name, hash: r.hash, kind: r.kind, doc: r.def.doc })),
+      ...this.rowsUnder("").map(storedHit),
       ...STD_HITS,
     ].filter(hit).sort(byName);
   }
@@ -599,16 +620,8 @@ export class Codebase {
     for (const r of this.rowsUnder("")) {
       if (r.def.kind !== "fn") continue;
       const module = r.def.path.slice(0, -1);
-      const params = r.def.params.map((q) => treeOfRef(q.type, module));
-      const out = treeOfRef(r.def.out, module);
-      if (!matchesFn(p, params, out)) continue;
-      const effects = r.def.effects.length === 0 ? "none" : r.def.effects.join(", ");
-      const shown = r.def.params.map((q, i) => `${q.name}: ${showTree(params[i])}`).join(", ");
-      found.push({
-        name: r.name,
-        hash: r.hash,
-        line: `fn ${r.name}(${shown}): ${showTree(out)}, effects: ${effects}, doc: ${printString(r.def.doc)}`,
-      });
+      if (!matchesFn(p, r.def.params.map((q) => treeOfRef(q.type, module)), treeOfRef(r.def.out, module))) continue;
+      found.push({ name: r.name, hash: r.hash, line: `${storedHead(r.name, r.def)}, doc: ${printString(r.def.doc)}` });
     }
     for (const s of STD) {
       if (!matchesFn(p, s.params.map((q) => treeOfType(q.type)), treeOfType(s.out))) continue;
