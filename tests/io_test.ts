@@ -3,7 +3,8 @@
 // processes, for the program's input and the permission traps.
 
 import { join } from "node:path";
-import { assert_, assertEquals } from "./assert.ts";
+import { assert_, assertEquals, assertThrows } from "./assert.ts";
+import { IO_ARGS, IO_ENV, IO_PROGRAM, IO_STDERR, IO_STDIN, IO_STDOUT } from "./io_program.ts";
 import {
   Err,
   None,
@@ -18,9 +19,14 @@ import {
   std$fs$read_text,
   std$fs$remove,
   std$fs$write_text,
+  std$random$int,
+  std$string$join,
+  std$string$split,
+  std$time$now_milliseconds,
+  Trap,
   Unit,
 } from "../src/runtime.ts";
-import { accept, type Built, run, type RunOptions } from "../src/toolchain.ts";
+import { accept, type Built, run, type RunOptions, writeEntry } from "../src/toolchain.ts";
 
 const OUT = new URL("../out/test/io/", import.meta.url).pathname;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -218,6 +224,45 @@ Deno.test("io: env.get reads a variable; None if it is not set or cannot exist",
   }
 });
 
+Deno.test("io: split is the inverse of join", () => {
+  assertEquals(std$string$split("a,b,,c", ","), ["a", "b", "", "c"]);
+  assertEquals(std$string$split("", ","), [""]);
+  assertEquals(std$string$split(",", ","), ["", ""]);
+  assertEquals(std$string$split("abc", ","), ["abc"]);
+  assertEquals(std$string$split("a::b::", "::"), ["a", "b", ""]);
+  assertEquals(std$string$split("ä😀ä", "😀"), ["ä", "ä"]);
+  for (const text of ["a,b,,c", "", ",", "abc", "line\n"]) {
+    assertEquals(std$string$join(std$string$split(text, ","), ","), text);
+  }
+  const trap = assertThrows(() => std$string$split("abc", ""), Trap);
+  assertEquals([trap.kind, trap.definition], ["requires", "std.string.split"]);
+});
+
+Deno.test("io: random.int draws from low to high, both included", () => {
+  const seen = new Set<number>();
+  for (let i = 0; i < 1000; i++) {
+    const n = std$random$int(3, 7);
+    assert_(Number.isSafeInteger(n) && 3 <= n && n <= 7, String(n));
+    seen.add(n);
+  }
+  assertEquals([...seen].sort(), [3, 4, 5, 6, 7]);
+  assertEquals(std$random$int(-4, -4), -4);
+  const reversed = assertThrows(() => std$random$int(2, 1), Trap);
+  assertEquals([reversed.kind, reversed.definition], ["requires", "std.random.int"]);
+  // More values than an Int can count.
+  const wide = assertThrows(() => std$random$int(-Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER), Trap);
+  assertEquals([wide.kind, wide.definition], ["overflow", "std.random.int"]);
+  const widest = std$random$int(0, Number.MAX_SAFE_INTEGER - 1);
+  assert_(Number.isSafeInteger(widest) && widest >= 0, String(widest));
+});
+
+Deno.test("io: now_milliseconds is the clock's time", () => {
+  const before = Date.now();
+  const now = std$time$now_milliseconds();
+  const after = Date.now();
+  assert_(Number.isSafeInteger(now) && before <= now && now <= after, `${before} ${now} ${after}`);
+});
+
 // ---- programs: input and the permissions of main's effects ----
 
 // A `main` in module `name` with the given body.
@@ -353,3 +398,43 @@ Deno.test("io: a program reads its arguments and the lines of its console", asyn
   assertEquals([bare.code, bare.stdout, bare.stderr], [0, "[]\nNone\nNone\nNone\nNone\nNone\nNone\n", ""]);
   for (const done of [r, bare]) await Deno.remove(done.cwd, { recursive: true });
 });
+
+async function hasNode(): Promise<boolean> {
+  const node = await new Deno.Command("node", { args: ["--version"], stdout: "null", stderr: "null" }).output()
+    .catch(() => null);
+  return node?.success ?? false;
+}
+
+// The same program gives the same output on both hosts: runtime neutrality.
+for (const host of ["deno", "node"] as const) {
+  Deno.test(`io: files, arguments, environment, console and log alike on every host (${host})`, async () => {
+    if (host === "node" && !(await hasNode())) return;
+    const built = await program(IO_PROGRAM);
+    const cwd = await Deno.makeTempDir({ prefix: "alang-io-host-" });
+    for (const [name, value] of Object.entries(IO_ENV)) Deno.env.set(name, value);
+    try {
+      let out: Deno.CommandOutput;
+      if (host === "deno") {
+        out = await run(built, { stdio: "piped", cwd, args: IO_ARGS, stdin: IO_STDIN });
+      } else {
+        const child = new Deno.Command("node", {
+          args: [await writeEntry(built), ...IO_ARGS],
+          cwd,
+          stdin: "piped",
+          stdout: "piped",
+          stderr: "piped",
+        }).spawn();
+        const writer = child.stdin.getWriter();
+        await writer.write(new TextEncoder().encode(IO_STDIN));
+        await writer.close();
+        out = await child.output();
+      }
+      assertEquals([out.code, decode(out.stdout), decode(out.stderr)], [0, IO_STDOUT, IO_STDERR]);
+      // What the program left behind.
+      assertEquals((await Array.fromAsync(Deno.readDir(cwd))).map((e) => e.name), ["work"]);
+    } finally {
+      for (const name of Object.keys(IO_ENV)) Deno.env.delete(name);
+      await Deno.remove(cwd, { recursive: true });
+    }
+  });
+}

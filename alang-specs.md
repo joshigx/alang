@@ -556,6 +556,9 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | `std.fs.create_directory(path: String): Result<Unit, std.fs.Error>` | fs.write | Creates a directory and its missing parents; `Ok` if it already exists. |
 | `std.fs.remove(path: String): Result<Unit, std.fs.Error>` | fs.write | Removes a file or an empty directory. |
 | `std.http.serve(host: String, port: Int, handler: (std.http.Request) -> std.http.Response with effects): Result<Unit, std.http.ServeError>` | net | Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them. |
+| `std.log.print_line(text: String): Unit` | log | Writes a line to the log, which is the standard error stream. |
+| `std.random.int(low: Int, high: Int): Int` | random | A random integer from `low` to `high`, both included; traps if `low > high`. Not for secrets. |
+| `std.time.now_milliseconds(): Int` | time | The clock's time in milliseconds since 1970-01-01T00:00:00Z. |
 | `std.int.parse(text: String): Option<Int>` | none | Reads a decimal integer; `None` if the text is not one. |
 | `std.int.to_float(value: Int): Float` | none | The same number as a Float. |
 | `std.int.compare(left: Int, right: Int): Order` | none | Orders two integers. |
@@ -564,6 +567,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `A`) are bound fr
 | `std.string.length(text: String): Int` | none | Number of Unicode scalar values. |
 | `std.string.concat(left: String, right: String): String` | none | The two texts joined. |
 | `std.string.join(parts: List<String>, separator: String): String` | none | The parts joined with the separator between them; `""` for no parts. |
+| `std.string.split(text: String, separator: String): List<String>` | none | The parts of the text between the separators; `std.string.join` with the same separator gives the text back. An empty separator traps. |
 | `std.string.compare(left: String, right: String): Order` | none | Orders two texts by Unicode scalar values. |
 | `std.list.empty<T>(): List<T>` | none | The empty list. |
 | `std.list.append<T>(list: List<T>, item: T): List<T>` | none | The list with the item added at the end. |

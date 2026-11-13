@@ -196,6 +196,31 @@ export const STD: readonly Signature[] = [
     ["net"],
   ),
 
+  sig(
+    "std.log.print_line",
+    "Writes a line to the log, which is the standard error stream.",
+    [],
+    [["text", STRING]],
+    UNIT,
+    ["log"],
+  ),
+  sig(
+    "std.random.int",
+    "A random integer from `low` to `high`, both included; traps if `low > high`. Not for secrets.",
+    [],
+    [["low", INT], ["high", INT]],
+    INT,
+    ["random"],
+  ),
+  sig(
+    "std.time.now_milliseconds",
+    "The clock's time in milliseconds since 1970-01-01T00:00:00Z.",
+    [],
+    [],
+    INT,
+    ["time"],
+  ),
+
   sig("std.int.parse", "Reads a decimal integer; `None` if the text is not one.", [], [["text", STRING]], option(INT)),
   sig("std.int.to_float", "The same number as a Float.", [], [["value", INT]], FLOAT),
   sig("std.int.compare", "Orders two integers.", [], [["left", INT], ["right", INT]], ORDER),
@@ -218,6 +243,13 @@ export const STD: readonly Signature[] = [
     ["parts", list(STRING)],
     ["separator", STRING],
   ], STRING),
+  sig(
+    "std.string.split",
+    "The parts of the text between the separators; `std.string.join` with the same separator gives the text back. An empty separator traps.",
+    [],
+    [["text", STRING], ["separator", STRING]],
+    list(STRING),
+  ),
   sig("std.string.compare", "Orders two texts by Unicode scalar values.", [], [["left", STRING], [
     "right",
     STRING,

@@ -206,8 +206,11 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
     "std.http",
     "std.int",
     "std.list",
+    "std.log",
+    "std.random",
     "std.string",
     "std.text",
+    "std.time",
   ]);
   assertEquals(cb.list("std.http").definitions.map((d) => [d.name, d.kind, d.hash]), [
     ["std.http.Header", "type", null],
@@ -276,7 +279,12 @@ Deno.test("queries: search(type) matches signatures by pattern", async () => {
   assertEquals(names("List<Int>, Int -> List<Int>"), ["std.list.append"]);
   assertEquals(names("List<Int>, String -> List<Int>"), []);
   assertEquals(names("List<String>, _ -> List<Int>"), ["std.list.map"]);
-  assertEquals(names("-> _"), ["std.console.read_line", "std.env.args", "std.list.empty"]);
+  assertEquals(names("-> _"), [
+    "std.console.read_line",
+    "std.env.args",
+    "std.list.empty",
+    "std.time.now_milliseconds",
+  ]);
   assertEquals(cb.searchType("String -> Result<_, ParseError>")[0], {
     name: "net.port.parse",
     hash: hashOf(cb, "net.port.parse"),

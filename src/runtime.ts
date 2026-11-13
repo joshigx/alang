@@ -833,6 +833,31 @@ export async function std$http$serve(
   return Ok(Unit);
 }
 
+// ---- std.log, std.random, std.time ----
+
+// The log is stderr on every host; the console (print_line) is stdout.
+export function std$log$print_line(text: string): Unit {
+  console.error(text);
+  return Unit;
+}
+
+// Uniform over low..high, both included, as long as the count of values is
+// an Int. Math.random is not for secrets, and says so in the doc.
+export function std$random$int(low: number, high: number): number {
+  if (low > high) {
+    trap("requires", "std.random.int", "low <= high", "Precondition of std.random.int violated: low <= high");
+  }
+  const count = high - low + 1;
+  if (!Number.isSafeInteger(count)) {
+    trap("overflow", "std.random.int", `${low} to ${high}`, "More values from low to high than an Int can count.");
+  }
+  return low + Math.min(count - 1, Math.floor(Math.random() * count));
+}
+
+export function std$time$now_milliseconds(): number {
+  return Date.now();
+}
+
 export function std$int$parse(text: string): Option<number> {
   if (!/^-?[0-9]+$/.test(text)) return None;
   const n = Number(text);
@@ -870,6 +895,19 @@ export function std$string$concat(left: string, right: string): string {
 
 export function std$string$join(parts: readonly string[], separator: string): string {
   return parts.join(separator);
+}
+
+// The inverse of join: join(split(t, s), s) == t for every text.
+export function std$string$split(text: string, separator: string): readonly string[] {
+  if (separator === "") {
+    trap(
+      "requires",
+      "std.string.split",
+      'separator != ""',
+      'Precondition of std.string.split violated: separator != ""',
+    );
+  }
+  return text.split(separator);
 }
 
 export function std$string$compare(left: string, right: string): Order {

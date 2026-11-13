@@ -593,20 +593,28 @@ Deno.test("effects: a caller declares the effects of its callees (2.1)", () => {
   assertEquals(partial.fix, { replace: "effects: console", with: "effects: fs.read, console" });
 });
 
-// Every std function with an effect, as a statement that binds its result.
+// Every std function with an effect but std.http.serve (tested below), as a
+// statement that binds its result.
 const EFFECTFUL: [string, string][] = [
+  ['std.console.print_line(text: "x")', "console"],
   ["let r: Option<String> = std.console.read_line()", "console"],
   ["let r: List<String> = std.env.args()", "env"],
   ['let r: Option<String> = std.env.get(name: "HOME")', "env"],
+  ['let r: Result<String, std.fs.Error> = std.fs.read_text(path: "x")', "fs.read"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.write_text(path: "x", text: "y")', "fs.write"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.append_text(path: "x", text: "y")', "fs.write"],
   ['let r: Result<List<String>, std.fs.Error> = std.fs.list_directory(path: "x")', "fs.read"],
   ['let r: Result<std.fs.Kind, std.fs.Error> = std.fs.kind(path: "x")', "fs.read"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.create_directory(path: "x")', "fs.write"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.remove(path: "x")', "fs.write"],
+  ['std.log.print_line(text: "x")', "log"],
+  ["let r: Int = std.random.int(low: 1, high: 6)", "random"],
+  ["let r: Int = std.time.now_milliseconds()", "time"],
 ];
 
 Deno.test("effects: each std function with an effect needs it on the caller (2.1)", () => {
+  const effectful = STD.filter((s) => s.effects.length > 0 && s.name !== "std.http.serve").map((s) => s.name);
+  assertEquals(EFFECTFUL.map(([call]) => effectful.find((name) => call.includes(`${name}(`))), effectful);
   for (const [call, effect] of EFFECTFUL) {
     assertEquals(one(fn(call + "\nreturn 0"), "E0230").fix?.with, `effects: ${effect}`, call);
     clean(fn(call + "\nreturn 0", { effects: effect }));

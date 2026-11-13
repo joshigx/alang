@@ -2,6 +2,7 @@
 // The spec programs come straight from alang-specs.md.
 
 import { assert_, assertEquals, assertThrows } from "./assert.ts";
+import { IO_PROGRAM } from "./io_program.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import { Trap } from "../src/runtime.ts";
 import { build, type Built, compile, permissionsFor, run, testExamples, writeEntry } from "../src/toolchain.ts";
@@ -460,6 +461,7 @@ const PROGRAMS: Record<string, string> = {
   app: APP,
   steps: STEPS,
   kinds: KINDS,
+  io: IO_PROGRAM,
 };
 
 const built: Record<string, Built> = {};
@@ -475,6 +477,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
     await writeEntry(built.hello),
     await writeEntry(built.app),
     await writeEntry(built.steps, "steps.main"),
+    await writeEntry(built.io),
   ];
   const files = [...Object.values(built).map((b) => b.outPath), ...entries];
   const result = await new Deno.Command(Deno.execPath(), { args: ["check", ...files], stderr: "piped" }).output();
@@ -545,6 +548,7 @@ Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(BLOCKS)), BLOCKS.trimStart());
   assertEquals(printProgram(parseProgram(STEPS)), STEPS.trimStart());
   assertEquals(printProgram(parseProgram(KINDS)), KINDS.trimStart());
+  assertEquals(printProgram(parseProgram(IO_PROGRAM)), IO_PROGRAM);
 });
 
 Deno.test("emit: Int overflow traps", async () => {
