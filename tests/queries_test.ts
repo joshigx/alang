@@ -207,6 +207,7 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
     "std.int",
     "std.list",
     "std.log",
+    "std.map",
     "std.random",
     "std.string",
     "std.text",
@@ -295,6 +296,7 @@ Deno.test("queries: search(type) matches signatures by pattern", async () => {
     "std.console.read_line",
     "std.env.args",
     "std.list.empty",
+    "std.map.empty",
     "std.time.now_milliseconds",
   ]);
   assertEquals(cb.searchType("String -> Result<_, ParseError>")[0], {

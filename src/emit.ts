@@ -175,7 +175,7 @@ class DefinitionEmitter {
             // Not `readonly T[]`: `readonly readonly number[][]` is not TypeScript.
             return `ReadonlyArray<${args[0]}>`;
           case "Map":
-            return `ReadonlyMap<${args.join(", ")}>`;
+            return `${RT}.SortedMap<${args.join(", ")}>`;
           case "Option":
           case "Result":
             return `${RT}.${t.name}<${args.join(", ")}>`;
@@ -207,7 +207,7 @@ class DefinitionEmitter {
         case "List":
           return `ReadonlyArray<${args[0]}>`;
         case "Map":
-          return `ReadonlyMap<${args.join(", ")}>`;
+          return `${RT}.SortedMap<${args.join(", ")}>`;
         case "Option":
         case "Result":
           return `${RT}.${t.path[0]}<${args.join(", ")}>`;

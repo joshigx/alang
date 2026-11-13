@@ -8,6 +8,7 @@ import { AlangError, type Diagnostic } from "../src/diagnostic.ts";
 import { showValue } from "../src/examples.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
+import { std$map$empty, std$map$insert } from "../src/runtime.ts";
 import { accept, build, testExamples } from "../src/toolchain.ts";
 import { con, FLOAT, INT, list, option, ORDER, STRING, UNIT } from "../src/types.ts";
 
@@ -283,8 +284,9 @@ Deno.test("accept: values without a failing example print canonically too", () =
   assertEquals(showValue([], list(FLOAT), shapes, "m"), "std.list.empty<Float>()");
   assertEquals(showValue([[1, 2], []], list(list(INT)), shapes, "m"), "[[1, 2], std.list.empty<Int>()]");
   assertEquals(showValue(["a"], list(STRING), shapes, "m"), '["a"]');
-  // Maps have no constructor in std yet; they fall back to std.text.show.
-  assertEquals(showValue(new Map([[1, 2]]), con("Map", INT, INT), shapes, "m"), "{1: 2}");
+  // Maps have no literal yet; they fall back to std.text.show.
+  const map = std$map$insert(std$map$empty<number, number>(), 1, 2);
+  assertEquals(showValue(map, con("Map", INT, INT), shapes, "m"), "[1: 2]");
 });
 
 // ---- the command line ----

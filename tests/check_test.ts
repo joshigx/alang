@@ -600,6 +600,68 @@ Deno.test("check: std.list.contains and std.text.show need a type without functi
   clean(fn('return std.text.show(value: ["a"])', { out: "String" }));
 });
 
+// ---- maps ----
+
+const keyMessage = (found: string) =>
+  `Map keys are \`Int\` or \`String\`, found \`${found}\`; key the map by an \`Int\` or \`String\` field, or keep a \`List\` of records.`;
+
+Deno.test("check: map keys are Int or String, wherever the type arises (E0229)", () => {
+  // A written type.
+  const written = one(fn("return 0", { params: ["m: Map<Float, Int>"] }), "E0229");
+  assertEquals([written.at, written.message, written.expected, written.fix], [
+    "Map<Float, Int>",
+    keyMessage("Float"),
+    "Int or String",
+    null,
+  ]);
+  // Type arguments of a std call, a type nested in one, and a key type bound from an argument.
+  const sites: [string, Parameters<typeof fn>[1], string, string][] = [
+    [
+      "return std.map.size(map: std.map.empty<Point, Int>())",
+      { extra: POINT },
+      "std.map.empty<Point, Int>()",
+      "Point",
+    ],
+    ["return std.list.length(list: std.list.empty<Map<Bool, Int>>())", {}, "Map<Bool, Int>", "Bool"],
+    [
+      "return std.map.size(map: std.map.from_list(list: [1.5], key: fn(x: Float): Float => x, value: fn(x: Float): Int => 1))",
+      {},
+      "std.map.from_list(list: [1.5], key: fn(x: Float): Float => x, value: fn(x: Float): Int => 1)",
+      "Float",
+    ],
+  ];
+  for (const [body, o, at, found] of sites) {
+    const d = one(fn(body, o), "E0229");
+    assertEquals([d.at, d.message], [at, keyMessage(found)]);
+  }
+  // One cause, one report (5.6): the call that builds the declared type is not reported again.
+  const once = one(fn("let m: Map<Point, Int> = std.map.empty<Point, Int>()\nreturn 0", { extra: POINT }), "E0229");
+  assertEquals(once.at, "Map<Point, Int>");
+  // An argument that failed binds nothing, so the result's key type stays open: no E0229.
+  one(fn("let m: Map<String, Int> = std.map.insert(map: nope, key: nope, value: 1)\nreturn 0"), "E0203");
+});
+
+Deno.test("check: maps through the std functions", () => {
+  clean(fn(
+    'let m: Map<String, Int> = std.map.insert(map: std.map.empty<String, Int>(), key: "a", value: 1)\n' +
+      'let n: Int = std.map.get(map: m, key: "a") else return 0\n' +
+      "let words: List<String> = std.map.to_list(map: m, with: fn(k: String, v: Int): String => k)\n" +
+      "return n + std.list.length(list: words)",
+  ));
+  clean(fn(
+    "let m: Map<Int, List<Point>> = std.map.insert(map: std.map.empty<Int, List<Point>>(), key: 1, value: [Point(x: 1, y: 2)])\n" +
+      "let points: List<Point> = std.map.get(map: m, key: 1) else return 0\n" +
+      "let all: List<List<Point>> = std.map.to_list(map: m, with: fn(k: Int, v: List<Point>): List<Point> => v)\n" +
+      "return std.list.length(list: points) + std.list.length(list: all)",
+    { extra: POINT },
+  ));
+  // The expected type names the type arguments of the empty map.
+  const source = fn("let m: Map<String, Int> = std.map.empty()\nreturn std.map.size(map: m)");
+  const d = one(source, "E0209");
+  assertEquals(d.fix, { replace: "std.map.empty()", with: "std.map.empty<String, Int>()" });
+  clean(source.replace(d.at, d.at.replace(d.fix!.replace, d.fix!.with)));
+});
+
 // ---- contracts and examples ----
 
 Deno.test("check: contracts see the right names", () => {

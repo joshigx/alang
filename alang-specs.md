@@ -546,7 +546,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 ### 7.8 Standard library
 
-This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`) are bound from the arguments. A type such as `(T) -> U` is a function parameter; pass a lambda or a function name (7.5). `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
+This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) are bound from the arguments. A type such as `(T) -> U` is a function parameter; pass a lambda or a function name (7.5). `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
 
 | Function | Effects | Meaning |
 | --- | --- | --- |
@@ -593,7 +593,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`) are bou
 | `std.string.replace(text: String, part: String, with: String): String` | none | The text with every occurrence of the part replaced, found from left to right without overlap. An empty part traps. |
 | `std.string.to_upper(text: String): String` | none | The text in upper case by Unicode's rules, the same on every system. |
 | `std.string.to_lower(text: String): String` | none | The text in lower case by Unicode's rules, the same on every system. |
-| `std.list.empty<T>(): List<T>` | none | The empty list. |
+| `std.list.empty<T>(): List<T>` | none | The empty list. A list with items is written as a literal, such as `[1, 2, 3]`. |
 | `std.list.append<T>(list: List<T>, item: T): List<T>` | none | The list with the item added at the end; copies the list, so appending item by item in a loop is quadratic. |
 | `std.list.length<T>(list: List<T>): Int` | none | Number of items. |
 | `std.list.get<T>(list: List<T>, index: Int): Option<T>` | none | The item at the index, counting from 0; `None` outside the list. |
@@ -613,6 +613,16 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`) are bou
 | `std.list.window<T>(list: List<T>, size: Int): List<List<T>>` | none | Every run of `size` neighbouring items, from first to last; empty if the list is shorter. A size below 1 traps. |
 | `std.list.zip<T, U, V>(left: List<T>, right: List<U>, with: (T, U) -> V): List<V>` | none | Combines the items of two lists pair by pair with the function. Lists of different lengths trap. |
 | `std.list.enumerate<T, U>(list: List<T>, with: (Int, T) -> U): List<U>` | none | Applies the function to the index of every item, counting from 0, and the item. |
+| `std.map.empty<K, V>(): Map<K, V>` | none | The empty map. A map with entries is written as a literal of `key: value` pairs, such as `[1: 10, 2: 20]`; keys are Int or String. |
+| `std.map.insert<K, V>(map: Map<K, V>, key: K, value: V): Map<K, V>` | none | The map with `key` bound to `value`, replacing an earlier value of `key`. Takes time logarithmic in the size of the map, so counting or grouping item by item in `std.list.fold` is fine. |
+| `std.map.get<K, V>(map: Map<K, V>, key: K): Option<V>` | none | Looks up the value of `key`; `None` if the map has no such key. |
+| `std.map.remove<K, V>(map: Map<K, V>, key: K): Map<K, V>` | none | The map without `key`; the same map if it has no such key. |
+| `std.map.contains<K, V>(map: Map<K, V>, key: K): Bool` | none | Whether the map has `key`. |
+| `std.map.size<K, V>(map: Map<K, V>): Int` | none | Number of keys. |
+| `std.map.keys<K, V>(map: Map<K, V>): List<K>` | none | The keys in ascending order: Int keys by value, String keys as `std.string.compare` orders them. |
+| `std.map.values<K, V>(map: Map<K, V>): List<V>` | none | The values, in the order of their keys. |
+| `std.map.from_list<T, K, V>(list: List<T>, key: (T) -> K, value: (T) -> V): Map<K, V>` | none | A map with an entry for every item, its key and value computed by the two functions. Two items with the same key trap; to keep the last or combine them, use `std.list.fold` with `std.map.insert`. |
+| `std.map.to_list<K, V, T>(map: Map<K, V>, with: (K, V) -> T): List<T>` | none | Applies the function to every key and its value, in the order of the keys. |
 | `std.text.show<T>(value: T): String` | none | Text representation of any value without functions. |
 
 The std types, written in alang:

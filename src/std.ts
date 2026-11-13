@@ -12,6 +12,7 @@ import {
   fnType,
   INT,
   list,
+  map,
   option,
   ORDER,
   result,
@@ -106,6 +107,7 @@ const T = tvar("T");
 const U = tvar("U");
 const V = tvar("V");
 const A = tvar("A");
+const K = tvar("K");
 
 function sig(
   name: string,
@@ -383,7 +385,13 @@ export const STD: readonly Signature[] = [
     STRING,
   ),
 
-  sig("std.list.empty", "The empty list.", ["T"], [], list(T)),
+  sig(
+    "std.list.empty",
+    "The empty list. A list with items is written as a literal, such as `[1, 2, 3]`.",
+    ["T"],
+    [],
+    list(T),
+  ),
   sig(
     "std.list.append",
     "The list with the item added at the end; copies the list, so appending item by item in a loop is quadratic.",
@@ -481,6 +489,59 @@ export const STD: readonly Signature[] = [
     ["T", "U"],
     [["list", list(T)], ["with", fnType([INT, T], U)]],
     list(U),
+  ),
+
+  sig(
+    "std.map.empty",
+    "The empty map. A map with entries is written as a literal of `key: value` pairs, such as `[1: 10, 2: 20]`; keys are Int or String.",
+    ["K", "V"],
+    [],
+    map(K, V),
+  ),
+  sig(
+    "std.map.insert",
+    "The map with `key` bound to `value`, replacing an earlier value of `key`. Takes time logarithmic in the size of the map, so counting or grouping item by item in `std.list.fold` is fine.",
+    ["K", "V"],
+    [["map", map(K, V)], ["key", K], ["value", V]],
+    map(K, V),
+  ),
+  sig(
+    "std.map.get",
+    "Looks up the value of `key`; `None` if the map has no such key.",
+    ["K", "V"],
+    [["map", map(K, V)], ["key", K]],
+    option(V),
+  ),
+  sig(
+    "std.map.remove",
+    "The map without `key`; the same map if it has no such key.",
+    ["K", "V"],
+    [["map", map(K, V)], ["key", K]],
+    map(K, V),
+  ),
+  sig("std.map.contains", "Whether the map has `key`.", ["K", "V"], [["map", map(K, V)], ["key", K]], BOOL),
+  sig("std.map.size", "Number of keys.", ["K", "V"], [["map", map(K, V)]], INT),
+  sig(
+    "std.map.keys",
+    "The keys in ascending order: Int keys by value, String keys as `std.string.compare` orders them.",
+    ["K", "V"],
+    [["map", map(K, V)]],
+    list(K),
+  ),
+  sig("std.map.values", "The values, in the order of their keys.", ["K", "V"], [["map", map(K, V)]], list(V)),
+  sig(
+    "std.map.from_list",
+    "A map with an entry for every item, its key and value computed by the two functions. Two items with the same key trap; to keep the last or combine them, use `std.list.fold` with `std.map.insert`.",
+    ["T", "K", "V"],
+    [["list", list(T)], ["key", fnType([T], K)], ["value", fnType([T], V)]],
+    map(K, V),
+  ),
+  sig(
+    "std.map.to_list",
+    "Applies the function to every key and its value, in the order of the keys.",
+    ["K", "V", "T"],
+    [["map", map(K, V)], ["with", fnType([K, V], T)]],
+    list(T),
   ),
 
   sig("std.text.show", "Text representation of any value without functions.", ["T"], [["value", T]], STRING, [], [

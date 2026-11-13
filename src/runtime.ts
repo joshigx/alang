@@ -29,6 +29,131 @@ export const Less = { tag: "Less" } as const;
 export const Equal = { tag: "Equal" } as const;
 export const Greater = { tag: "Greater" } as const;
 
+// A Map is a persistent AVL tree ordered by its keys, which are Int or
+// String (the checker's E0229). The order is an invariant of the value, so
+// equal maps walk, show and compare alike, whatever order built them.
+// `insert` and `remove` copy only the path to the key: O(log n). Data only,
+// without methods, so that TypeScript treats `SortedMap<K, Some<number>>`
+// as a `SortedMap<K, Option<number>>`; fields declared, not parameter
+// properties, for Node.js's type stripping.
+
+type MapNode<K, V> = {
+  readonly key: K;
+  readonly value: V;
+  readonly left: MapNode<K, V> | null;
+  readonly right: MapNode<K, V> | null;
+  readonly height: number;
+};
+
+export class SortedMap<K, V> {
+  readonly root: MapNode<K, V> | null;
+  readonly size: number;
+  constructor(root: MapNode<K, V> | null, size: number) {
+    this.root = root;
+    this.size = size;
+  }
+}
+
+// Int keys by value, String keys by Unicode scalar values (`str_compare`),
+// never with `<` on strings, which compares UTF-16 units.
+function keyOrder(a: unknown, b: unknown): number {
+  if (typeof a === "string") return str_compare(a, b as string);
+  return (a as number) < (b as number) ? -1 : (a as number) > (b as number) ? 1 : 0;
+}
+
+function heightOf<K, V>(n: MapNode<K, V> | null): number {
+  return n === null ? 0 : n.height;
+}
+
+function mapNode<K, V>(key: K, value: V, left: MapNode<K, V> | null, right: MapNode<K, V> | null): MapNode<K, V> {
+  return { key, value, left, right, height: Math.max(heightOf(left), heightOf(right)) + 1 };
+}
+
+// A node whose subtrees differ in height by at most 2, rebalanced by a
+// single or double rotation.
+function balance<K, V>(key: K, value: V, left: MapNode<K, V> | null, right: MapNode<K, V> | null): MapNode<K, V> {
+  const hl = heightOf(left);
+  const hr = heightOf(right);
+  if (hl > hr + 1) {
+    const l = left!;
+    if (heightOf(l.left) >= heightOf(l.right)) {
+      return mapNode(l.key, l.value, l.left, mapNode(key, value, l.right, right));
+    }
+    const lr = l.right!;
+    return mapNode(lr.key, lr.value, mapNode(l.key, l.value, l.left, lr.left), mapNode(key, value, lr.right, right));
+  }
+  if (hr > hl + 1) {
+    const r = right!;
+    if (heightOf(r.right) >= heightOf(r.left)) {
+      return mapNode(r.key, r.value, mapNode(key, value, left, r.left), r.right);
+    }
+    const rl = r.left!;
+    return mapNode(rl.key, rl.value, mapNode(key, value, left, rl.left), mapNode(r.key, r.value, rl.right, r.right));
+  }
+  return mapNode(key, value, left, right);
+}
+
+// The tree with `key` bound to `value`, and whether the key was there.
+function put<K, V>(n: MapNode<K, V> | null, key: K, value: V): [MapNode<K, V>, boolean] {
+  if (n === null) return [mapNode(key, value, null, null), false];
+  const c = keyOrder(key, n.key);
+  if (c === 0) return [mapNode(n.key, value, n.left, n.right), true];
+  if (c < 0) {
+    const [left, existed] = put(n.left, key, value);
+    return [balance(n.key, n.value, left, n.right), existed];
+  }
+  const [right, existed] = put(n.right, key, value);
+  return [balance(n.key, n.value, n.left, right), existed];
+}
+
+// The tree without `key`, and whether it was there; the same tree if not.
+function del<K, V>(n: MapNode<K, V> | null, key: K): [MapNode<K, V> | null, boolean] {
+  if (n === null) return [null, false];
+  const c = keyOrder(key, n.key);
+  if (c < 0) {
+    const [left, removed] = del(n.left, key);
+    return removed ? [balance(n.key, n.value, left, n.right), true] : [n, false];
+  }
+  if (c > 0) {
+    const [right, removed] = del(n.right, key);
+    return removed ? [balance(n.key, n.value, n.left, right), true] : [n, false];
+  }
+  if (n.left === null) return [n.right, true];
+  if (n.right === null) return [n.left, true];
+  // Two children: the smallest key of the right subtree takes the place.
+  let min = n.right;
+  while (min.left !== null) min = min.left;
+  const [right] = del(n.right, min.key);
+  return [balance(min.key, min.value, n.left, right), true];
+}
+
+function lookup<K, V>(m: SortedMap<K, V>, key: K): MapNode<K, V> | null {
+  let n = m.root;
+  while (n !== null) {
+    const c = keyOrder(key, n.key);
+    if (c === 0) return n;
+    n = c < 0 ? n.left : n.right;
+  }
+  return null;
+}
+
+// The entries in key order, walked with an explicit stack.
+export function map_entries<K, V>(m: SortedMap<K, V>): (readonly [K, V])[] {
+  const entries: (readonly [K, V])[] = [];
+  const stack: MapNode<K, V>[] = [];
+  let n = m.root;
+  while (n !== null || stack.length > 0) {
+    while (n !== null) {
+      stack.push(n);
+      n = n.left;
+    }
+    const top = stack.pop()!;
+    entries.push([top.key, top.value]);
+    n = top.right;
+  }
+  return entries;
+}
+
 // ---- traps ----
 
 // A trap ends the program with a diagnostic and cannot be caught by alang code.
@@ -71,12 +196,12 @@ export function eq(a: unknown, b: unknown): boolean {
     if (!Array.isArray(b) || a.length !== b.length) return false;
     return a.every((x, i) => eq(x, b[i]));
   }
-  if (a instanceof Map) {
-    if (!(b instanceof Map) || a.size !== b.size) return false;
-    for (const [k, v] of a) {
-      if (!b.has(k) || !eq(v, b.get(k))) return false;
-    }
-    return true;
+  // Before the record branch: equal maps may differ in the shape of their trees.
+  if (a instanceof SortedMap) {
+    if (!(b instanceof SortedMap) || a.size !== b.size) return false;
+    const ea = map_entries(a);
+    const eb = map_entries(b);
+    return ea.every(([k, v], i) => k === eb[i][0] && eq(v, eb[i][1]));
   }
   const ka = Object.keys(a);
   const kb = Object.keys(b);
@@ -1151,6 +1276,70 @@ export function std$list$enumerate<T, U>(list: readonly T[], fn: (index: number,
   return list.map((x, i) => fn(i, x));
 }
 
+// ---- std.map ----
+// On the AVL tree of `SortedMap` (top of this file).
+
+export function std$map$empty<K, V>(): SortedMap<K, V> {
+  return new SortedMap<K, V>(null, 0);
+}
+
+export function std$map$insert<K, V>(map: SortedMap<K, V>, key: K, value: V): SortedMap<K, V> {
+  const [root, existed] = put(map.root, key, value);
+  return new SortedMap(root, existed ? map.size : map.size + 1);
+}
+
+export function std$map$get<K, V>(map: SortedMap<K, V>, key: K): Option<V> {
+  const n = lookup(map, key);
+  return n === null ? None : Some(n.value);
+}
+
+// A missing key gives the same map back.
+export function std$map$remove<K, V>(map: SortedMap<K, V>, key: K): SortedMap<K, V> {
+  const [root, removed] = del(map.root, key);
+  return removed ? new SortedMap(root, map.size - 1) : map;
+}
+
+export function std$map$contains<K, V>(map: SortedMap<K, V>, key: K): boolean {
+  return lookup(map, key) !== null;
+}
+
+export function std$map$size<K, V>(map: SortedMap<K, V>): number {
+  return map.size;
+}
+
+export function std$map$keys<K, V>(map: SortedMap<K, V>): readonly K[] {
+  return map_entries(map).map(([k]) => k);
+}
+
+export function std$map$values<K, V>(map: SortedMap<K, V>): readonly V[] {
+  return map_entries(map).map(([, v]) => v);
+}
+
+// Item by item: the key, then the value, then the insert. A key that is
+// there already traps, as a duplicate in a literal does.
+export function std$map$from_list<T, K, V>(
+  list: readonly T[],
+  key: (item: T) => K,
+  value: (item: T) => V,
+): SortedMap<K, V> {
+  let root: MapNode<K, V> | null = null;
+  for (const item of list) {
+    const k = key(item);
+    const v = value(item);
+    const [next, existed]: [MapNode<K, V>, boolean] = put(root, k, v);
+    if (existed) {
+      const shown = std$text$show(k);
+      trap("key", "std.map.from_list", shown, `The key ${shown} appears twice in the list given to std.map.from_list.`);
+    }
+    root = next;
+  }
+  return new SortedMap(root, list.length);
+}
+
+export function std$map$to_list<K, V, T>(map: SortedMap<K, V>, fn: (key: K, value: V) => T): readonly T[] {
+  return map_entries(map).map(([k, v]) => fn(k, v));
+}
+
 // Text representation (rule 3.9). Records have no runtime type name yet, so
 // they show as their fields in parentheses.
 export function std$text$show(value: unknown): string {
@@ -1158,8 +1347,10 @@ export function std$text$show(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return `[${value.map(std$text$show).join(", ")}]`;
-  if (value instanceof Map) {
-    return `{${[...value].map(([k, v]) => `${std$text$show(k)}: ${std$text$show(v)}`).join(", ")}}`;
+  // In key order, as the literal is written; before the record branch.
+  if (value instanceof SortedMap) {
+    if (value.size === 0) return "[:]";
+    return `[${map_entries(value).map(([k, v]) => `${std$text$show(k)}: ${std$text$show(v)}`).join(", ")}]`;
   }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;

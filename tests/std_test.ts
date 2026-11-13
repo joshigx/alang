@@ -375,3 +375,233 @@ Deno.test("std.list: zip and enumerate apply the function pair by pair", () => {
   assertEquals(rt.std$list$enumerate(["a", "b"], (i: number, s: string) => `${i}${s}`), ["0a", "1b"]);
   assertEquals(rt.std$list$enumerate([], (i: number, s: string) => `${i}${s}`), []);
 });
+
+// ---- std.map ----
+
+// A node of the tree, as the test inspects it.
+type Node = { key: unknown; value: unknown; left: Node | null; right: Node | null; height: number };
+
+// Order by Unicode scalar values, computed here without the runtime.
+function scalarOrder(a: string, b: string): number {
+  const xs = Array.from(a, (c) => c.codePointAt(0)!);
+  const ys = Array.from(b, (c) => c.codePointAt(0)!);
+  for (let i = 0; i < Math.min(xs.length, ys.length); i++) if (xs[i] !== ys[i]) return xs[i] - ys[i];
+  return xs.length - ys.length;
+}
+
+// Balance, order and the stored heights of every node; returns the height.
+function checkTree(n: Node | null, order: (a: unknown, b: unknown) => number, low?: unknown, high?: unknown): number {
+  if (n === null) return 0;
+  if (low !== undefined) assert_(order(low, n.key) < 0, `order at ${String(n.key)}`);
+  if (high !== undefined) assert_(order(n.key, high) < 0, `order at ${String(n.key)}`);
+  const hl = checkTree(n.left, order, low, n.key);
+  const hr = checkTree(n.right, order, n.key, high);
+  assert_(Math.abs(hl - hr) <= 1, `balance at ${String(n.key)}`);
+  assertEquals(n.height, Math.max(hl, hr) + 1, `height at ${String(n.key)}`);
+  return n.height;
+}
+
+// A seeded linear congruential generator, so that every run is the same.
+function lcg(seed: number): (below: number) => number {
+  let state = seed;
+  return (below) => {
+    state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
+    return state % below;
+  };
+}
+
+function againstReference<K>(keys: readonly K[], order: (a: K, b: K) => number, seed: number): void {
+  const random = lcg(seed);
+  let m = rt.std$map$empty<K, number>();
+  const reference = new Map<K, number>();
+  const snapshots: [rt.SortedMap<K, number>, [K, number][]][] = [];
+  for (let step = 1; step <= 3000; step++) {
+    const key = keys[random(keys.length)];
+    if (random(3) === 0) {
+      m = rt.std$map$remove(m, key);
+      reference.delete(key);
+    } else {
+      m = rt.std$map$insert(m, key, step);
+      reference.set(key, step);
+    }
+    const expected = [...reference.entries()].sort(([a], [b]) => order(a, b));
+    assertEquals(rt.std$map$size(m), reference.size);
+    assertEquals(rt.std$map$keys(m), expected.map(([k]) => k));
+    const probe = keys[random(keys.length)];
+    assertEquals(rt.std$map$get(m, probe), reference.has(probe) ? rt.Some(reference.get(probe)!) : rt.None);
+    if (step % 100 === 0) checkTree(m.root as Node | null, order as (a: unknown, b: unknown) => number);
+    if (step % 500 === 0) snapshots.push([m, expected]);
+  }
+  // Earlier maps are values: later inserts and removes left them unchanged.
+  for (const [snapshot, entries] of snapshots) assertEquals(rt.map_entries(snapshot), entries);
+}
+
+Deno.test("std.map: the tree agrees with a sorted reference and stays balanced", () => {
+  againstReference(rt.std$list$range(0, 199), (a, b) => a - b, 7);
+  const alphabet = ["a", "b", "B", "é", "😀", "\u{FFFF}", "z"];
+  const generated = alphabet.flatMap((x) => ["", ...alphabet].map((y) => x + y));
+  againstReference(["a", "B", "é", "😀", "\u{FFFF}", "", ...generated], scalarOrder, 11);
+});
+
+const counts = (entries: [string, number][]) =>
+  entries.reduce((m, [k, v]) => rt.std$map$insert(m, k, v), rt.std$map$empty<string, number>());
+
+Deno.test("std.map: insert, get, remove, contains, size, keys, values, to_list, from_list", () => {
+  const m = counts([["b", 2], ["a", 1], ["c", 3]]);
+  // Replacing a key keeps the size; the old map stays as it was.
+  const replaced = rt.std$map$insert(m, "a", 10);
+  assertEquals([rt.std$map$size(replaced), rt.std$map$get(replaced, "a"), rt.std$map$get(m, "a")], [
+    3,
+    rt.Some(10),
+    rt.Some(1),
+  ]);
+  assertEquals(rt.std$map$get(m, "d"), rt.None);
+  // A missing key gives the same map back.
+  assert_(rt.std$map$remove(m, "d") === m);
+  const removed = rt.std$map$remove(m, "b");
+  assertEquals([rt.std$map$size(removed), rt.std$map$keys(removed), rt.std$map$size(m)], [2, ["a", "c"], 3]);
+  assertEquals([rt.std$map$contains(m, "c"), rt.std$map$contains(removed, "b")], [true, false]);
+  assertEquals([rt.std$map$size(rt.std$map$empty()), rt.std$map$keys(rt.std$map$empty())], [0, []]);
+  assertEquals([rt.std$map$keys(m), rt.std$map$values(m)], [["a", "b", "c"], [1, 2, 3]]);
+  assertEquals(rt.std$map$to_list(m, (k: string, v: number) => `${k}${v}`), ["a1", "b2", "c3"]);
+  // Int keys by value, String keys by scalar values: U+FFFF before 😀,
+  // which UTF-16 order would put first.
+  const ints = rt.std$map$from_list([10, -1, 2], (n: number) => n, (n: number) => n * 2);
+  assertEquals([rt.std$map$keys(ints), rt.std$map$values(ints)], [[-1, 2, 10], [-2, 4, 20]]);
+  assertEquals(rt.std$map$keys(counts([["😀", 1], ["\u{FFFF}", 2], ["", 3]])), ["", "\u{FFFF}", "😀"]);
+  const words = rt.std$map$from_list(["bb", "a"], (w: string) => w, (w: string) => w.length);
+  assertEquals([rt.std$map$size(words), rt.map_entries(words)], [2, [["a", 1], ["bb", 2]]]);
+  assertEquals(rt.std$map$size(rt.std$map$from_list([], (n: number) => n, (n: number) => n)), 0);
+  assertEquals(trapOf(() => rt.std$map$from_list(["a", "b", "a"], (w: string) => w, (w: string) => w)), [
+    "key",
+    "std.map.from_list",
+    '"a"',
+  ]);
+  const trap = assertThrows(() => rt.std$map$from_list([1, 1], (n: number) => n, (n: number) => n), rt.Trap);
+  assertEquals(trap.message, "The key 1 appears twice in the list given to std.map.from_list.");
+});
+
+Deno.test("std.map: equal maps compare and show alike, in key order", () => {
+  const forward = counts([["a", 1], ["b", 2], ["c", 3], ["d", 4]]);
+  const backward = counts([["d", 4], ["c", 3], ["b", 2], ["a", 1]]);
+  // Different trees, the same value.
+  assert_(JSON.stringify(forward.root) !== JSON.stringify(backward.root));
+  assert_(rt.eq(forward, backward));
+  assert_(!rt.eq(forward, rt.std$map$insert(backward, "a", 0)));
+  assert_(!rt.eq(forward, rt.std$map$remove(backward, "a")));
+  assert_(!rt.eq(forward, [1]) && !rt.eq(rt.std$map$empty(), {}));
+  assert_(rt.eq(rt.Some(rt.std$map$empty()), rt.Some(rt.std$map$empty())));
+  assertEquals(rt.std$text$show(counts([["b", 2], ["a", 1]])), '["a": 1, "b": 2]');
+  assertEquals(rt.std$text$show(rt.std$map$empty()), "[:]");
+  const nested = rt.std$map$insert(rt.std$map$empty<string, readonly number[]>(), "a", [1]);
+  assertEquals(rt.std$text$show([nested]), '[["a": [1]]]');
+  assertEquals(rt.std$text$show(rt.std$map$insert(rt.std$map$empty<number, string>(), -1, "x")), '[-1: "x"]');
+});
+
+// One alang program whose examples call every function added with maps,
+// accepted and then held against the runtime's TypeScript, as PROGRAM is.
+const MAPS_PROGRAM = `fn maps.bump
+  doc: "The map with the count of the word raised by one."
+  in:
+    seen: Map<String, Int>
+    word: String
+  out: Map<String, Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    bump(seen: std.map.empty<String, Int>(), word: "a") == std.map.insert(map: std.map.empty<String, Int>(), key: "a", value: 1)
+  body:
+    let count: Int = match std.map.get(map: seen, key: word)
+      case Some(n) then
+        n
+      case None then
+        0
+    end match
+    return std.map.insert(map: seen, key: word, value: count + 1)
+end fn maps.bump
+
+fn maps.counts
+  doc: "How often each word occurs."
+  in:
+    words: List<String>
+  out: Map<String, Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    counts(words: ["b", "a", "b"]) == std.map.insert(map: std.map.insert(map: std.map.empty<String, Int>(), key: "a", value: 1), key: "b", value: 2)
+    counts(words: std.list.empty<String>()) == std.map.empty<String, Int>()
+  body:
+    return std.list.fold(list: words, initial: std.map.empty<String, Int>(), with: bump)
+end fn maps.counts
+
+fn maps.listed
+  doc: "The words in key order, their counts, and both as rows."
+  in:
+    words: List<String>
+  out: List<List<String>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    listed(words: ["b", "a", "b"]) == [["a", "b"], ["1", "2"], ["a=1", "b=2"]]
+  body:
+    let seen: Map<String, Int> = counts(words: words)
+    let numbers: List<String> = std.list.map(list: std.map.values(map: seen), with: fn(n: Int): String => std.text.show(value: n))
+    let rows: List<String> = std.map.to_list(map: seen, with: fn(word: String, n: Int): String => std.string.join(parts: [word, std.text.show(value: n)], separator: "="))
+    return [std.map.keys(map: seen), numbers, rows]
+end fn maps.listed
+
+fn maps.facts
+  doc: "Whether the word was seen and how many words differ, before and after removing it."
+  in:
+    words: List<String>
+    word: String
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    facts(words: ["b", "a", "b"], word: "b") == [1, 2, 0, 1]
+    facts(words: ["a"], word: "c") == [0, 1, 0, 1]
+  body:
+    let seen: Map<String, Int> = counts(words: words)
+    let rest: Map<String, Int> = std.map.remove(map: seen, key: word)
+    let before: Int = if std.map.contains(map: seen, key: word) then
+      1
+    else
+      0
+    end if
+    let after: Int = if std.map.contains(map: rest, key: word) then
+      1
+    else
+      0
+    end if
+    return [before, std.map.size(map: seen), after, std.map.size(map: rest)]
+end fn maps.facts
+
+fn maps.by_length
+  doc: "The words by their length."
+  in:
+    words: List<String>
+  out: Map<Int, String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    by_length(words: ["abc", "d"]) == std.map.insert(map: std.map.insert(map: std.map.empty<Int, String>(), key: 1, value: "d"), key: 3, value: "abc")
+  body:
+    return std.map.from_list(list: words, key: fn(word: String): Int => std.string.length(text: word), value: fn(word: String): String => word)
+end fn maps.by_length
+`;
+
+Deno.test("std: the map functions are accepted from alang, and their calls type-check", async () => {
+  assertEquals(printProgram(parseProgram(MAPS_PROGRAM)), MAPS_PROGRAM);
+  const out = new URL("../out/test/std/maps.ts", import.meta.url).pathname;
+  const { built, examples } = await accept(MAPS_PROGRAM, out);
+  assertEquals(examples.filter((e) => !e.passed), []);
+  assertEquals(examples.length, 7);
+  const checked = await new Deno.Command(Deno.execPath(), { args: ["check", built.outPath], stderr: "piped" }).output();
+  assert_(checked.success, new TextDecoder().decode(checked.stderr));
+});

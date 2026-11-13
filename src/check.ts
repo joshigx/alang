@@ -361,6 +361,10 @@ class DefChecker {
         );
         return ERROR;
       }
+      if (ref.path[0] === "Map" && !keyOk(args[0])) {
+        this.badKey(printTypeRef(ref), args[0]);
+        return ERROR;
+      }
       return con(ref.path[0], ...args);
     }
     const full = this.resolvePath(ref.path);
@@ -886,7 +890,31 @@ class DefChecker {
       this.report("E0222", at, `\`${this.written(full)}\` is defined for types without function values (3.9).`);
     }
     const out = substitute(sig.out, subst);
-    return freeVars(out).size === 0 ? out : ERROR;
+    if (freeVars(out).size !== 0) return ERROR;
+    // A std call builds a Map from its type arguments (`std.map.empty<Float,
+    // Int>()`) or binds its key type from an argument (`from_list`); user
+    // signatures were checked at their own types.
+    const key = sig.typeParams.length > 0 ? badMapKey(out) : null;
+    if (key !== null) {
+      // An expected type with an error was reported already, often at the
+      // same key type (`let m: Map<Point, Int> = std.map.empty<Point, Int>()`):
+      // one cause, one report (5.6).
+      if (expected === null || !containsError(expected)) this.badKey(at, key);
+      return ERROR;
+    }
+    return out;
+  }
+
+  // E0229: a Map keyed by a type other than Int or String.
+  private badKey(at: string, key: Type): void {
+    this.report(
+      "E0229",
+      at,
+      `Map keys are \`Int\` or \`String\`, found \`${
+        this.show(key)
+      }\`; key the map by an \`Int\` or \`String\` field, or keep a \`List\` of records.`,
+      { expected: "Int or String" },
+    );
   }
 
   private effectsOfCall(sig: FnSig, written: string, at: string): void {
@@ -1473,6 +1501,34 @@ function printPattern(p: Pattern, target?: Pattern, as?: string): string {
       return printExpr(p.value as Literal, "");
     case "case":
       return pathText(p.path) + (p.sub ? `(${printPattern(p.sub, target, as)})` : "");
+  }
+}
+
+// Map keys are Int or String (M1): the types JavaScript compares by value
+// and orders by itself, so key lookup agrees with `==` and every map has
+// one order. A type that already failed fits, so nothing follows from it.
+function keyOk(k: Type): boolean {
+  return isBottom(k) || containsError(k) || typeEquals(k, INT) || typeEquals(k, STRING);
+}
+
+// The key type of the first Map inside `t` whose key is not Int or String.
+function badMapKey(t: Type): Type | null {
+  switch (t.k) {
+    case "con":
+      if (t.name === "Map" && !keyOk(t.args[0])) return t.args[0];
+      for (const a of t.args) {
+        const bad = badMapKey(a);
+        if (bad) return bad;
+      }
+      return null;
+    case "fn":
+      for (const p of [...t.params, t.out]) {
+        const bad = badMapKey(p);
+        if (bad) return bad;
+      }
+      return null;
+    default:
+      return null;
   }
 }
 
