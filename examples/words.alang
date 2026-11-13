@@ -1,0 +1,111 @@
+type words.Row
+  doc: "A word and how often it occurs."
+  record:
+    word: String
+    count: Int
+  where: none
+end type words.Row
+
+fn words.line
+  doc: "One row of the report: the count in 6 columns, its share of all words in percent with one decimal in 5 columns, and the word."
+  in:
+    row: Row
+    total: Int
+  out: String
+  effects: none
+  requires: total > 0
+  ensures: none
+  examples:
+    line(row: Row(word: "the", count: 3), total: 8) == "     3   37.5%  the"
+    line(row: Row(word: "a", count: 1), total: 1) == "     1  100.0%  a"
+  body:
+    let share: Float = std.int.to_float(value: row.count) * 100.0 / std.int.to_float(value: total)
+    let count: String = std.string.pad_left(text: std.text.show(value: row.count), width: 6, fill: " ")
+    let percent: String = std.string.pad_left(text: std.float.to_fixed(value: share, decimals: 1), width: 5, fill: " ")
+    return std.string.join(parts: [count, "  ", percent, "%  ", row.word], separator: "")
+end fn words.line
+
+fn words.main
+  doc: "Prints the report on the file named by the first argument."
+  in: none
+  out: Result<Unit, String>
+  effects: fs.read, env, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let path: String = std.list.first(list: std.env.args()) else return Err("usage: words <file>")
+    let text: String = std.fs.read_text(path: path) else return Err(std.string.concat(left: "cannot read the file: ", right: std.text.show(value: error)))
+    for printed: String in report(text: text) do
+      std.console.print_line(text: printed)
+    end for
+    return Ok(Unit)
+end fn words.main
+
+fn words.report
+  doc: "The report on a text: how many words and how many different ones, then the three most frequent."
+  in:
+    text: String
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    report(text: "The cat saw the dog.\nThe dog ran!\n") == ["8 words, 5 different", "     3   37.5%  the", "     2   25.0%  dog", "     1   12.5%  cat"]
+    report(text: "") == ["0 words, 0 different"]
+  body:
+    let found: List<String> = split_words(text: text)
+    let counts: Map<String, Int> = tally(tokens: found)
+    let total: Int = std.list.length(list: found)
+    let head: String = std.string.join(parts: [std.text.show(value: total), " words, ", std.text.show(value: std.map.size(map: counts)), " different"], separator: "")
+    let rows: List<String> = std.list.map(list: top(counts: counts), with: fn(row: Row): String => line(row: row, total: total))
+    return std.list.concat(left: [head], right: rows)
+end fn words.report
+
+fn words.split_words
+  doc: "The words of a text in lower case, without the punctuation around them."
+  in:
+    text: String
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    split_words(text: "The cat, the \"dog\"!\nA  b") == ["the", "cat", "the", "dog", "a", "b"]
+    split_words(text: "") == std.list.empty<String>()
+  body:
+    let parts: List<List<String>> = std.list.map(list: std.string.lines(text: text), with: fn(line: String): List<String> => std.string.split(text: line, separator: " "))
+    let cleaned: List<String> = std.list.map(list: std.list.flatten(lists: parts), with: fn(part: String): String => std.string.to_lower(text: std.string.trim_characters(text: part, characters: ".,;:!?\"()")))
+    return std.list.filter(list: cleaned, with: fn(word: String): Bool => word != "")
+end fn words.split_words
+
+fn words.tally
+  doc: "How often each word occurs."
+  in:
+    tokens: List<String>
+  out: Map<String, Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    tally(tokens: ["b", "a", "b"]) == ["b": 2, "a": 1]
+    tally(tokens: std.list.empty<String>()) == std.map.empty<String, Int>()
+  body:
+    return std.list.fold(list: tokens, initial: std.map.empty<String, Int>(), with: fn(seen: Map<String, Int>, token: String): Map<String, Int> => std.map.insert(map: seen, key: token, value: std.option.with_default(option: std.map.get(map: seen, key: token), default: 0) + 1))
+end fn words.tally
+
+fn words.top
+  doc: "The three most frequent words with their counts, most first, and equal counts ordered by word."
+  in:
+    counts: Map<String, Int>
+  out: List<Row>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    top(counts: ["b": 1, "c": 2, "a": 1, "d": 1]) == [Row(word: "c", count: 2), Row(word: "a", count: 1), Row(word: "b", count: 1)]
+  body:
+    let rows: List<Row> = std.map.to_list(map: counts, with: fn(word: String, count: Int): Row => Row(word: word, count: count))
+    let sorted: List<Row> = std.list.sort(list: rows, by: fn(left: Row, right: Row): Order => std.order.then_by(first: std.int.compare(left: right.count, right: left.count), second: std.string.compare(left: left.word, right: right.word)))
+    return std.list.take(list: sorted, count: 3)
+end fn words.top

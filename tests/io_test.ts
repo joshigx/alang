@@ -513,3 +513,38 @@ Deno.test("io: examples/lines.alang sorts the lines of a file into another", asy
     await Deno.remove(cwd, { recursive: true });
   }
 });
+
+// The program the std-maps phase was built for: a Map counted in a fold,
+// sorting by two keys, padding and fixed decimals, alike on both hosts.
+for (const host of ["deno", "node"] as const) {
+  Deno.test(`io: examples/words.alang counts the words of a file (${host})`, async () => {
+    if (host === "node" && !(await hasNode())) return;
+    const source = await Deno.readTextFile(new URL("../examples/words.alang", import.meta.url));
+    const built = (await accept(source, `${OUT}words_${host}.ts`)).built;
+    const entry = await writeEntry(built);
+    const cwd = await Deno.makeTempDir({ prefix: "alang-io-words-" });
+    try {
+      await Deno.writeTextFile(join(cwd, "in.txt"), "The cat saw the dog.\nThe dog ran!\n");
+      const start = async (args: string[]) => {
+        const out = host === "deno" ? await run(built, { stdio: "piped", cwd, args }) : await new Deno.Command("node", {
+          args: [entry, ...args],
+          cwd,
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+        })
+          .output();
+        return [out.code, decode(out.stdout), decode(out.stderr)];
+      };
+      assertEquals(await start(["in.txt"]), [
+        0,
+        "8 words, 5 different\n     3   37.5%  the\n     2   25.0%  dog\n     1   12.5%  cat\n",
+        "",
+      ]);
+      assertEquals(await start([]), [1, "", "usage: words <file>\n"]);
+      assertEquals(await start(["missing.txt"]), [1, "", "cannot read the file: NotFound\n"]);
+    } finally {
+      await Deno.remove(cwd, { recursive: true });
+    }
+  });
+}
