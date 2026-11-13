@@ -568,6 +568,9 @@ Deno.test("check: the empty list is written std.list.empty<T>() (E0228)", () => 
   // Without an expected item type there is no fix.
   const bare = one(fn("return std.list.length(list: [])"), "E0228");
   assertEquals([bare.expected, bare.fix], ["std.list.empty<T>()", null]);
+  // Nor when the item type holds a function type, which a type argument cannot name.
+  const fns = one(fn("return std.list.length(list: std.list.concat(left: [g], right: []))", { extra: G }), "E0228");
+  assertEquals([fns.expected, fns.fix], ["std.list.empty<T>()", null]);
 });
 
 Deno.test("check: items of a list literal follow the usual rules", () => {

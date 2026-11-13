@@ -91,7 +91,7 @@ user (2026-11-12); async output makes it possible now. Reconnect the playground'
 is done; see "From the MCP server". Claude Code connected and used every kind of tool, so the protocol works with a
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
-parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max`. `extern fn` and `const` are still unparsed
+parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided.
 
 **Checks before every commit:** `deno task test` (246 tests; the task now allows `net`, for the server tests),
@@ -263,7 +263,7 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **Playground, task "clamp with swapped bounds".** Accepted, and the model rewrote the `ensures` for both orders
   without being told, dropped the `requires`, and mirrored the three examples with swapped bounds. It swapped by
   self-recursion: there is no reassignment, and std has no `std.int.min`/`max` (only `parse`, `to_float`,
-  `compare`), which would have made the body one line. Not exercised, but close: contracts are compared as printed,
+  `compare`), which would have made the body one line (they exist since item 15). Not exercised, but close: contracts are compared as printed,
   so dropping a `requires`, a pure loosening, would have pulled every caller into the transaction (E0506) had there
   been any. A proof of implication (5.2) would let loosened `requires` and tightened `ensures` pass.
 - **Playground, task "rename a type".** `ParseError` to `PortError` in one call; history as designed (`rename` with

@@ -701,7 +701,10 @@ Deno.test("emit: output runs on Node.js without Deno", async () => {
     `const read = r.tag === "Err" && r.value.tag === "InvalidPort";` +
     `const missing = (await fs.config$load_port("/does/not/exist")).value.value.tag === "NotFound";` +
     `const examples = rt.runExamples(m.$examples);` +
-    `process.exit(examples.length === 3 && examples.every((r) => r.passed) && read && missing ? 0 : 1);`;
+    // List literals carry `satisfies` and `as`, which Node.js strips like other types.
+    `const lists = rt.runExamples((await import(${JSON.stringify(`file://${built.lists.outPath}`)})).$examples);` +
+    `const listed = lists.length === 4 && lists.every((r) => r.passed);` +
+    `process.exit(examples.length === 3 && examples.every((r) => r.passed) && read && missing && listed ? 0 : 1);`;
   const result = await new Deno.Command("node", { args: ["--input-type=module", "-e", script], stderr: "piped" })
     .output();
   assert_(result.success, new TextDecoder().decode(result.stderr));
