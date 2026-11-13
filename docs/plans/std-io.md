@@ -304,22 +304,22 @@ File order then `main`, `run`, `sorted`.
 2. **One program on both hosts** (runtime neutrality). `io.main` has `effects: fs.read, fs.write, env, log, console`.
    Its body is one `std.console.print_line(text: std.text.show(value: <call>))` per call, in this order:
    `std.env.args()`; `create_directory("work/sub")` twice; `write_text("work/sub/a.txt", "first\n")`; `append_text` of
-   `"zweite ä"` to the same file; `read_text` of it; `write_text` of `"new"` to it; `read_text` of it;
+   `"second ä"` to the same file; `read_text` of it; `write_text` of `"new"` to it; `read_text` of it;
    `write_text("work/missing/a.txt", "x")`; `write_text("work/sub", "x")`; `append_text("work/b.txt", "b")`;
    `list_directory("work")`, `list_directory("work/missing")`; `kind` of `work/sub`, `work/b.txt`, `work/missing`;
    `remove("work/b.txt")` twice; `remove("work/sub/a.txt")`, `remove("work/sub")`; `list_directory("work")`;
    `env.get("ALANG_IO_TEST")`, `env.get("ALANG_IO_TEST_UNSET")`; `read_line()` three times. It ends with
    `std.log.print_line(text: "to the log")`. Run it in a fresh temp directory with args `one`, `two words`, `--flag`,
-   stdin `"eins\r\nzwei"` and `ALANG_IO_TEST=x y`: through `run(built, { stdio: "piped", cwd, args, stdin })`, and as
+   stdin `"first ä\r\nsecond"` and `ALANG_IO_TEST=x y`: through `run(built, { stdio: "piped", cwd, args, stdin })`, and as
    `node <entry> ...` with piped stdin (skipped without Node.js, like `hasNode` in `tests/http_test.ts`). Expected
-   stdout on both hosts (not executed yet):
+   stdout on both hosts (executed on Deno and Node.js; the fixture is `tests/io_program.ts`):
    ```
    ["one", "two words", "--flag"]
    Ok(Unit)
    Ok(Unit)
    Ok(Unit)
    Ok(Unit)
-   Ok("first\nzweite ä")
+   Ok("first\nsecond ä")
    Ok(Unit)
    Ok("new")
    Err(NotFound)
@@ -337,8 +337,8 @@ File order then `main`, `run`, `sorted`.
    Ok([])
    Some("x y")
    None
-   Some("eins")
-   Some("zwei")
+   Some("first ä")
+   Some("second")
    None
    ```
    Expected stderr: `to the log`.
