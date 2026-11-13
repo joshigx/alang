@@ -10,7 +10,7 @@ Read this first when picking up the work in a new session. Update it when a phas
 **Branches.** `main` holds everything below (2026-11-13: the user chose to merge; `spec` was fast-forwarded into
 `main`, which contains the whole chain `type-checker`, `effects`, `examples`, `database`, `mcp`, `async`, `spec`). The
 phase branches are kept as they are. Start each new phase on its own branch from `main`; pushing is the user's call.
-Files and program I/O (item 14) are on `std-io`, branched from `main`; merging is the user's call.
+Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed.
 
 **Done** (phases from CLAUDE.md, in order):
 
