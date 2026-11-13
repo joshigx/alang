@@ -402,6 +402,9 @@ class Parser {
       }
       this.expectSymbol(">");
     }
+    if (this.isSymbol("[")) {
+      this.fail("A list type is written `List<T>`.", { code: "E0006", expected: "List<T>" });
+    }
     return { kind: "type", path, args };
   }
 
@@ -509,12 +512,16 @@ class Parser {
     return left;
   }
 
-  // Field access on calls, constructs and parenthesized expressions.
+  // Field access on calls, constructs and parenthesized expressions. No
+  // valid text has `[` right after an expression, so it is index access.
   private postfix(): Expr {
     let e = this.primary();
     while (this.isSymbol(".") && e.kind !== "name") {
       this.next();
       e = { kind: "field", target: e, field: this.expectName() };
+    }
+    if (this.isSymbol("[")) {
+      this.fail("There is no index access; use `std.list.get(list: xs, index: i)` (4.6).", { code: "E0006" });
     }
     return e;
   }
@@ -561,6 +568,7 @@ class Parser {
       this.expectSymbol(")");
       return e;
     }
+    if (this.isSymbol("[")) return this.listExpr();
     if (this.isKeyword("if")) return this.ifExpr(false);
     if (this.isKeyword("match")) return this.matchExpr();
     if (this.isKeyword("for")) return this.forExpr();
@@ -609,6 +617,28 @@ class Parser {
     }
     this.pos = start;
     return null;
+  }
+
+  // `[a, b, c]`. Line breaks inside the brackets are ignored, as inside
+  // parentheses. `[]` parses, so that the checker can name the empty list's
+  // spelling with its item type (E0228).
+  private listExpr(): Expr {
+    this.expectSymbol("[");
+    this.skipNewlines();
+    const items: Expr[] = [];
+    if (!this.isSymbol("]")) {
+      items.push(this.expr());
+      this.skipNewlines();
+      while (this.isSymbol(",")) {
+        this.next();
+        this.skipNewlines();
+        if (this.isSymbol("]")) this.fail("A list ends after its last item; remove the comma before `]`.");
+        items.push(this.expr());
+        this.skipNewlines();
+      }
+    }
+    this.expectSymbol("]");
+    return { kind: "list", items };
   }
 
   private args(): Arg[] {

@@ -159,6 +159,8 @@ function rebuild(
           : { kind: "case", full: resolve(e.path) };
         return { kind: "construct", path: ref ? spell(e, e.path, ref) : e.path, payload: payload(e.payload) };
       }
+      case "list":
+        return { kind: "list", items: e.items.map(expr) };
       case "binary":
         return { kind: "binary", op: e.op, left: expr(e.left), right: expr(e.right) };
       case "not":

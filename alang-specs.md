@@ -221,7 +221,7 @@ let        = "let" name ":" type "=" expr [ "else" "return" expr ] ;
 return     = "return" expr ;
 for        = "for" name ":" type "in" expr "do" stmt { stmt } "end" "for" ;
 
-expr       = if | match | for | lambda | call | construct
+expr       = if | match | for | lambda | call | construct | list
            | binary | unary | field | literal | name ;
 if         = "if" expr "then" stmt { stmt } [ "else" stmt { stmt } ] "end" "if" ;
 match      = "match" expr arm { arm } "end" "match" ;
@@ -231,6 +231,7 @@ lambda     = "fn" "(" param { "," param } ")" ":" type "=>" expr ;
 call       = path [ "<" type { "," type } ">" ] "(" [ arg { "," arg } ] ")" ;
 arg        = name ":" expr ;
 construct  = TypePath [ "(" ( arg { "," arg } | expr ) ")" ] ;
+list       = "[" expr { "," expr } "]" ;
 ```
 
 ## 4. Nothing to count, nothing to simulate
@@ -463,7 +464,6 @@ These forms are common in other languages but do not exist in alang. Write the f
 | Not available | Instead |
 | --- | --- |
 | `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
-| List literals | `std.list.append(list: std.list.empty<Int>(), item: 1)`, nested for more items |
 | Functions on `Map` | A `List` of records |
 | `std.list.first`, `last`, `zip`, `enumerate`, `window` (named in 4.6), `std.int.min`, `std.int.max`, searching text or reading its characters | `std.list.get`, `std.list.fold`, recursion, or a helper function of your own |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
@@ -482,8 +482,8 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Numbers.** An integer with more than four digits is grouped in threes with `_` (`65_535`, `1_000_000`); `65535`, `1_000` and leading zeros are errors (4.7). A float is written `digits.digits` (`1.0`, `0.25`), never `1.`, `.5` or `1e3`. A negative number is a literal (`-3`, `-0.5`). There is no minus in front of other expressions; write `0 - x`.
 - **Other values.** `true`, `false`, and `Unit`, the one value of the type `Unit`.
 - **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them.
-- **Foreign forms.** `===`, `!==`, `&&`, `||`, `!`, `{`, `}`, `[`, `]`, `?`, `;`, `'`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7).
-- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
+- **Foreign forms.** `===`, `!==`, `&&`, `||`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7).
+- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction and inside the brackets of a list, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
 - **Files.** In a file given to `alang check` or `alang run`, the order of definitions has no meaning (6.2). The stored text and the export sort them by name, with one empty line between them.
 
 ### 7.3 Definitions and names
@@ -515,6 +515,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 ### 7.5 Expressions
 
 - **Calls and construction (4.1).** Every argument is named, in declaration order, with none left out and none given twice (E0205 to E0208): `std.string.concat(left: a, right: b)`, `Port(value: 8080)`. A case's value has no name: `Some(n)`, `Err(OutOfRange(n))`. Fields are read with a dot (`request.path`). There are no method calls (`x.f()`, E0220).
+- **Lists.** `[1, 2, 3]` is a `List<Int>`. A list literal has at least one item; the stored text separates the items with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The item type comes from the expected type (a `let`, a parameter, `out` at a `return`, the left side of `==`), otherwise from the first item, and every other item must have it: `[1.0, 2]` is an error (E0204), and so is `[None, Some(1)]` without an expected type (E0210). The empty list is `std.list.empty<Int>()`; `[]` is an error whose fix names the item type when the expected type gives it (E0228). There is no index access (`xs[0]`) and no `Int[]` (E0006): use `std.list.get(list: xs, index: 0)` and `List<Int>`.
 - **Explicit type arguments (1.4).** They are written exactly when a type parameter of the function occurs in no parameter type, and never otherwise (E0209): `std.list.empty<Int>()`, but `std.list.map(list: xs, with: ...)`.
 - **Types flow from left to right (1.4).** `Ok`, `Err` and `None` take their type from what is expected at that point: the type of a `let`, a parameter, `out` at a `return`, or the left side of `==`. Without an expected type they are an error (E0210); `Some(x)` can also take its type from `x`. So the side with a known type comes first: `parse(text: "1") == Ok(...)`, not `None == x`.
 - **Arithmetic.** `+ - * / %` work on two `Int` or two `Float`; nothing is converted implicitly (`std.int.to_float`). `Int` division truncates toward zero, and `%` takes the sign of the dividend (`-7 % 2 == -1`). Division by zero and leaving the `Int` range trap. A `Float` result that is NaN traps (`0.0 / 0.0`); infinities are ordinary values.
@@ -757,7 +758,7 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | --- | --- |
 | E0001 to E0006 | Characters, names, numbers, strings, foreign forms |
 | E0101 to E0199 | Syntax and section order |
-| E0201 to E0227 | Names, types, calls, patterns, examples' form |
+| E0201 to E0228 | Names, types, calls, patterns, examples' form, the empty list |
 | E0230 to E0233 | Effects |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0403 | Missing, failing and trapping examples |

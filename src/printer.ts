@@ -213,6 +213,8 @@ export function printExpr(e: Expr, indent: string): string {
     }
     case "construct":
       return pathText(e.path) + printPayload(e.payload, indent);
+    case "list":
+      return `[${e.items.map((x) => printExpr(x, indent)).join(", ")}]`;
     case "binary":
       return `${operand(e, e.left, "left", indent)} ${e.op} ${operand(e, e.right, "right", indent)}`;
     case "not":

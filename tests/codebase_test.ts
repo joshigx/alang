@@ -55,6 +55,18 @@ Deno.test("codebase: every stored row round-trips and matches its hash and signa
   await done(cb);
 });
 
+Deno.test("codebase: a list literal is stored in canonical form", async () => {
+  const cb = await fresh();
+  const canonical = fn("m.xs", { out: "List<Int>", examples: ["xs() == [1, 2]"], body: "return [1, 2]" });
+  const written = canonical
+    .replace("xs() == [1, 2]", "xs() == [ 1 ,2 ]")
+    .replace("return [1, 2]", "return [\n      1,\n      2\n    ]");
+  const r = await ok(cb, [add(written)]);
+  assertEquals(cb.definition("m.xs").text, canonical);
+  assertEquals(r.written.map((w) => w.hash), [hashText(canonical)]);
+  await done(cb);
+});
+
 Deno.test("codebase: history records each change in order", async () => {
   const cb = await withPort();
   const h1 = hashOf(cb, "net.port.parse");

@@ -172,7 +172,8 @@ class DefinitionEmitter {
           case "Order":
             return `${RT}.${t.name}`;
           case "List":
-            return `readonly ${args[0]}[]`;
+            // Not `readonly T[]`: `readonly readonly number[][]` is not TypeScript.
+            return `ReadonlyArray<${args[0]}>`;
           case "Map":
             return `ReadonlyMap<${args.join(", ")}>`;
           case "Option":
@@ -204,7 +205,7 @@ class DefinitionEmitter {
         case "Order":
           return `${RT}.Order`;
         case "List":
-          return `readonly ${args[0]}[]`;
+          return `ReadonlyArray<${args[0]}>`;
         case "Map":
           return `ReadonlyMap<${args.join(", ")}>`;
         case "Option":
@@ -507,6 +508,14 @@ class DefinitionEmitter {
         if (construct?.kind !== "case") throw new Error(`unresolved case: ${pathText(e.path)}`);
         const type = this.globalRef(construct.type.split("."));
         return `(${value} satisfies ${type} as ${type})`;
+      }
+      case "list": {
+        // Annotated with the checked type: TypeScript would infer the items'
+        // own type (`Some<number>` for `[Some(1)]`) and reject a `None` later.
+        const t = this.typeOf(e);
+        if (!isCon(t, "List")) throw new Error(`list literal without a List type in ${this.name}`);
+        const type = `ReadonlyArray<${this.tsType(t.args[0])}>`;
+        return `([${e.items.map((x) => this.expr(x, scope)).join(", ")}] satisfies ${type} as ${type})`;
       }
       case "binary":
         return this.binary(e, scope);

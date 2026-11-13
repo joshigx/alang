@@ -42,6 +42,9 @@ export type Expr =
     readonly args: readonly Arg[];
   }
   | { readonly kind: "construct"; readonly path: Path; readonly payload: Payload }
+  // `[a, b, c]`: at least one item in valid text; `[]` parses so that the
+  // checker can name the empty list's one spelling (E0228).
+  | { readonly kind: "list"; readonly items: readonly Expr[] }
   | { readonly kind: "binary"; readonly op: BinaryOp; readonly left: Expr; readonly right: Expr }
   | { readonly kind: "not"; readonly operand: Expr }
   | {

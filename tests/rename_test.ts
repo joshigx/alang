@@ -268,6 +268,22 @@ Deno.test("rename: every kind of reference is rewritten, in one transaction of s
   await done(cb);
 });
 
+Deno.test("rename: a call inside a list literal is a reference and is rewritten", async () => {
+  const cb = await fresh();
+  const one = fn("m.one", { out: "Int", examples: ["one() == 1"], body: "return 1" });
+  const many = fn("other.many", {
+    out: "List<Int>",
+    examples: ["many() == [1, 1]"],
+    body: "return [m.one(), m.one()]",
+  });
+  await ok(cb, [add(one), add(many)]);
+  assertEquals(cb.callers("m.one").callers, ["other.many"]);
+  await ok(cb, [rename(cb, "m.one", "m.single")]);
+  assertEquals(cb.definition("other.many").text, many.replaceAll("m.one()", "m.single()"));
+  assertEquals(cb.callers("m.single").callers, ["other.many"]);
+  await done(cb);
+});
+
 Deno.test("rename: a new name captured by a local binding is rejected (E0510)", async () => {
   // A function value `by: cmp` would read the local `g` after renaming cmp to g.
   const cb = await fresh();

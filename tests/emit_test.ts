@@ -451,6 +451,116 @@ fn kinds.describe
 end fn kinds.describe
 `;
 
+// List literals: annotated with their checked type, so that TypeScript
+// neither narrows `[Some(1)]` to `Some<number>[]` nor rejects nested lists.
+const LISTS = `
+type lists.Point
+  doc: "A point."
+  record:
+    x: Int
+    y: Int
+  where: none
+end type lists.Point
+
+type lists.Shape
+  doc: "A shape."
+  variant:
+    Circle: Int
+    Dot
+  where: none
+end type lists.Shape
+
+fn lists.points
+  doc: "Two points."
+  in: none
+  out: List<Point>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    points() == [Point(x: 1, y: 2), Point(x: 3, y: 4)]
+  body:
+    return [Point(x: 1, y: 2), Point(x: 3, y: 4)]
+end fn lists.points
+
+fn lists.shapes
+  doc: "One shape of each case."
+  in: none
+  out: List<Shape>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    shapes() == [Circle(1), Dot]
+  body:
+    let all: List<Shape> = [Circle(1), Dot]
+    return all
+end fn lists.shapes
+
+fn lists.options
+  doc: "A literal whose type comes from its first item, then extended."
+  in: none
+  out: List<Option<Int>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    options() == [Some(1), None]
+  body:
+    return std.list.append(list: [Some(1)], item: None)
+end fn lists.options
+
+fn lists.rows
+  doc: "Each number with its double."
+  in: none
+  out: List<List<Int>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    rows() == [[1, 2], [2, 4], [3, 6]]
+  body:
+    let fixed: List<List<Int>> = [[1, 2], [2, 4]]
+    let built: List<List<Int>> = for n: Int in [1, 2, 3] do
+      [n, n * 2]
+    end for
+    if std.list.length(list: fixed) > 2 then
+      return fixed
+    end if
+    return built
+end fn lists.rows
+
+fn lists.say
+  doc: "Prints the text and returns its length."
+  in:
+    text: String
+  out: Int
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    std.console.print_line(text: text)
+    return std.string.length(text: text)
+end fn lists.say
+
+fn lists.main
+  doc: "Prints in the order of the list, then the lengths."
+  in: none
+  out: Unit
+  effects: console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let lengths: List<Int> = [say(text: "one"), say(text: "three")]
+    for n: Int in lengths do
+      std.console.print_line(text: std.text.show(value: n))
+    end for
+    return Unit
+end fn lists.main
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
@@ -461,6 +571,7 @@ const PROGRAMS: Record<string, string> = {
   app: APP,
   steps: STEPS,
   kinds: KINDS,
+  lists: LISTS,
   io: IO_PROGRAM,
   ending: ENDING_PROGRAM,
 };
@@ -478,6 +589,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
     await writeEntry(built.hello),
     await writeEntry(built.app),
     await writeEntry(built.steps, "steps.main"),
+    await writeEntry(built.lists, "lists.main"),
     await writeEntry(built.io),
     // A `Result` main reads `.tag`, which a `Unit` main's entry must not.
     await writeEntry(built.ending),
@@ -556,6 +668,7 @@ Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(BLOCKS)), BLOCKS.trimStart());
   assertEquals(printProgram(parseProgram(STEPS)), STEPS.trimStart());
   assertEquals(printProgram(parseProgram(KINDS)), KINDS.trimStart());
+  assertEquals(printProgram(parseProgram(LISTS)), LISTS.trimStart());
   assertEquals(printProgram(parseProgram(IO_PROGRAM)), IO_PROGRAM);
   assertEquals(printProgram(parseProgram(ENDING_PROGRAM)), ENDING_PROGRAM);
 });
@@ -596,7 +709,7 @@ Deno.test("emit: output runs on Node.js without Deno", async () => {
 
 Deno.test("emit: functions with effects are async, pure code stays synchronous", async () => {
   const ts = await Deno.readTextFile(built.steps.outPath);
-  assert_(ts.includes("export function steps$words(): readonly string[] {"), ts);
+  assert_(ts.includes("export function steps$words(): ReadonlyArray<string> {"), ts);
   assert_(ts.includes("export async function steps$say(text: string): Promise<number> {"), ts);
   // Calls of functions with effects are awaited, std ones included; pure calls are not.
   assert_(ts.includes("(await $rt.std$console$print_line(text));"), ts);
@@ -609,6 +722,30 @@ Deno.test("emit: functions with effects are async, pure code stays synchronous",
   const mod = await load("steps");
   assertEquals(mod.steps$words(), ["a", "bc"]);
   assert_(mod.steps$say instanceof (async () => {}).constructor);
+});
+
+Deno.test("emit: list literals run, typed as their checked type", async () => {
+  assertEquals((await testExamples(built.lists)).filter((r) => !r.passed), []);
+  const ts = await Deno.readTextFile(built.lists.outPath);
+  assert_(
+    ts.includes("([$rt.Some(1)] satisfies ReadonlyArray<$rt.Option<number>> as ReadonlyArray<$rt.Option<number>>)"),
+    ts,
+  );
+  assert_(ts.includes("export function lists$rows(): ReadonlyArray<ReadonlyArray<number>> {"), ts);
+  const mod = await load("lists");
+  assertEquals(mod.lists$rows(), [[1, 2], [2, 4], [3, 6]]);
+  // Items with effects are awaited from left to right.
+  const out = await run(built.lists, { stdio: "piped", main: "lists.main" });
+  assertEquals([out.code, text(out.stdout).split("\n")], [0, ["one", "three", "3", "5"]]);
+});
+
+Deno.test("emit: an if as a list item is not compiled yet (E0303)", () => {
+  const source = LISTS.replace(
+    "let fixed: List<List<Int>> = [[1, 2], [2, 4]]",
+    "let fixed: List<List<Int>> = [if true then\n      [1, 2]\n    else\n      [2, 4]\n    end if]",
+  );
+  const d = assertThrows(() => compile(source, "x"), AlangError).diagnostic;
+  assertEquals([d.code, d.definition, d.at], ["E0303", "lists.rows", "if true then"]);
 });
 
 Deno.test("emit: a match over the std.fs types runs", async () => {

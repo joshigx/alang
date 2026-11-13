@@ -639,6 +639,8 @@ class DefChecker {
         return this.call(e, scope, expected);
       case "construct":
         return this.construct(e, scope, expected);
+      case "list":
+        return this.listLiteral(e, scope, expected);
       case "binary":
         return this.binary(e, scope);
       case "not":
@@ -1067,6 +1069,34 @@ class DefChecker {
     return ERROR;
   }
 
+  // `[a, b]`: the item type comes from the expected type, otherwise from the
+  // first item (1.4). The empty list has one spelling, `std.list.empty<T>()`,
+  // which names its item type (3).
+  private listLiteral(e: Extract<Expr, { kind: "list" }>, scope: Scope, expected: Type | null): Type {
+    const want = expected !== null && isCon(expected, "List") ? expected.args[0] : null;
+    if (e.items.length === 0) {
+      const empty = want !== null && writable(want)
+        ? printExpr({
+          kind: "call",
+          path: ["std", "list", "empty"],
+          typeArgs: [toTypeRef(want, this.module)],
+          args: [],
+        }, "")
+        : null;
+      this.report("E0228", "[]", "The empty list is written `std.list.empty<T>()`, with its item type (1.4).", {
+        expected: empty ?? "std.list.empty<T>()",
+        fix: empty ? { replace: "[]", with: empty } : undefined,
+      });
+      return ERROR;
+    }
+    let itemType = want;
+    for (const item of e.items) {
+      const t = this.expr(item, scope, itemType);
+      if (itemType === null && t.k !== "never") itemType = t;
+    }
+    return itemType === null ? ERROR : list(itemType);
+  }
+
   private binary(e: Extract<Expr, { kind: "binary" }>, scope: Scope): Type {
     const at = firstLine(printExpr(e, ""));
     switch (e.op) {
@@ -1440,6 +1470,12 @@ function printPattern(p: Pattern, target?: Pattern, as?: string): string {
     case "case":
       return pathText(p.path) + (p.sub ? `(${printPattern(p.sub, target, as)})` : "");
   }
+}
+
+// Whether `toTypeRef` writes the type: built from named types only, without
+// function types, type variables or the error type.
+function writable(t: Type): boolean {
+  return t.k === "con" && t.args.every(writable);
 }
 
 // A type as it is written in `module` (rule 1.2).

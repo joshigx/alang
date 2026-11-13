@@ -524,6 +524,62 @@ Deno.test("check: if and for", () => {
   one(fn("if 1 then\n  return 1\nend if\nreturn 0"), "E0204");
 });
 
+// ---- list literals ----
+
+Deno.test("check: a list literal takes its item type from the expected type, else from the first item (1.4)", () => {
+  clean(fn("let xs: List<Int> = [1, 2, 3]\nreturn std.list.length(list: xs)"));
+  clean(fn("return std.list.length(list: [1, 2, 3])"));
+  clean(fn('return [std.string.length(text: "a"), 2] == [1, 2]', { out: "Bool" }));
+  clean(fn("let xss: List<List<Int>> = [[1], [2, 3]]\nreturn std.list.length(list: xss)"));
+  clean(fn("let p: List<Point> = [Point(x: 1, y: 2)]\nreturn 0", { extra: POINT }));
+  // The expected type reaches every item, so `None` first is fine there.
+  clean(fn("let xs: List<Option<Int>> = [None, Some(1)]\nreturn 0"));
+  clean(fn("return std.list.length(list: [Some(1), None])"));
+  const mixed = one(fn("let xs: List<Float> = [1.0, 2]\nreturn 0"), "E0204");
+  assertEquals(mixed.fix, { replace: "2", with: "2.0" });
+  // Without an expected type, the first item decides: `[1.0, 2]` is a List<Float>.
+  assertEquals(one(fn("return std.list.length(list: [1.0, 2])"), "E0204").fix, { replace: "2", with: "2.0" });
+  one(fn("return std.list.length(list: [None, Some(1)])"), "E0210");
+  one(fn("let x: Int = [1]\nreturn x"), "E0204");
+  one(fn('let xs: List<Int> = [1, "a"]\nreturn 0'), "E0204");
+});
+
+Deno.test("check: the empty list is written std.list.empty<T>() (E0228)", () => {
+  const sites: [string, Parameters<typeof fn>[1], string][] = [
+    ["let xs: List<Int> = []\nreturn 0", {}, "std.list.empty<Int>()"],
+    ["return []", { out: "List<Point>", extra: POINT }, "std.list.empty<Point>()"],
+    ['return std.string.join(parts: [], separator: ",")', { out: "String" }, "std.list.empty<String>()"],
+    ["return xs == []", { params: ["xs: List<Option<Int>>"], out: "Bool" }, "std.list.empty<Option<Int>>()"],
+    ["let xss: List<List<Int>> = [[1], []]\nreturn 0", {}, "std.list.empty<Int>()"],
+  ];
+  for (const [body, o, empty] of sites) {
+    const source = fn(body, o);
+    const d = one(source, "E0228");
+    assertEquals(
+      [d.at, d.message, d.expected, d.fix],
+      ["[]", "The empty list is written `std.list.empty<T>()`, with its item type (1.4).", empty, {
+        replace: "[]",
+        with: empty,
+      }],
+    );
+    // Applied, the fix gives an accepted program; `[]` occurs once in each.
+    clean(source.replace(d.at, d.at.replace(d.fix!.replace, d.fix!.with)));
+  }
+  // Without an expected item type there is no fix.
+  const bare = one(fn("return std.list.length(list: [])"), "E0228");
+  assertEquals([bare.expected, bare.fix], ["std.list.empty<T>()", null]);
+});
+
+Deno.test("check: items of a list literal follow the usual rules", () => {
+  // An own-module name written in full (1.2).
+  const long = one(fn("let xs: List<Int> = [m.g(), 2]\nreturn 0", { extra: G }), "E0226");
+  assertEquals([long.at, long.fix], ["m.g()", { replace: "m.g", with: "g" }]);
+  // An effectful call in a pure function.
+  one(fn("let xs: List<Option<String>> = [std.console.read_line()]\nreturn 0"), "E0230");
+  clean(fn("let xs: List<Option<String>> = [std.console.read_line()]\nreturn 0", { effects: "console" }));
+  one(fn("return [g] == [g]", { out: "Bool", extra: G }), "E0222");
+});
+
 // ---- contracts and examples ----
 
 Deno.test("check: contracts see the right names", () => {

@@ -196,3 +196,47 @@ Deno.test("if: without else only as a statement (E0110)", () => {
   assertEquals(code(() => parseStatements("return if c then\n  1\nend if")), "E0110");
   assertEquals(printStmts(parseStatements("if c then\n  f(a: 1)\nend if"), ""), "if c then\n  f(a: 1)\nend if");
 });
+
+Deno.test("lists: literals print on one line and round-trip", () => {
+  assertEquals(canonicalExpr("[1, 2, 3]"), "[1, 2, 3]");
+  assertEquals(canonicalExpr("[[1], [2, 3]]"), "[[1], [2, 3]]");
+  // Line breaks and spaces inside the brackets are ignored (3.7).
+  assertEquals(canonicalExpr("[ 1 ,\n 2 ]"), "[1, 2]");
+  assertEquals(canonicalExpr("[\n  1,\n  2\n]"), "[1, 2]");
+  assertEquals(
+    canonicalExpr('std.string.join(parts: ["a", "b"], separator: "")'),
+    'std.string.join(parts: ["a", "b"], separator: "")',
+  );
+  assertEquals(canonicalExpr("f(a: 1) == [Some(1), None]"), "f(a: 1) == [Some(1), None]");
+  assertEquals(
+    canonicalExpr("[fn(x: Int): Int => x, fn(x: Int): Int => x + 1]"),
+    "[fn(x: Int): Int => x, fn(x: Int): Int => x + 1]",
+  );
+  assertEquals(canonicalExpr("[a + b, not c, d and e]"), "[a + b, not c, d and e]");
+  assertEquals(canonicalExpr("[p].x"), "[p].x");
+  // The empty list parses, so that the checker can give its spelling (E0228).
+  assertEquals(canonicalExpr("[]"), "[]");
+  assertEquals(parseExpression("[1, 2]"), {
+    kind: "list",
+    items: [{ kind: "int", value: 1 }, { kind: "int", value: 2 }],
+  });
+});
+
+Deno.test("lists: no index access, no T[] and no trailing comma", () => {
+  const index = "There is no index access; use `std.list.get(list: xs, index: i)` (4.6).";
+  for (const source of ["xs[0]", "f(a: 1)[0]", "[1, 2][0]", "p.items[i]"]) {
+    const d = assertThrows(() => parseExpression(source), AlangError).diagnostic;
+    assertEquals([d.code, d.message], ["E0006", index], source);
+  }
+  const type = assertThrows(() => parseStatements("let xs: Int[] = y"), AlangError).diagnostic;
+  assertEquals([type.code, type.message, type.expected], ["E0006", "A list type is written `List<T>`.", "List<T>"]);
+  assertEquals(code(() => parseStatements("let xs: List<Int[]> = y")), "E0006");
+  const comma = assertThrows(() => parseExpression("[1, ]"), AlangError).diagnostic;
+  assertEquals(
+    [comma.code, comma.message],
+    ["E0101", "A list ends after its last item; remove the comma before `]`."],
+  );
+  assertEquals(code(() => parseExpression("[1,\n]")), "E0101");
+  assertEquals(code(() => parseExpression("[1 2]")), "E0101");
+  assertEquals(code(() => parseExpression("[1, 2")), "E0101");
+});

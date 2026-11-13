@@ -61,7 +61,28 @@ export const KEYWORDS = new Set([
 
 // Longest first, so that `<=` wins over `<`. There is deliberately no `>>`:
 // `List<Result<Int, E>>` must close two type argument lists.
-const SYMBOLS = ["=>", "==", "!=", "<=", ">=", "(", ")", "<", ">", ",", ":", ".", "=", "+", "-", "*", "/", "%"];
+const SYMBOLS = [
+  "=>",
+  "==",
+  "!=",
+  "<=",
+  ">=",
+  "(",
+  ")",
+  "[",
+  "]",
+  "<",
+  ">",
+  ",",
+  ":",
+  ".",
+  "=",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+];
 
 // Forms from other languages with a dedicated message (rule 5.7).
 const FOREIGN: readonly { form: string; message: string; replacement?: string }[] = [
@@ -80,8 +101,6 @@ const FOREIGN: readonly { form: string; message: string; replacement?: string }[
     form: "}",
     message: "There are no curly braces; blocks end with `end if`, `end for`, `end match`, `end fn <name>`.",
   },
-  { form: "[", message: "There is no index access or list literal; use `std.list.get(list: xs, index: i)`." },
-  { form: "]", message: "There is no index access or list literal; use `std.list.get(list: xs, index: i)`." },
   {
     form: "?",
     message: "There is no `?` operator; propagate errors with `let name: Type = expression else return ...`.",
