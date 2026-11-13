@@ -500,6 +500,11 @@ Left for later:
 - **Verbosity** from the missing list literals, the two-argument `std.string.concat` and no `std.string.lines`.
 - **`cat` instead of the query tools.** The model read `export/*.alang` with `cat`; this belongs to the phase that
   serves the spec through the MCP server.
+- **Negative zero.** `std.int.parse("-0")`, `0 * -1` and `-7 % 7` give JavaScript's `-0`. `std.text.show` prints it
+  as `0` and `==` treats it as 0, but `std.int.to_float` of it is `-0.0`, and `1.0 / that` is `-Infinity`. A general
+  Int issue: normalizing `-0` to `0` in the Int operations and `parse` would close it.
+- **A fix's `replace` text can match elsewhere.** The E0005 fix replaces `\r`, which also occurs inside an escaped
+  backslash (`\\r`). This holds for every E0005 fix; a fix located by position would not have it.
 
 ## Spec observations
 
