@@ -301,6 +301,31 @@ Deno.test("rename: calls in the keys and values of a map literal are references 
   await done(cb);
 });
 
+Deno.test("rename: an application reads a local, never a function, so it is never captured (F2)", async () => {
+  const cb = await fresh();
+  const g = fn("m.g", { params: ["n: Int"], out: "Int", examples: ["g(n: 1) == 2"], body: "return n + 1" });
+  const uses = fn("m.uses", {
+    params: ["f: (Int) -> Int", "x: Int"],
+    out: "Int",
+    examples: ["uses(f: fn(n: Int): Int => n * 10, x: 1) == 20"],
+    body: "return f(g(n: x))",
+  });
+  // An example passing a function by name is a reference to it.
+  const twice = fn("m.twice", {
+    params: ["x: Int"],
+    out: "Int",
+    examples: ["twice(x: uses(f: g, x: 1)) == 6"],
+    body: "return x * 2",
+  });
+  await ok(cb, [add(g), add(uses), add(twice)]);
+  assertEquals(cb.callers("m.g").callers, ["m.twice", "m.uses"]);
+  // The named call is the function, the unnamed one the parameter.
+  await ok(cb, [rename(cb, "m.g", "m.f")]);
+  assertEquals(cb.definition("m.uses").text, uses.replace("return f(g(n: x))", "return f(f(n: x))"));
+  assertEquals(cb.callers("m.f").callers, ["m.twice", "m.uses"]);
+  await done(cb);
+});
+
 Deno.test("rename: a type inside a function type is a reference and is rewritten (F1)", async () => {
   const cb = await fresh();
   const row = 'type old.Row\n  doc: "A row."\n  record:\n    name: String\n  where: none\nend type old.Row';

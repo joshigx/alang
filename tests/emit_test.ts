@@ -981,6 +981,39 @@ fn fnvalues.scales
   body:
     return std.list.length(list: std.list.concat(left: [double, triple], right: extra))
 end fn fnvalues.scales
+
+fn fnvalues.broken_by
+  doc: "The names of the rules a line breaks."
+  in:
+    rules: List<Rule>
+    line: String
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    broken_by(rules: [Rule(name: "blank", broken: blank), Rule(name: "short", broken: fn(text: String): Bool => std.string.length(text: text) < 3)], line: "") == ["blank", "short"]
+    broken_by(rules: [Rule(name: "blank", broken: blank)], line: "text") == std.list.empty<String>()
+  body:
+    let broken: List<Rule> = std.list.filter(list: rules, with: fn(rule: Rule): Bool => rule.broken(line))
+    return rule_names(rules: broken)
+end fn fnvalues.broken_by
+
+fn fnvalues.apply_all
+  doc: "The number after each step in order."
+  in:
+    steps: List<(Int) -> Int>
+    n: Int
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    apply_all(steps: [double, triple], n: 1) == 6
+    apply_all(steps: std.list.empty<(Int) -> Int>(), n: 1) == 1
+  body:
+    return std.list.fold(list: steps, initial: n, with: fn(value: Int, step: (Int) -> Int): Int => step(value))
+end fn fnvalues.apply_all
 `;
 
 const PROGRAMS: Record<string, string> = {
@@ -998,6 +1031,7 @@ const PROGRAMS: Record<string, string> = {
   lists: LISTS,
   maps: MAPS,
   fnvalues: FNVALUES,
+  first_true: specBlock("fn calc.first_true"),
   io: IO_PROGRAM,
   ending: ENDING_PROGRAM,
   net: NET_PROGRAM,
@@ -1037,7 +1071,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
   assert_(!bad.success, "deno check accepted an ill-typed file");
 });
 
-for (const name of ["hello", "port", "clamp", "calc", "port_plus", "propagate", "shared", "fnvalues"]) {
+for (const name of ["hello", "port", "clamp", "calc", "port_plus", "propagate", "shared", "fnvalues", "first_true"]) {
   Deno.test(`emit: spec examples of ${name} pass`, async () => {
     const results = await testExamples(built[name]);
     assertEquals(results.filter((r) => !r.passed), []);
@@ -1240,6 +1274,17 @@ Deno.test("emit: function types are TypeScript function types, values synchronou
   // The type of a function-typed parameter, as the emitter writes it.
   const text = await Deno.readTextFile(built.fnvalues.outPath);
   assert_(text.includes("by: ((p0: number, p1: number) => $rt.Order)"), text);
+});
+
+Deno.test("emit: a function value is applied by position, synchronously (F2)", async () => {
+  const mod = await load("fnvalues");
+  const short = mod.fnvalues$Rule({ name: "short", broken: (text: string) => text.length < 3 });
+  assertEquals(mod.fnvalues$broken_by([short], "ab"), ["short"]);
+  assertEquals(mod.fnvalues$apply_all([(n: number) => n + 1, mod.fnvalues$double], 1), 4);
+  const calc = await load("first_true");
+  assertEquals(calc.calc$first_true(0, 100, (n: number) => n * n >= 50), { tag: "Some", value: 8 });
+  assertEquals(calc.calc$first_true(0, 5, (n: number) => n > 9), { tag: "None" });
+  assertEquals(assertThrows(() => calc.calc$first_true(5, 0, (n: number) => n > 9), Trap).kind, "requires");
 });
 
 Deno.test("emit: a block ending without a value delivers Unit to a return (sink fix)", async () => {

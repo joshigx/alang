@@ -40,6 +40,13 @@ export type Expr =
     readonly typeArgs: readonly TypeRef[];
     readonly args: readonly Arg[];
   }
+  // Applying a function value (F2): a local, or a field of one, of function
+  // type, with unnamed arguments, since a function type names no parameters.
+  | {
+    readonly kind: "apply";
+    readonly target: { readonly kind: "name"; readonly path: Path };
+    readonly args: readonly Expr[];
+  }
   | { readonly kind: "construct"; readonly path: Path; readonly payload: Payload }
   // `[a, b, c]`: at least one item in valid text; `[]` parses so that the
   // checker can name the empty list's one spelling (E0228).

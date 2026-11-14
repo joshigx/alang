@@ -107,8 +107,34 @@ Deno.test("calls, constructs, fields and type arguments", () => {
   assertEquals(canonicalExpr("Err(OutOfRange(n))"), "Err(OutOfRange(n))");
   assertEquals(canonicalExpr("net.port.Port(value: 1)"), "net.port.Port(value: 1)");
   assertEquals(canonicalExpr("f(\n  a: 1,\n  b: 2\n)"), "f(a: 1, b: 2)");
-  assertEquals(code(() => parseExpression("f(1)")), "E0107");
   assertEquals(code(() => parseExpression("-x")), "E0106");
+});
+
+Deno.test("applications: unnamed arguments apply a function value (F2)", () => {
+  // The first argument decides: unnamed arguments apply a value, named
+  // ones or `()` call a function defined with `fn`.
+  assertEquals(canonicalExpr("f(1)"), "f(1)");
+  assertEquals(parseExpression("f(1)").kind, "apply");
+  assertEquals(parseExpression("f()").kind, "call");
+  assertEquals(parseExpression("f(x: 1)").kind, "call");
+  assertEquals(canonicalExpr("rule.check(\n  line,\n  2\n)"), "rule.check(line, 2)");
+  assertEquals(canonicalExpr("not ok(x)"), "not ok(x)");
+  assertEquals(canonicalExpr("f(x).name"), "f(x).name");
+  assertEquals(canonicalExpr("f(fn(n: Int): Int => n)"), "f(fn(n: Int): Int => n)");
+  assertEquals(canonicalExpr("by(a, b) != Greater"), "by(a, b) != Greater");
+  const message = (source: string) => {
+    const d = assertThrows(() => parseExpression(source), AlangError).diagnostic;
+    return [d.code, d.message];
+  };
+  assertEquals(message("f(1, b: 2)"), [
+    "E0107",
+    "A function value takes its arguments by position, without names: `by(a, b)`; a function defined with `fn` takes every argument by name.",
+  ]);
+  assertEquals(message("f(a: 1, 2)"), ["E0107", "Every argument carries its parameter name: `name: value`."]);
+  assertEquals(message("f(1, )"), [
+    "E0101",
+    "An argument list ends after its last argument; remove the comma before `)`.",
+  ]);
 });
 
 Deno.test("statements: blocks round-trip at any indentation", () => {

@@ -451,8 +451,9 @@ class DefChecker {
     }
     this.section = "examples";
     for (const ex of def.examples) {
-      if (ex.kind === "binary" && ex.left.kind === "call") {
-        const callee = this.resolvePath(ex.left.path);
+      if (ex.kind === "binary" && (ex.left.kind === "call" || ex.left.kind === "apply")) {
+        // Written by position (`twice(2) == 4`), the call gets E0107 below.
+        const callee = this.resolvePath(ex.left.kind === "call" ? ex.left.path : ex.left.target.path);
         if (callee !== this.name) {
           this.report(
             "E0221",
@@ -829,6 +830,8 @@ class DefChecker {
         return this.field(this.expr(e.target, scope, null), e.field, e);
       case "call":
         return this.call(e, scope, expected);
+      case "apply":
+        return this.apply(e, scope);
       case "construct":
         return this.construct(e, scope, expected);
       case "list":
@@ -996,16 +999,31 @@ class DefChecker {
     return byName;
   }
 
-  private call(e: Extract<Expr, { kind: "call" }>, scope: Scope, expected: Type | null): Type {
-    const at = firstLine(printExpr(e, ""));
-    if (e.path.length > 1 && scope.lookup(e.path[0]) !== undefined) {
-      this.report(
-        "E0220",
-        at,
-        `There are no method calls (3.1); \`${e.path[0]}\` is a value. Pass it as a named argument instead.`,
-      );
-      for (const a of e.args) this.expr(a.value, scope, null);
-      return ERROR;
+  // `at` is the text the diagnostics quote: the call as printed, or the
+  // written application a call was made from (`positionalCall`).
+  private call(
+    e: Extract<Expr, { kind: "call" }>,
+    scope: Scope,
+    expected: Type | null,
+    at = firstLine(printExpr(e, "")),
+  ): Type {
+    const local = scope.lookup(e.path[0]);
+    if (local !== undefined) {
+      // Named arguments on a function value (F7); a one-segment name of a
+      // module function still calls that function (`check(n: 1)` beside a
+      // parameter `check`), since only an application reads the local.
+      const t = e.path.length > 1 ? this.fieldPath(local, e.path.slice(1)) : local;
+      const own = e.path.length === 1 && this.env.fns.has(this.resolvePath(e.path));
+      if (t?.k === "fn" && !own) return this.namedApplication(e, t, scope, at);
+      if (e.path.length > 1) {
+        this.report(
+          "E0220",
+          at,
+          `There are no method calls (3.1); \`${e.path[0]}\` is a value. Pass it as a named argument instead.`,
+        );
+        for (const a of e.args) this.expr(a.value, scope, null);
+        return ERROR;
+      }
     }
     const full = this.resolvePath(e.path);
     const sig = this.env.fns.get(full);
@@ -1103,6 +1121,146 @@ class DefChecker {
       return ERROR;
     }
     return out;
+  }
+
+  // `by(a, b)` (F2): applies a function value, a local or a field chain on
+  // one, by position. Pure, so it adds no effects. A path that is no local
+  // is a function defined with `fn`, called by position (E0107).
+  private apply(e: Extract<Expr, { kind: "apply" }>, scope: Scope): Type {
+    const at = firstLine(printExpr(e, ""));
+    const path = e.target.path;
+    const written = pathText(path);
+    const rest = () => {
+      for (const a of e.args) this.expr(a, scope, null);
+    };
+    const head = scope.lookup(path[0]);
+    // A hidden name of a shared case counts as a local, so `name_` reports
+    // E0236 for it (T7).
+    if (head === undefined && scope.hiddenWhy(path[0]) === undefined) return this.positionalCall(e, scope, at);
+    if (head !== undefined && path.length > 1 && this.fieldPath(head, path.slice(1)) === null) {
+      // `xs.map(f)`: the method-call habit (5.7), as with named arguments.
+      this.report(
+        "E0220",
+        at,
+        `There are no method calls (3.1); \`${path[0]}\` is a value. Pass it as a named argument instead.`,
+      );
+      rest();
+      return ERROR;
+    }
+    // Through `name_`: the local, its fields, the use, E0236.
+    const t = this.expr(e.target, scope, null);
+    if (isBottom(t)) {
+      rest();
+      return ERROR;
+    }
+    if (t.k !== "fn") {
+      this.report(
+        "E0238",
+        at,
+        `\`${written}\` has type \`${this.show(t)}\` and is not a function value, so it cannot be applied.`,
+      );
+      rest();
+      return ERROR;
+    }
+    const count = t.params.length;
+    if (count !== e.args.length) {
+      this.report(
+        "E0238",
+        at,
+        `\`${written}\` takes ${count} argument${count === 1 ? "" : "s"}, found ${e.args.length}: its type is \`${
+          this.show(t)
+        }\`.`,
+        { expected: this.show(t) },
+      );
+    }
+    // Each argument against its parameter where one exists, also after
+    // E0238, so `by(None)` adds no E0210 (5.6).
+    e.args.forEach((a, i) => this.expr(a, scope, t.params[i] ?? null));
+    return count === e.args.length ? t.out : ERROR;
+  }
+
+  // A function defined with `fn`, written by position (`twice(x)`): E0107,
+  // with the named form as fix when the counts agree. That call is then
+  // checked at the written text, so the arguments get their types and
+  // nothing follows from the missing names (5.6), while its own causes (a
+  // wrong argument type, a long own-module name) are still reported.
+  private positionalCall(e: Extract<Expr, { kind: "apply" }>, scope: Scope, at: string): Type {
+    const path = e.target.path;
+    const written = pathText(path);
+    const sig = this.env.fns.get(this.resolvePath(path));
+    if (!sig) {
+      const candidates = path.length === 1
+        ? [...scope.visibleNames(), ...this.moduleFnNames()]
+        : [...this.env.fns.keys()].map((n) => this.written(n));
+      const suggestion = closest(written, candidates);
+      this.report("E0201", at, `Unknown function \`${written}\`.`, {
+        expected: suggestion ?? undefined,
+        fix: suggestion ? { replace: written, with: suggestion } : undefined,
+      });
+      for (const a of e.args) this.expr(a, scope, null);
+      return ERROR;
+    }
+    const message =
+      `\`${written}\` is defined with \`fn\`, so every argument carries its parameter name (4.1); only a function value is applied by position.`;
+    if (sig.params.length !== e.args.length) {
+      const params = sig.params.map((p) => `${p.name}: ${this.show(p.type)}`).join(", ");
+      this.report("E0107", at, message, { expected: `${written}(${params})` });
+      for (const a of e.args) this.expr(a, scope, null);
+      return ERROR;
+    }
+    const named: Extract<Expr, { kind: "call" }> = {
+      kind: "call",
+      path,
+      typeArgs: [],
+      args: sig.params.map((p, i) => ({ name: p.name, value: e.args[i] })),
+    };
+    const fixed = printExpr(named, "");
+    // A fix replaces text inside `at`, the first line of the application.
+    const whole = !printExpr(e, "").includes("\n") && !fixed.includes("\n");
+    this.report("E0107", at, message, { expected: fixed, fix: whole ? { replace: at, with: fixed } : undefined });
+    this.call(named, scope, null, at);
+    return ERROR;
+  }
+
+  // Named arguments on a function value (`f(x: 1)`, F7): E0220, with the
+  // application as fix when the count is the type's.
+  private namedApplication(
+    e: Extract<Expr, { kind: "call" }>,
+    t: Extract<Type, { k: "fn" }>,
+    scope: Scope,
+    at: string,
+  ): Type {
+    scope.use(e.path[0]);
+    const message = `\`${pathText(e.path)}\` is a function value of type \`${
+      this.show(t)
+    }\`; it takes its arguments by position, without names (4.1).`;
+    const applied: Expr = { kind: "apply", target: { kind: "name", path: e.path }, args: e.args.map((a) => a.value) };
+    const text = printExpr(applied, "");
+    // A fix replaces text inside `at`, the first line of the call.
+    const whole = !printExpr(e, "").includes("\n");
+    if (e.args.length === t.params.length && e.typeArgs.length === 0 && whole) {
+      this.report("E0220", at, message, { expected: text, fix: { replace: at, with: text } });
+    } else {
+      this.report("E0220", at, message, { expected: this.show(t) });
+    }
+    // Each value against the parameter at its position, so `f(x: None)`
+    // adds no E0210 (5.6).
+    e.args.forEach((a, i) => this.expr(a.value, scope, t.params[i] ?? null));
+    return ERROR;
+  }
+
+  // The type of a field chain on a local's type, without reporting
+  // anything; null at a segment that is no field. The error type passes.
+  private fieldPath(t: Type, segments: readonly string[]): Type | null {
+    for (const segment of segments) {
+      if (t.k === "error") return ERROR;
+      const ut = t.k === "con" ? this.env.types.get(t.name) : undefined;
+      if (ut?.kind !== "record") return null;
+      const f = ut.fields.find((g) => g.name === segment);
+      if (!f) return null;
+      t = f.type;
+    }
+    return t;
   }
 
   // E0229: a Map keyed by a type other than Int or String.

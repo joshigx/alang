@@ -33,8 +33,8 @@ const statementBlocks = letBlocks.filter((b) => !prefixBlocks.includes(b));
 
 Deno.test("spec: block inventory", () => {
   // Guards against blocks silently dropping out of the test set.
-  assertEquals(definitionBlocks.length, 6);
-  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 17);
+  assertEquals(definitionBlocks.length, 7);
+  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 18);
   assertEquals(statementBlocks.length, 3);
   assertEquals(prefixBlocks.length, 1);
 });
@@ -84,4 +84,11 @@ Deno.test("spec: the server of 7.9 is accepted, its examples run", async () => {
   const out = new URL("../out/test/spec/server.ts", import.meta.url).pathname;
   const { examples } = await accept(server!.text, out);
   assertEquals(examples.length, 4);
+});
+
+Deno.test("spec: the function that takes a function of section 4 is accepted, its examples run", async () => {
+  const block = definitionBlocks.find((b) => b.text.startsWith("fn calc.first_true\n"));
+  const out = new URL("../out/test/spec/first_true.ts", import.meta.url).pathname;
+  const { examples } = await accept(block!.text, out);
+  assertEquals(examples.map((e) => e.passed), [true, true]);
 });

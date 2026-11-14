@@ -175,6 +175,10 @@ function rebuild(
           args: e.args.map((a) => ({ name: a.name, value: expr(a.value) })),
         };
       }
+      // The target is a local, never a reference; a named call is never an
+      // apply, so a rename never changes what an apply denotes.
+      case "apply":
+        return { kind: "apply", target: e.target, args: e.args.map(expr) };
       case "construct": {
         const r = info.constructs.get(e);
         const ref: Ref | null = !r || r.kind === "builtin"

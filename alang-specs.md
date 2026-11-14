@@ -44,7 +44,7 @@ The built-in types have a fixed meaning. A trap ends the program with a diagnost
 | `List<T>`, `Map<K, V>` | Immutable collections |
 | `Option<T>` | `Some(T)` or `None` |
 | `Result<T, E>` | `Ok(T)` or `Err(E)` |
-| `(T) -> U`, `(T, U) -> V` | A function value: a lambda or the name of a pure function. Pure (2.4), at least one parameter |
+| `(T) -> U`, `(T, U) -> V` | A function value: a lambda or the name of a pure function. Pure (2.4), at least one parameter, applied by position: `f(x)` |
 
 Two types and one function as a complete example:
 
@@ -167,7 +167,7 @@ For every purpose the grammar permits exactly one form, and every definition has
 | Transform a collection | `std.list.map`, `std.list.filter`, `std.list.fold` |
 | Effect per element | `for name: Type in list do … end for` |
 | Repeat until a condition holds | Recursion |
-| Call a function | `module.name(parameter: value)` |
+| Call a function | `module.name(parameter: value)`; a function value by position: `by(a, b)` |
 | Combine logically | `and`, `or`, `not` |
 | Compare values | `a == b`, for every type without function values |
 | Value as text | `std.text.show(value: value)` |
@@ -233,7 +233,7 @@ propagate  = expr "else" "return" expr ;
 return     = "return" expr ;
 for        = "for" name ":" type "in" expr "do" stmt { stmt } "end" "for" ;
 
-expr       = if | match | for | lambda | call | construct | list | map
+expr       = if | match | for | lambda | call | apply | construct | list | map
            | binary | unary | field | literal | name ;
 if         = "if" expr "then" stmt { stmt } [ "else" stmt { stmt } ] "end" "if" ;
 match      = "match" expr arm { arm } "end" "match" ;
@@ -241,6 +241,7 @@ arm        = "case" pattern { "or" pattern } "then" stmt { stmt } ;
 pattern    = TypePath [ "(" ( pattern | name ) ")" ] | literal ;
 lambda     = "fn" "(" param { "," param } ")" ":" type "=>" expr ;
 call       = path [ "<" type { "," type } ">" ] "(" [ arg { "," arg } ] ")" ;
+apply      = path "(" expr { "," expr } ")" ;
 arg        = name ":" expr ;
 construct  = TypePath [ "(" ( arg { "," arg } | expr ) ")" ] ;
 list       = "[" expr { "," expr } "]" ;
@@ -251,7 +252,7 @@ map        = "[" expr ":" expr { "," expr ":" expr } "]" ;
 
 No construct requires counting positions or tracking mutable state across several lines. Reason: LLMs are weak at exact counting and at following state step by step.
 
-- **4.1 Named arguments.** Every argument carries its parameter name, in declaration order. This also applies to records: `Port(value: 8080)`.
+- **4.1 Named arguments.** Every argument carries its parameter name, in declaration order. This also applies to records: `Port(value: 8080)`. A function value is the one exception: a function type such as `(Int, Int) -> Order` names no parameters, so a parameter, field or binding of that type is applied by position, `by(a, b)`, just as a case's value has no name (4.2). A function defined with `fn` is always called with named arguments.
 - **4.2 Variants carry at most one value.** It is written without a name: `Err(OutOfRange(n))`. Several values belong in a record.
 - **4.3 No tuples.** Composite values are records with named fields.
 - **4.4 Named block ends.** Blocks end with `end if`, `end for`, `end match`, `end fn <name>` or `end type <name>`. There are no curly braces and no significant indentation.
@@ -265,6 +266,37 @@ The sum of the lengths of all names, without a counter, an index or a mutable va
 ```
 let lengths: List<Int> = std.list.map(list: names, with: fn(name: String): Int => std.string.length(text: name))
 let total: Int = std.list.fold(list: lengths, initial: 0, with: fn(sum: Int, item: Int): Int => sum + item)
+```
+
+A function that takes a function: its parameter has a function type, the body applies it by position (4.1), and the examples pass lambdas:
+
+```
+fn calc.first_true
+  doc: "The smallest number from low to high for which test holds, found by halving the range; None if test does not hold at high. test must stay true from the first number for which it holds."
+  in:
+    low: Int
+    high: Int
+    test: (Int) -> Bool
+  out: Option<Int>
+  effects: none
+  requires: low <= high
+  ensures: none
+  examples:
+    first_true(low: 0, high: 100, test: fn(n: Int): Bool => n * n >= 50) == Some(8)
+    first_true(low: 0, high: 5, test: fn(n: Int): Bool => n > 9) == None
+  body:
+    if not test(high) then
+      return None
+    end if
+    if low == high then
+      return Some(high)
+    end if
+    let middle: Int = (low + high) / 2
+    if test(middle) then
+      return first_true(low: low, high: middle, test: test)
+    end if
+    return first_true(low: middle + 1, high: high, test: test)
+end fn calc.first_true
 ```
 
 ## 5. Verification inside the definition
@@ -531,7 +563,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 ### 7.5 Expressions
 
-- **Calls and construction (4.1).** Every argument is named, in declaration order, with none left out and none given twice (E0205 to E0208): `std.string.concat(left: a, right: b)`, `Port(value: 8080)`. A case's value has no name: `Some(n)`, `Err(OutOfRange(n))`. Fields are read with a dot (`request.path`). There are no method calls (`x.f()`, E0220).
+- **Calls and construction (4.1).** Every argument is named, in declaration order, with none left out and none given twice (E0205 to E0208): `std.string.concat(left: a, right: b)`, `Port(value: 8080)`. A case's value has no name: `Some(n)`, `Err(OutOfRange(n))`. Fields are read with a dot (`request.path`). There are no method calls (`x.f()`, E0220). The one exception is a function value, applied by position (below).
 - **Lists.** `[1, 2, 3]` is a `List<Int>`. A list literal has at least one item; the stored text separates the items with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The item type comes from the expected type (a `let`, a parameter, `out` at a `return`, the left side of `==`), otherwise from the first item, and every other item must have it: `[1.0, 2]` is an error (E0204), and so is `[None, Some(1)]` without an expected type (E0210). The empty list is `std.list.empty<Int>()`; `[]` is an error whose fix names the item type when the expected type gives it (E0228). A `for` gives a literal it iterates its declared type as the item type, since it stands to the left: `for x: Option<Int> in [None, Some(1)]` is fine, and in `for x: Float in [1]` the `1` is an error with the fix `1.0` (E0204). There is no index access (`xs[0]`) and no `Int[]` (E0006): use `std.list.get(list: xs, index: 0)` and `List<Int>`.
 - **Maps.** `["a": 1, "b": 2]` is a `Map<String, Int>`. Every entry is `key: value`, with no space before the colon and one after it; a map literal has at least one entry, the stored text separates the entries with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The token after the first expression decides: a `:` makes the literal a map, so every entry has one, the first one too. Keys are `Int` or `String` (E0229), wherever a `Map` type arises: written (`Map<Float, Int>`), in a literal (`[1.5: 1]`), or built by a std call (`std.map.empty<Point, Int>()`, a `std.map.from_list` whose key function returns a record); key a map by an `Int` or `String` field instead, or keep a `List` of records. The key and value types come from the expected type, otherwise from the first entry, as for a list. A key is a value, so a text key is in quotes: `["name": 1]`; a bare unknown name as a key (`[name: 1]`) is E0203 with the quoted text as its fix. Two equal literal keys are an error (E0234); two computed keys that turn out equal trap (`key`). The empty map is `std.map.empty<String, Int>()`; `[:]` is an error whose fix names the types when the expected type gives them (E0228), and so is `[]` where a map is expected. There is no index access (`m["a"]`, E0006): `std.map.get(map: m, key: "a")` gives an `Option`. A `for` iterates over a list, so over `std.map.keys` or `std.map.to_list` of a map (E0204).
 - **Explicit type arguments (1.4).** They are written exactly when a type parameter of the function occurs in no parameter type, and never otherwise (E0209): `std.list.empty<Int>()`, but `std.list.map(list: xs, with: ...)`.
@@ -540,8 +572,8 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Comparison and logic.** `==` and `!=` work on every type without functions, by structure (3.9). `< <= > >=` work only on `Int`, `Float` and `String` (E0211); other types are ordered by a function that returns `Order`. The logical operators are `and`, `or` and `not`. `not` binds more loosely than comparison: `not a == b` means `not (a == b)`. Mixing `+ -` with `* / %`, or `and` with `or`, needs parentheses (3.5). Within `* / %`, or within `+ -`, operators group from the left without them: `12 * 5 / 4` is `(12 * 5) / 4`. Parentheses that 3.5 does not require are dropped from the stored text. `==` compares variant values too (`outcome == Err(std.fs.NotFound)`); to branch on several cases, use `match`.
 - **Lambdas (2.4).** `fn(item: Int): Int => item * factor` has typed parameters, a result type, and one expression as its body: no `let` and no `return` (E0219). It has no effects (E0232) and may read the bindings around it. A lambda used as an operand is put in parentheses. Since its body is one expression, an `Option` inside it is unwrapped with `std.option.with_default` (or changed with `std.option.map`), and the `Some` results of a function over a list are kept with `std.list.filter_map`; neither needs a helper function.
 - **Function types.** A function type lists its parameter types in parentheses, at least one, then `->` and the result type: `(Int) -> Bool`, `(Row, Row) -> Order`. It stands wherever a type does (a parameter, a field, a case's value, a `let`, a `for`, a lambda, a type argument such as `List<(Int) -> Bool>` or `std.list.empty<(Int) -> Bool>()`), and it nests: `((Int) -> Int) -> Int` takes a function, `(Int) -> (Int) -> Int` gives one. Function types are pure (2.4).
-- **Function values.** Where a std function takes a function, a function name can be passed instead of a lambda (`by: std.int.compare`, `with: double`). The function must be pure (E0232) and not generic; a generic one needs a lambda (E0210). The exception is the `handler` of `std.http.serve`, which may have effects; the caller then declares them (E0230).
-- **Names.** A plain name means a local first, then a function of the own module. A path followed by `(` is always a call, so a local may share its name with a function: `let total: Int = total(items: xs)`. A local named like the first segment of a module hides calls into that module: with a parameter `net`, `net.port.parse(...)` reads as a method call (E0220). Choose another name.
+- **Function values.** A value of a function type is a lambda, a local or field that holds one, or the name of a pure function that is not generic (`by: std.int.compare`, `with: double`; E0232 for one with effects, E0210 for a generic one, which needs a lambda). A function value is applied by position, `by(a, b)`, since its type names no parameters. With names it is E0220, a value that is no function or a wrong number of arguments is E0238, and a function defined with `fn` called by position is E0107, whose fix names the parameters. Applying is pure, so it may stand in a lambda, a condition or an example; `with effects` belongs to the `handler` of `std.http.serve` alone, which may have effects, and the caller then declares them (E0230). An example passes a function as a lambda or by name: `first_true(low: 0, high: 5, test: fn(n: Int): Bool => n > 9) == None`. Function values have no `==` and no `std.text.show` (E0222).
+- **Names.** A plain name means a local first, then a function of the own module. A path followed by `(` and named arguments, or by `()`, always calls a function defined with `fn`, so a local may share its name with a function: `let total: Int = total(items: xs)`. Followed by `(` and unnamed arguments, it applies a local function value (above). A local named like the first segment of a module hides calls into that module: with a parameter `net`, `net.port.parse(...)` reads as a method call (E0220). Choose another name.
 
 ### 7.6 Contracts and examples
 
@@ -888,6 +920,7 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | E0234 | A key written twice in a map literal |
 | E0235 | A `let` that binds `Unit` |
 | E0236 | A name that only some patterns of a shared case bind |
+| E0238 | Applying a value that is no function, or with the wrong number of arguments |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0403 | Missing, failing and trapping examples |
 | E0501 to E0514 | Codebase operations |

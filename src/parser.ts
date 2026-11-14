@@ -340,9 +340,11 @@ class Parser {
     return written as Effect;
   }
 
+  // An application on the left (`twice(2) == 4`) parses, so that the checker
+  // can name the call with its parameter names (E0107).
   private example(): Expr {
     const e = this.expr();
-    if (e.kind !== "binary" || e.op !== "==" || e.left.kind !== "call") {
+    if (e.kind !== "binary" || e.op !== "==" || (e.left.kind !== "call" && e.left.kind !== "apply")) {
       this.fail("An example has the form `call(...) == expected`.", { code: "E0105" });
     }
     return e;
@@ -716,10 +718,51 @@ class Parser {
       this.next();
     }
     const typeArgs = this.tryTypeArgs();
+    if (typeArgs === null && this.isSymbol("(") && this.opensApplication()) {
+      return { kind: "apply", target: { kind: "name", path: segments }, args: this.applicationArgs() };
+    }
     if (typeArgs !== null || this.isSymbol("(")) {
       return { kind: "call", path: segments, typeArgs: typeArgs ?? [], args: this.args() };
     }
     return { kind: "name", path: segments };
+  }
+
+  // At `(`: whether unnamed arguments follow, which apply a function value
+  // (F2). Named arguments or `()` call a function defined with `fn`; the
+  // first argument decides, as in `payload()`.
+  private opensApplication(): boolean {
+    let i = 1;
+    while (this.peek(i).kind === "newline") i++;
+    if (this.isSymbol(")", i)) return false;
+    return !(this.peek(i).kind === "name" && this.isSymbol(":", i + 1));
+  }
+
+  // `(a, b)` of an application: at least one argument, by position. Line
+  // breaks inside the parentheses are ignored, as in a call.
+  private applicationArgs(): Expr[] {
+    this.expectSymbol("(");
+    this.skipNewlines();
+    const args = [this.applicationArg()];
+    this.skipNewlines();
+    while (this.isSymbol(",")) {
+      this.next();
+      this.skipNewlines();
+      if (this.isSymbol(")")) this.fail("An argument list ends after its last argument; remove the comma before `)`.");
+      args.push(this.applicationArg());
+      this.skipNewlines();
+    }
+    this.expectSymbol(")");
+    return args;
+  }
+
+  private applicationArg(): Expr {
+    if (this.peek().kind === "name" && this.isSymbol(":", 1)) {
+      this.fail(
+        "A function value takes its arguments by position, without names: `by(a, b)`; a function defined with `fn` takes every argument by name.",
+        { code: "E0107" },
+      );
+    }
+    return this.expr();
   }
 
   // `<T, U>` directly followed by `(`, or null without consuming anything.

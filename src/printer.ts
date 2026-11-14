@@ -220,6 +220,8 @@ export function printExpr(e: Expr, indent: string): string {
       const typeArgs = e.typeArgs.length === 0 ? "" : `<${e.typeArgs.map(printTypeRef).join(", ")}>`;
       return `${pathText(e.path)}${typeArgs}(${printArgs(e.args, indent)})`;
     }
+    case "apply":
+      return `${pathText(e.target.path)}(${e.args.map((a) => printExpr(a, indent)).join(", ")})`;
     case "construct":
       return pathText(e.path) + printPayload(e.payload, indent);
     case "list":

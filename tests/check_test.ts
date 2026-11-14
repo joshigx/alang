@@ -105,6 +105,7 @@ Deno.test("check: spec programs are accepted", () => {
   clean(specBlock("fn hello.main"));
   clean(specBlock("type net.port.Port"));
   clean(specBlock("fn math.clamp"));
+  clean(specBlock("fn calc.first_true"));
 });
 
 // The type config.load_port relies on, which the spec leaves out, plus the
@@ -1116,6 +1117,140 @@ Deno.test("check: an empty collection of a function type is written with its typ
   clean(source.replace(d.at, d.fix!.with));
   const guess = one(fn("let fs: List<(Int) -> Int> = std.list.empty()\nreturn 0"), "E0209");
   assertEquals(guess.fix, { replace: "std.list.empty()", with: "std.list.empty<(Int) -> Int>()" });
+});
+
+// ---- applying function values (F2, F7) ----
+
+const TWICE = pureFn("twice", "x: Int", "Int", "x * 2", "twice(x: 1) == 2");
+
+Deno.test("check: a function value is applied by position (F2)", () => {
+  clean(fn("if test(n) then\n  return 1\nend if\nreturn 0", { params: ["n: Int", "test: (Int) -> Bool"] }));
+  clean(fn("return rule.broken(line)", { params: ["rule: Rule", "line: String"], out: "Bool", extra: FNS }));
+  clean(fn("return std.list.map(list: xs, with: fn(x: Int): Int => h(x))", {
+    params: ["xs: List<Int>", "h: (Int) -> Int"],
+    out: "List<Int>",
+  }));
+  // Applying is pure: in a condition and in an example's lambda too.
+  clean(
+    fn("return low", {
+      params: ["low: Int", "high: Int", "by: (Int, Int) -> Order"],
+      requires: "by(low, high) != Greater",
+    }),
+  );
+  clean(
+    fn("return h(h(x))", {
+      params: ["h: (Int) -> Int", "x: Int"],
+      examples: ["f(h: fn(n: Int): Int => n + 1, x: 1) == 3"],
+    }),
+  );
+  // Beside a module function of the same name, unnamed arguments apply the
+  // parameter and named ones call the function (7.5).
+  clean(fn("if check(1) and check(n: 1) then\n  return 1\nend if\nreturn 0", {
+    params: ["check: (Int) -> Bool"],
+    extra: pureFn("check", "n: Int", "Bool", "n > 0", "check(n: 1) == true"),
+  }));
+});
+
+Deno.test("check: an application works with the statements (F2, T1, T7, T11)", () => {
+  clean(fn("check(x) else return Err(error)\nreturn Ok(Unit)", {
+    params: ["x: Int", "check: (Int) -> Result<Unit, String>"],
+    out: "Result<Unit, String>",
+  }));
+  clean(fn("let [first, second]: List<(Int) -> Int> = fs else return 0\nreturn first(second(1))", {
+    params: ["fs: List<(Int) -> Int>"],
+  }));
+  // A name that not every pattern of a shared case binds is hidden there.
+  const hidden = one(
+    fn("let ok: Bool = match c\n  case Custom(test) or Off then\n    test(1)\nend match\nreturn 0", {
+      params: ["c: Check"],
+      extra: FNS,
+    }),
+    "E0236",
+  );
+  assertEquals(hidden.at, "test");
+});
+
+Deno.test("check: a function defined with fn called by position gets its names as fix (E0107)", () => {
+  const message =
+    "`twice` is defined with `fn`, so every argument carries its parameter name (4.1); only a function value is applied by position.";
+  const source = fn("return twice(x)", { params: ["x: Int"], extra: TWICE });
+  const d = one(source, "E0107");
+  assertEquals([d.at, d.message, d.expected, d.fix], [
+    "twice(x)",
+    message,
+    "twice(x: x)",
+    { replace: "twice(x)", with: "twice(x: x)" },
+  ]);
+  clean(source.replace(d.at, d.fix!.with));
+  const compare = one(
+    fn("return 0", { params: ["a: Int", "b: Int"], requires: "std.int.compare(a, b) == Less" }),
+    "E0107",
+  );
+  assertEquals(compare.fix, { replace: "std.int.compare(a, b)", with: "std.int.compare(left: a, right: b)" });
+  // Another count: no fix, the parameters as expected.
+  const count = one(fn("return twice(1, 2)", { extra: TWICE }), "E0107");
+  assertEquals([count.expected, count.fix], ["twice(x: Int)", null]);
+  // The named call is checked at the written text: its own causes are
+  // reported there, and nothing follows from the missing names (5.6).
+  const typed = check(fn("return twice(x: 1) + twice(true)", { extra: TWICE }));
+  assertEquals(typed.map((d) => [d.code, d.at]), [["E0107", "twice(true)"], ["E0204", "true"]]);
+  const long = check(fn("return m.twice(1)", { extra: TWICE }));
+  assertEquals(long.map((d) => [d.code, d.at, d.fix?.replace]), [
+    ["E0107", "m.twice(1)", "m.twice(1)"],
+    ["E0226", "m.twice(1)", "m.twice"],
+  ]);
+  // In an example, E0107 instead of E0221.
+  const example = one(pureFn("twice", "x: Int", "Int", "x * 2", "twice(2) == 4"), "E0107");
+  assertEquals([example.section, example.at, example.fix], ["examples", "twice(2)", {
+    replace: "twice(2)",
+    with: "twice(x: 2)",
+  }]);
+  const unknown = one(fn("return nothing(1)"), "E0201");
+  assertEquals(unknown.message, "Unknown function `nothing`.");
+});
+
+Deno.test("check: named arguments on a function value get the application as fix (E0220)", () => {
+  const method = one(fn("return std.list.length(list: xs.map(f))", { params: ["xs: List<Int>"] }), "E0220");
+  assertEquals([method.at, method.message], [
+    "xs.map(f)",
+    "There are no method calls (3.1); `xs` is a value. Pass it as a named argument instead.",
+  ]);
+  const named = one(fn("return h(x: 1)", { params: ["h: (Int) -> Int"] }), "E0220");
+  assertEquals([named.message, named.expected, named.fix], [
+    "`h` is a function value of type `(Int) -> Int`; it takes its arguments by position, without names (4.1).",
+    "h(1)",
+    { replace: "h(x: 1)", with: "h(1)" },
+  ]);
+  const field = one(
+    fn("return rule.broken(line: l)", { params: ["rule: Rule", "l: String"], out: "Bool", extra: FNS }),
+    "E0220",
+  );
+  assertEquals(field.fix, { replace: "rule.broken(line: l)", with: "rule.broken(l)" });
+  const none = one(fn("return h()", { params: ["h: (Int) -> Int"] }), "E0220");
+  assertEquals([none.expected, none.fix], ["(Int) -> Int", null]);
+  // Each value against the parameter at its position (5.6).
+  one(fn("return h(x: None)", { params: ["h: (Option<Int>) -> Int"] }), "E0220");
+  const length = one(fn("let xs: List<Int> = std.list.empty<Int>()\nreturn xs.length()"), "E0220");
+  assertEquals(
+    length.message,
+    "There are no method calls (3.1); `xs` is a value. Pass it as a named argument instead.",
+  );
+});
+
+Deno.test("check: only a function value is applied, with as many arguments as its type has (E0238)", () => {
+  const value = one(fn("return count(1)", { params: ["count: Int"] }), "E0238");
+  assertEquals(value.message, "`count` has type `Int` and is not a function value, so it cannot be applied.");
+  const by = one(fn("return 0", { params: ["by: (Int, Int) -> Order"], requires: "by(1) == Less" }), "E0238");
+  assertEquals([by.message, by.expected], [
+    "`by` takes 2 arguments, found 1: its type is `(Int, Int) -> Order`.",
+    "(Int, Int) -> Order",
+  ]);
+  // The arguments still get their parameter types, so `None` adds no E0210.
+  one(fn("return pick(None)", { params: ["pick: (Option<Int>, Int) -> Int"] }), "E0238");
+  assertEquals(
+    one(fn("return 0", { params: ["by: (Int, Int) -> Order"], requires: 'by(1, "a") == Less' }), "E0204").at,
+    '"a"',
+  );
 });
 
 // ---- maps ----

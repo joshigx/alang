@@ -524,6 +524,10 @@ class DefinitionEmitter {
         const call = `${callee}${typeArgs}(${e.args.map((a) => this.expr(a.value, scope)).join(", ")})`;
         return this.info.effectful.has(e) ? `(await ${call})` : call;
       }
+      // Never awaited: every function value outside std's handler is pure
+      // (F3), and pure functions are synchronous.
+      case "apply":
+        return `${this.expr(e.target, scope)}(${e.args.map((a) => this.expr(a, scope)).join(", ")})`;
       case "construct": {
         const last = e.path[e.path.length - 1];
         const builtin = e.path.length === 1 && BUILTIN_VALUES.has(last);
