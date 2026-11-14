@@ -18,8 +18,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   and docs containing a text. Each hit holds its signature (parameters, result, effects; fields or cases) and doc.
 - \`search_type("String, String -> List<String>")\` finds functions by signature: parameter types in order, \`_\` for
   any type; the count and the result must match.
-- \`context(name)\` gives a definition's text (examples, body) and hash and the signatures of what it uses: read code
-  this way, not from \`export/\`. To use a std function or type its hit is enough; \`context\` adds the types it mentions.
+- \`context(name)\` gives a definition's text (examples, body) and hash, the signatures of what it uses and the text
+  of the constants it uses: read code this way, not from \`export/\`.
 - \`add(text)\` adds a definition, \`replace(name, hash, text)\` replaces the version whose hash a query returned, and
   \`submit(changes)\` sends several as one transaction: definitions that use each other, or an interface change with
   its callers. Nothing is written unless all of it is accepted.
@@ -28,20 +28,20 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 
 ## Definitions
 
-- A definition is a \`fn\` or a \`type\` with a full name, module first: \`temp.fahrenheit\`, \`net.port.Port\`. \`std\` is
-  reserved. \`snake_case\` for values, functions and modules, \`PascalCase\` for types and cases.
+- A definition is a \`fn\`, a \`type\` or a \`const\` with a full name, module first: \`temp.fahrenheit\`, \`net.port.Port\`.
+  \`std\` is reserved. \`snake_case\` for values, functions and modules, \`PascalCase\` for types and cases.
 - \`fn\`: the sections \`doc: "..."\`, \`in:\`, \`out: Type\`, \`effects:\`, \`requires:\`, \`ensures:\`, \`examples:\`, \`body:\`,
   all present, in this order, then \`end fn <full name>\`. An empty section is \`none\`. \`in:\` is \`none\` or one
   \`name: Type\` per line below it.
-- \`type\`: \`doc\`, then \`record:\` (one \`name: Type\` per line) or \`variant:\` (one case per line, \`Name\` or
-  \`Name: Type\`, at most one value), then \`where:\` (\`none\` or an invariant over the fields; \`none\` for a variant),
-  then \`end type <full name>\`.
+- \`type\`: \`doc\`, then \`record:\` (a \`name: Type\` per line) or \`variant:\` (a case per line, \`Name\` or \`Name: Type\`,
+  at most one value), then \`where:\` (\`none\`, or an invariant over a record's fields), then \`end type <full name>\`.
+- \`const\`: \`doc\`, \`out: Type\`, \`body:\` ending in \`return\`, then \`end const <full name>\`. A named value for a table
+  or a limit: pure, no examples, used as \`limit\` (not \`limit()\`), not a pure \`fn\` with \`in: none\`.
 - Names of the own module are short (\`Problem\`, \`fahrenheit\`, \`NotANumber\` in \`temp\`). All others are in full, std
   included, and enclosing or nested modules count as others. A case's full name is \`module.Case\`
   (\`std.fs.NotFound\`), so case names are unique per module. Built-ins are always short: \`Int Float Bool String
   Unit List<T> Map<K, V> Option<T> Result<T, E> Order\` and \`Some None Ok Err Less Equal Greater\`.
-- Keywords, section words included (\`in\`, \`out\`, \`type\`, \`body\`, \`end\`, \`record\`), name nothing. \`result\` and
-  \`error\` name no parameter or binding (E0109).
+- Keywords (section words too: \`in\`, \`out\`, \`type\`, \`body\`, \`end\`) name nothing, nor do \`result\` and \`error\` (E0109).
 - \`main\`: \`in: none\`, \`out: Unit\` or \`out: Result<Unit, String>\` (an \`Err\` goes to stderr, exit code 1). Its I/O
   errors become text: \`let t: String = std.fs.read_text(path: p) else return Err(std.fs.describe(error: error))\`.
 
@@ -81,9 +81,9 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   functions, \`< <= > >=\` on \`Int\`, \`Float\` and \`String\`; logic is \`and\`, \`or\`, \`not\`. Mixing \`+ -\` with \`* / %\`, or
   \`and\` with \`or\`, needs parentheses: \`(c * 9 / 5) + 32\`. Only a literal takes a minus (\`-3\`); write \`0 - x\`.
 - Lambdas: \`fn(item: Int): Int => item * factor\`, one expression, pure (E0232), reading the bindings around them.
-  A pure function's name is a value too: \`by: std.string.compare\`. A parameter, field or \`let\` may have a function
-  type such as \`(Int, Int) -> Order\`, applied by position: \`by(a, b)\`. No \`fn\` returns one, even in a list or record
-  (E0237). An \`Option\` inside a lambda is unwrapped with \`std.option.with_default\` or \`std.list.filter_map\`.
+  A pure function's name is a value: \`by: std.string.compare\`. A parameter, field or \`let\` may have a function type,
+  \`(Int, Int) -> Order\`, applied by position: \`by(a, b)\`. No \`fn\` returns one, even in a list or record (E0237);
+  a table of them is a \`const\`. Unwrap an \`Option\` in a lambda with \`std.option.with_default\` or \`std.list.filter_map\`.
 - Strings: double quotes, on one line. The escapes are only \`\\"\`, \`\\\\\`, \`\\n\`, \`\\t\` and \`\\u{1B}\` (uppercase hex) for
   other control characters (\`\\r\` is \`\\u{D}\`); every other character is itself (\`"é"\`). Join with \`std.string.concat\`
   or \`std.string.join(parts: [a, b], separator: "")\`, never \`+\`. A value as text: \`std.text.show(value: v)\`.
