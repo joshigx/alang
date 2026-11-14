@@ -174,6 +174,22 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     and apply the function where it is used; the card says a table of functions is a `const`. The card teaches
     constants (159 lines, 9,896 bytes). The spec gains `const shop.sizes` with `shop.is_size` (7.3), accepted with its
     examples. Decisions in `decisions.md`, rows listed in the review list below. 400 tests. See "From const".
+24. Generic definitions, on branch `generics` (plan in `docs/plans/generics.md`; the main session took every
+    recommendation, G1 to G19), one commit per plan step. Generic functions: `fn util.last<T>`, one capital letter
+    per type parameter, the end line without them (G1, G3); inside its definition a type parameter is a rigid type
+    that equals only itself, while callers see variables that each call binds as for std (G6); each letter occurs in
+    a parameter type or `out` (E0250, the phase's one new code, with the fix removing it) and is written once (E0215)
+    (G5). A value of a type parameter has no `==`, `show`, `contains`, order or map key (E0222, E0211, E0229), unless
+    the other side of `==` is built from literals and cases, which also loosens E0222 for function types (G2, G2b). A
+    type parameter hides the module's type or case of its letter, written in full there (G4); letters name nothing in
+    examples (E0202, G12). TypeScript generics with the checked type arguments at user calls (G16); Node.js runs them.
+    In the codebase, letters are no references, hits and `search_type` show and match them as std's, and renaming
+    one throughout is no interface change (G13 to G15). A case names its type arguments where neither the expected
+    type nor its value gives them, `None<Int>`, and E0209 where they are given (G7). A generic function passed by
+    name takes its type arguments from the function type there (G9, resolving fn-types' F10). The spec gains
+    `util.contains_by` (7.3), accepted with its examples; the card names the header and `None<Int>` (159 lines,
+    9,873 bytes). Generic types (commit 5) and the habit diagnostics (commit 6) follow. Decisions in `decisions.md`,
+    rows listed in the review list below. 429 tests. See "From generics".
 
 **Next (2026-11-14, overnight run, updated by the main session at ~06:15):** `std-net` (item 20), `statements`
 (item 21), `fn-types` (item 22) and `const` (item 23, with R7 of `docs/plans/records.md`) are built, their rounds
@@ -213,7 +229,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided (`const` built, item 23).
 
-**Checks before every commit:** `deno task test` (400 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (429 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -411,7 +427,7 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   function value, E0107 for a `fn` called by position moved to the checker, with the named call as fix; F8 function
   types written in fixes and actual values (H5 left for zero-parameter types only); F9 `search_type` patterns with
   function types, a whole pattern in parentheses read as the top-level form; F10 a generic function stays no value
-  (E0210); F11 records and cases may hold function values (no `==`, `show`, `contains`). Mine beyond the plan: the
+  (E0210; superseded by G9, item 24); F11 records and cases may hold function values (no `==`, `show`, `contains`). Mine beyond the plan: the
   named call that E0107 checks quotes the written application (`call()` takes the `at`), so a long own-module name
   in it is E0226 at `m.twice(1)` beside E0107; the E0107 and E0220 fixes only when the text is one line; E0238 at the
   whole application; a named call on a function value marks the local used; `fieldPath` reports nothing, so a
@@ -468,6 +484,35 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   Type checking (Names, Own module names, Constants, Function values, Function results), Examples and acceptance
   (Constants, Missing examples), Database (`context`, Constants), MCP server (Hits, Card), Temporary limits, Open
   questions (Form of `extern fn`, Rejecting a pure function without parameters, A constant named in a contract).
+- Generic definitions (item 24, 2026-11-14; the main session took every recommendation of `docs/plans/generics.md`,
+  G1 to G19, built without the user's review). Language changes first: G1 type parameters after the name, `fn
+  util.last<T>`, the end line without them; G2 no `==`, `!=`, order, `std.text.show`, `std.list.contains` or map key
+  on a type parameter (E0222, E0211, E0229), the function taking what it needs as a parameter; G2b `==` and `!=` on
+  every type when one side is built only from literals, cases and empty collections (`option == None`), which also
+  loosens E0222 for function types; G3 one capital letter each, written once (E0215); G4 a type parameter hides the
+  module's type, record or case of its letter, written in full there (not E0226), the short form E0203 with a fix;
+  G5 every letter in a parameter type or `out` (E0250 with a fix); G6 a rigid type inside the definition, no
+  variance; G7 a case names its type arguments exactly where neither the expected type nor its value gives them
+  (`None<Int>`, E0210), E0209 with a fix where they are given, records never; G9 a generic function passed by name
+  takes its type arguments from the function type expected there (resolves F10); G10 F4 stays (no `fn` returns a
+  function, generic or not); G11 a constant is not generic. The others: G12 examples at concrete types, letters
+  E0202 there; G13 a type parameter compared by position in the interface; G14 letters are no references, E0510
+  names type parameters; G15 hits and `search_type` treat stored type parameters as std's; G16 TypeScript generics
+  with explicit type arguments at user calls; G17 the card's cuts (what a hit holds, the pointer to `fahrenheit`,
+  `true`/`false`/`Unit`; the depth rule kept, shortened); G18 one phase with a split point before generic types;
+  G19 one new code, E0250. Mine beyond the plan: the tests in three new files (`tests/generics_test.ts`,
+  `generics_db_test.ts`, `generics_fixtures.ts`) with their own TypeScript check, as `const` did, the two flips in
+  `check_test`; E0202 for a one-letter unknown type in a function names the header with the letter (also outside a
+  generic function, without a fix); the E0203 for a letter names "the record", "the case" or "the type" `m.T`; E0250
+  once per unused letter, each fix removing its own; messages and fixes inside a generic definition write a module
+  type named like a letter in full (`showType` and `toTypeRef` take the letters); E0237's constant text skips
+  generic functions too, not only E0401 (G11); E0209 on `Unit<Int>` reads "`Unit` takes no type arguments."; E0210
+  for two letters says "with types for `T` and `E`"; a generic function passed by name is checked for effects
+  (E0232) after E0210 when no function type is there, since there is nothing to instantiate; the 7.10 sentences went
+  into the database commit, and the 7.3 generic bullet after the constants block. In `decisions.md`: Syntax
+  (`f<T>(...)` vs `a < b`, Generic definitions, Case type arguments), Semantics and runtime (Representation in TS),
+  Type checking (`Ok`, `Err`, `None`, Type parameters, Explicit type arguments, Map keys, Order, Own module names,
+  Function values, Uniqueness, std signatures), Database (Interface rule, Rename capture, `search(type)`, Hits).
 
 ## Database phase: open points (2026-11-12)
 
@@ -1351,9 +1396,10 @@ Left for later:
 
 - **F4 revisited in `const` and `generics`:** a table of functions as a constant (no examples, so F4's reason does
   not apply) and a `fn` returning a function (`compose`). Loosening E0237 breaks no program. The `const` part is done
-  (item 23): a constant may hold functions, and F4 stays for `fn`.
+  (item 23): a constant may hold functions, and F4 stays for `fn`; `generics` kept it too (G10, item 24).
 - **Generic functions as values (F10):** E0210 stays even where an expected function type would fix the type
-  arguments (`let n: (List<Int>) -> Int = std.list.length`); instantiation belongs to `generics`.
+  arguments (`let n: (List<Int>) -> Int = std.list.length`); instantiation belongs to `generics`. Resolved (item 24,
+  G9): such a function takes its type arguments from the function type there.
 
 ## From the rank round (2026-11-14)
 
@@ -1416,7 +1462,8 @@ Left for later:
 - **Prompt gaps** for the round's prompt and reference: argument vs file order, CRLF, `-0`, the bounds of `n` and
   `amount`.
 - **`std.int.parse` gives the same `None`** for not-a-number and too-large.
-- **F4 for functions with parameters** (`compose`): `generics`.
+- **F4 for functions with parameters** (`compose`): `generics`. Decided there (G10, item 24): F4 stays, since its
+  reason, that the examples could not compare the result, does not depend on generics.
 
 ## From const (2026-11-14)
 
@@ -1497,6 +1544,42 @@ Left for later:
 - **A field-application example on the card** (`m.value(p)`), if more unneeded `let`s appear; the card has 1 line and
   344 bytes left.
 
+## From generics (2026-11-14)
+
+Built from `docs/plans/generics.md` (written at `9ba84a8`, before `statements`, `fn-types` and `const`) on
+`generics`, from `main` at `508243c`. What the build observed that is not decided:
+
+- **The plan predated three phases.** Its references were re-grepped: `TypeRef`, `apply`, `ConstDef`, `readings`
+  (the plan's `resolveName`), `Arm.patterns`, `Scope.hiddenWhy` and `applyOwnFixes` were as planned or needed
+  nothing. Two places it did not know: E0237's constant text (from `10c6d30`) offered a constant for a generic `fn`
+  without parameters as E0401 did, and both skip generic functions now; and `fieldPath`, which reads record fields
+  as declared, needs the substitution of generic types (commit 5).
+- **Two of the plan's expectations were off.** `List<Int> -> Option<Int>` also finds the test's `util.tail_of`
+  (plain `List<Int>`), and E0506 for two sections reads "changes its `in`, `out` section" (an older wording, kept).
+- **Generic output runs on Node.js.** A module with `util$last<T>` and calls `util$last<number>(...)`, imported by
+  `node` 26.13.0 with type stripping, runs (probed).
+- **G4 in actual values.** Messages and fixes write `m.T` in full inside a definition with the letter `T`, but an
+  example's actual value (E0402) still shows a module record `m.T` short, `T(n: 1)`, as it would outside. Rare; an
+  `examples.ts` change if it ever confuses.
+- **G2b is syntactic** (the plan's Risks): `o == None` passes, `o == none_value` with a local `none_value:
+  Option<T>` is E0222, whose message names the literal form only through "tell cases apart with `match`".
+- **Unbound type arguments in TypeScript.** A call of a user generic function whose type argument stayed unbound
+  (an argument of type `Never`) gets no TypeScript type arguments; no accepted program was found that does it.
+- **`info.instances` holds std calls too**, unused by the emitter, which writes only the written type arguments for
+  std (`std$text$show(value: unknown)` is not generic in TypeScript).
+
+Left for later:
+
+- **One-letter `search_type` pattern variables** (`List<T> -> Option<T>` meaning any type), and a `search_type`
+  description that names type parameters: no round has used `search_type` (the plan's Scope).
+- **Bounds** (`<T: Ord>`), if a round asks for them twice; 2.6 rules out traits, and the function parameter is the
+  form.
+- **Normalizing letters in contracts** for the interface (G13): a contract that names `T` still changes as printed.
+- **The E0204 fix for a generic function without parameters** (`let xs: List<Int> = std.list.empty`, from `const`)
+  is still two steps.
+- **The round `shop`** (`~/coding_projects/alang-rounds/prompts/shop.md`, reference `shop-reference.ts`): the main
+  session's.
+
 ## Spec observations
 
 - `config.load_port` (section 2) uses `LoadError`, `FileUnreadable`, `InvalidPort` and `std.fs.read_text` /
@@ -1506,7 +1589,8 @@ Left for later:
 - The grammar has no syntax for function types, which the std library needs (`std.list.sort(by: ...)`). The list
   literal is in the grammar since item 15. Resolved (item 22): `type` has the form `(T, U) -> V`, and `expr` an
   `apply`.
-- The grammar has no way to declare a generic function or a generic type. Only builtins are generic.
+- The grammar has no way to declare a generic function or a generic type. Only builtins are generic. Resolved
+  (item 24): `fn_def` takes `type_params`, and a construction type arguments.
 - 5.5 shows a diagnostic with a `fix`; the spec does not say whether a fix may span several places.
 - The grammar excerpt has no `"(" expr ")"`, although 3.5 requires parentheses, and does not say how `* / %` group
   among themselves (from the left). Section 7.5 now states both; the grammar itself is the user's sketch.
