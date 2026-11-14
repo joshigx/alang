@@ -12,6 +12,10 @@
 //   would surface only as a trap at runtime.
 // - type: its shape (record or variant), fields, cases with payloads, in
 //   order, and `where`.
+// - const: its `out`. Its body, the value, is not: acceptance re-runs every
+//   example, so a caller whose example states the old value is rejected.
+// - A `fn` that becomes a `const` of the same name, or back, changes how
+//   every caller writes it.
 //
 // Contracts are compared as printed, since there is no proof that one
 // implies the other yet (5.2): any change counts. Types are compared by full
@@ -27,6 +31,9 @@ export interface InterfaceChange {
   // `ensures`, `record`, `variant`, `where`.
   readonly sections: readonly string[];
   readonly addedEffects: readonly Effect[];
+  // A value that turns from a `fn` into a `const` or back (C7): every
+  // caller is affected, so no section is named.
+  readonly kind?: { readonly from: string; readonly to: string };
 }
 
 function fullType(t: TypeRef, module: Path): string {
@@ -41,7 +48,7 @@ function fullType(t: TypeRef, module: Path): string {
 
 function shapeKey(def: Definition): string {
   const module = moduleOf(def.path);
-  if (def.kind === "fn") return "";
+  if (def.kind !== "type") return "";
   if (def.shape.kind === "record") {
     return def.shape.fields.map((f) => `${f.name}: ${fullType(f.type, module)}`).join(", ");
   }
@@ -71,7 +78,13 @@ export function interfaceChange(before: Definition, after: Definition): Interfac
     if (contract(before.where) !== contract(after.where)) sections.push("where");
     return { sections, addedEffects: [] };
   }
-  throw new Error("interfaceChange: the two versions differ in kind");
+  // A constant's interface is its type; its body, the value, is not (C8).
+  if (before.kind === "const" && after.kind === "const") {
+    const out = (d: typeof before) => fullType(d.out, moduleOf(d.path));
+    return { sections: out(before) === out(after) ? [] : ["out"], addedEffects: [] };
+  }
+  // Only a `fn` and a `const` can share a name: both are snake_case.
+  return { sections: [], addedEffects: [], kind: { from: before.kind, to: after.kind } };
 }
 
 // Full names of the cases of a variant type; none for anything else.

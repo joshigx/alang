@@ -89,7 +89,7 @@ end fn net.port.parse
 
 At every point in the text, everything needed for the next token already stands before it. Reason: an LLM produces token after token and cannot take anything back.
 
-- **1.1 Fixed section order.** A function consists of `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, in exactly this order. Every section is mandatory; an empty section is written `none`.
+- **1.1 Fixed section order.** A function consists of `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, in exactly this order, and a constant of `doc`, `out`, `body`. Every section is mandatory; an empty section is written `none`.
 - **1.2 No imports.** There is no import statement. Names from the same module are written short, all others fully qualified (`std.int.parse`). Built-in types and their variants (`Int`, `Ok`, `None`) are always written short.
 - **1.3 Type before value.** Every binding states its type before the expression: `let n: Int = …`. Parameters and the result of a lambda always carry types.
 - **1.4 Types flow forward only.** The type of an expression follows from the expected type and the text to its left. If a type argument cannot be determined this way, it is written explicitly: `std.list.empty<Int>()`.
@@ -160,6 +160,7 @@ For every purpose the grammar permits exactly one form, and every definition has
 | Purpose | Only form |
 | --- | --- |
 | Bind a value | `let name: Type = expression` |
+| Name a value for a whole module | `const module.name` with `doc`, `out` and `body`, used as `name` |
 | Branch | `if … then … else … end if` |
 | Distinguish variants | `match … case … then … end match`; variants handled alike share one `case A or B then` |
 | Propagate an error | `let name: Type = expression else return …`; with nothing to bind, `expression else return …` |
@@ -220,6 +221,12 @@ type_def   = "type" path
              "where:" ( "none" | expr )
              "end" "type" path ;
 
+const_def  = "const" path
+             "doc:" string
+             "out:" type
+             "body:" stmt { stmt }
+             "end" "const" path ;
+
 param      = name ":" type ;
 case       = TypeName [ ":" type ] ;
 example    = call "==" expr ;
@@ -255,7 +262,7 @@ No construct requires counting positions or tracking mutable state across severa
 - **4.1 Named arguments.** Every argument carries its parameter name, in declaration order. This also applies to records: `Port(value: 8080)`. A function value is the one exception: a function type such as `(Int, Int) -> Order` names no parameters, so a parameter, field or binding of that type is applied by position, `by(a, b)`, just as a case's value has no name (4.2). A function defined with `fn` is always called with named arguments.
 - **4.2 Variants carry at most one value.** It is written without a name: `Err(OutOfRange(n))`. Several values belong in a record.
 - **4.3 No tuples.** Composite values are records with named fields.
-- **4.4 Named block ends.** Blocks end with `end if`, `end for`, `end match`, `end fn <name>` or `end type <name>`. There are no curly braces and no significant indentation.
+- **4.4 Named block ends.** Blocks end with `end if`, `end for`, `end match`, `end fn <name>`, `end type <name>` or `end const <name>`. There are no curly braces and no significant indentation.
 - **4.5 No assignment.** Every binding is immutable. An intermediate result gets a new name.
 - **4.6 No index access.** The form `list[i]` does not exist. `std.list.get(list: xs, index: i)` returns `Option<T>`; for neighbours and positions there are `first`, `last`, `zip`, `enumerate` and `window`, and a list of known length is taken apart by name: `let [key, value]: List<String> = parts else return …` (3.2).
 - **4.7 Grouped numbers.** Integer literals with more than four digits carry `_` as a thousands separator: `65_535`, `1_000_000`.
@@ -309,8 +316,9 @@ Every definition carries its own checks, and a definition that does not satisfy 
 | `ensures` | Condition on `result` and the inputs | At every `return` |
 | `where` | Invariant of every value of a type | At every construction |
 | `examples` | Call and expected value | Executed at every acceptance |
+| `body` of a `const` | Its value | Evaluated at every acceptance |
 
-- **5.1 Examples are mandatory.** Every function with `effects: none` has at least one example. If one fails, the definition is rejected.
+- **5.1 Examples are mandatory.** Every function with `effects: none` has at least one example. If one fails, the definition is rejected. A constant has none: every acceptance evaluates it, and a constant whose evaluation traps is rejected.
 - **5.2 Proved or checked.** Conditions made of comparisons, linear integer arithmetic and `and`, `or`, `not` are proved statically by the checker. All others become runtime checks. The database records `proved` or `checked` for each condition.
 - **5.3 A violation is a trap.** A condition violated at runtime ends the program with a diagnostic.
 - **5.4 Conditions are pure.** `requires`, `ensures`, `where` and `examples` call only functions with `effects: none`.
@@ -508,7 +516,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 | Not available | Instead |
 | --- | --- |
-| `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
+| `extern fn` (not parsed yet, E0199) | Nothing yet: std is the only code that reaches TypeScript |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
 | A `fn` whose result holds a function value: `out: (Int) -> Int`, also inside a `List`, a `Map`, an `Option` or a record (E0237) | Choose the function where it is applied: `let by: (Row, Row) -> Order = ...` there, from a `match`, an `if` or a map literal; or take what decides it, such as a name, as a parameter |
@@ -538,8 +546,34 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Every name has a module.** Write `fn hello.main`, never `fn main`. The module `std` is reserved for the standard library (E0215).
 - **Sections.** As in 1.1 and the grammar. `in:` is `none` or one `name: Type` per line. `effects:` is `none` or a list in the order of the effect table (2.2), each effect once: `effects: fs.read, console` (otherwise E0111, with the corrected line).
 - **Types.** `record:` lists fields and `variant:` lists cases; a case carries at most one value (`OutOfRange: Int`, 4.2). `where:` is an invariant over the fields of a record; a variant has `where: none`.
+- **Constants.** `const shop.sizes` has the sections `doc`, `out` and `body`, then `end const shop.sizes`. The body is statements, as in a function, and ends in a `return` (E0218). A constant is pure (E0233), its type is neither `Unit` nor a function type (E0248; a function type inside it is fine, as in a table of functions), and it has no examples: every acceptance evaluates it, and a run evaluates it once, when it is first used. It is used by its name without parentheses (`limit()` is E0247): `sizes` in its module, `shop.sizes` elsewhere.
+
+```
+const shop.sizes
+  doc: "The sizes a shirt comes in, smallest first."
+  out: List<String>
+  body:
+    return ["S", "M", "L", "XL"]
+end const shop.sizes
+
+fn shop.is_size
+  doc: "Whether a text names one of the sizes."
+  in:
+    text: String
+  out: Bool
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    is_size(text: "M") == true
+    is_size(text: "XXL") == false
+  body:
+    return std.list.contains(list: sizes, item: text)
+end fn shop.is_size
+```
+
 - **Cases belong to the module.** A case's full name is `module.Case`, not `module.Type.Case`. So two types of one module cannot share a case name, and a case cannot share its name with a type of its module (E0215). Outside its module, a case is written in full: `std.fs.NotFound`, `net.port.OutOfRange`.
-- **The own module is written short (1.2).** Inside `net.port`, write `parse`, `Port` and `OutOfRange`. Names from any other module are written in full, std included: `std.http.Request`, `std.http.AddressInUse`. Enclosing and nested modules count as other modules. An own-module name written in full is E0226; the codebase stores it short by itself and lists it under `fixed`. One exception: a function passed as a value whose short name is also the name of a local is written in full.
+- **The own module is written short (1.2).** Inside `net.port`, write `parse`, `Port` and `OutOfRange`. Names from any other module are written in full, std included: `std.http.Request`, `std.http.AddressInUse`. Enclosing and nested modules count as other modules. An own-module name written in full is E0226; the codebase stores it short by itself and lists it under `fixed`. One exception: a function passed as a value, or a constant, whose short name is also the name of a local is written in full.
 - **Built-ins are always short.** `Int`, `Float`, `Bool`, `String`, `Unit`, `List`, `Map`, `Option` (`Some`, `None`), `Result` (`Ok`, `Err`) and `Order` (`Less`, `Equal`, `Greater`). No type or case may take one of these names (E0215).
 - **Uniqueness.** Definition names, parameters, fields, and case names within a module are unique (E0215).
 
@@ -574,7 +608,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Lambdas (2.4).** `fn(item: Int): Int => item * factor` has typed parameters, a result type, and one expression as its body: no `let` and no `return` (E0219). It has no effects (E0232) and may read the bindings around it. A lambda used as an operand is put in parentheses. Since its body is one expression, an `Option` inside it is unwrapped with `std.option.with_default` (or changed with `std.option.map`), and the `Some` results of a function over a list are kept with `std.list.filter_map`; neither needs a helper function.
 - **Function types.** A function type lists its parameter types in parentheses, at least one, then `->` and the result type: `(Int) -> Bool`, `(Row, Row) -> Order`. It stands wherever a type does (a parameter, a field, a case's value, a `let`, a `for`, a lambda, a type argument such as `List<(Int) -> Bool>` or `std.list.empty<(Int) -> Bool>()`), and it nests: `((Int) -> Int) -> Int` takes a function, `(Int) -> (Int) -> Int` gives one. Function types are pure (2.4).
 - **Function values.** A value of a function type is a lambda, a local or field that holds one, or the name of a pure function that is not generic (`by: std.int.compare`, `with: double`; E0232 for one with effects, E0210 for a generic one, which needs a lambda). A function value is applied by position, `by(a, b)`, since its type names no parameters. With names it is E0220, a value that is no function or a wrong number of arguments is E0238, and a function defined with `fn` called by position is E0107, whose fix names the parameters. Applying is pure, so it may stand in a lambda, a condition or an example; `with effects` belongs to the `handler` of `std.http.serve` alone, which may have effects, and the caller then declares them (E0230). No `fn` returns a function value, also not inside a list, a map or a record (E0237). An example passes a function as a lambda or by name: `first_true(low: 0, high: 5, test: fn(n: Int): Bool => n > 9) == None`. Function values have no `==` and no `std.text.show` (E0222).
-- **Names.** A plain name means a local first, then a function of the own module. A path followed by `(` and named arguments, or by `()`, always calls a function defined with `fn`, so a local may share its name with a function: `let total: Int = total(items: xs)`. Followed by `(` and unnamed arguments, it applies a local function value (above). A local named like the first segment of a module hides calls into that module: with a parameter `net`, `net.port.parse(...)` reads as a method call (E0220). Choose another name.
+- **Names.** A plain name means a local first, then a constant of the own module, then a function of the own module. A path followed by `(` and named arguments, or by `()`, always calls a function defined with `fn`, so a local may share its name with a function: `let total: Int = total(items: xs)`; a constant is used without parentheses (`limit()` is E0247). Followed by `(` and unnamed arguments, it applies a function value in a local or a constant, or in a field of one (above). A local named like the first segment of a module hides calls into that module: with a parameter `net`, `net.port.parse(...)` reads as a method call (E0220). Choose another name. A dotted name without `(` is read from the left: a local and its fields; a constant of the own module and its fields (`limits.items`); a constant or a function by its full name (`shop.sizes`); or a constant by its full name and then its fields (`shop.limits.items`). A name that two of these readings fit is E0249; rename one of the definitions. A local hides a constant of its module with the same name; there, write the constant in full.
 
 ### 7.6 Contracts and examples
 
@@ -582,7 +616,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Examples (5.1).** Each line is `call == expected`. The call is to the function itself, by its short name (E0221), and both sides have the same type.
   - Every function with `effects: none` has at least one example (E0401). A function with effects has `examples: none` (5.4).
   - An example holds if both sides are equal (3.9). A failing one is reported with the actual value as alang text (E0402). A trapping one is reported with the trap (E0403); this includes a stack overflow from recursion without a base case.
-- **Acceptance.** Every change re-runs every example of the program, so a changed body that breaks a caller's example is rejected too. An example whose call breaks the function's `requires` traps (E0403).
+- **Acceptance.** Every change evaluates every constant, then re-runs every example of the program, so a changed body or a changed constant that breaks a caller's example is rejected too. A constant whose evaluation traps is rejected with the trap (E0404), and so is one that needs its own value, directly or through the constants and functions it uses (trap `cycle`, reported once per cycle); an example that traps only because of such a constant is not reported. An example whose call breaks the function's `requires` traps (E0403).
 - **Shape of a program.** Logic goes into pure functions with examples. Functions with effects stay thin and call them; see the server in 7.9.
 
 ### 7.7 Effects and running
@@ -923,6 +957,7 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | E0236 | A name that only some patterns of a shared case bind |
 | E0237 | A `fn` whose result holds a function value |
 | E0238 | Applying a value that is no function, or with the wrong number of arguments |
+| E0247 to E0249 | Constants: called like a function, a type without a value, a name with two meanings |
 | E0301 to E0305 | Code generation and `main` |
-| E0401 to E0403 | Missing, failing and trapping examples |
+| E0401 to E0404 | Missing, failing and trapping examples, and constants that trap |
 | E0501 to E0514 | Codebase operations |

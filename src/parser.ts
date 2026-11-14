@@ -7,6 +7,7 @@ import type {
   BinaryOp,
   Case,
   CompareOp,
+  ConstDef,
   Definition,
   Expr,
   FnDef,
@@ -161,10 +162,11 @@ class Parser {
     this.section = null;
     if (this.isKeyword("fn")) return this.fnDef();
     if (this.isKeyword("type")) return this.typeDef();
-    if (this.isKeyword("const") || this.isKeyword("extern")) {
+    if (this.isKeyword("const")) return this.constDef();
+    if (this.isKeyword("extern")) {
       this.fail(`\`${this.peek().text}\` definitions are not supported yet.`, { code: "E0199" });
     }
-    return this.fail(`Expected a definition (\`fn\` or \`type\`), found ${this.describe(this.peek())}.`);
+    return this.fail(`Expected a definition (\`fn\`, \`type\` or \`const\`), found ${this.describe(this.peek())}.`);
   }
 
   // `a.b.c` where every segment is snake_case: function and module paths.
@@ -188,8 +190,8 @@ class Parser {
     return segments;
   }
 
-  private definitionPath(kind: "fn" | "type"): Path {
-    const path = kind === "fn" ? this.valuePath() : this.typePath();
+  private definitionPath(kind: Definition["kind"]): Path {
+    const path = kind === "type" ? this.typePath() : this.valuePath();
     if (path.length < 2) {
       this.fail(`A definition name has a module: \`module.${path[0]}\`.`);
     }
@@ -202,7 +204,7 @@ class Parser {
     this.expectSymbol(":");
   }
 
-  private endDef(kind: "fn" | "type", path: Path): void {
+  private endDef(kind: Definition["kind"], path: Path): void {
     this.section = null;
     this.expectKeyword("end");
     this.expectKeyword(kind);
@@ -327,6 +329,34 @@ class Parser {
 
     this.endDef("fn", path);
     return { kind: "fn", path, doc, params, out, effects, requires, ensures, examples, body };
+  }
+
+  // `const shop.max_items` with `doc`, `out` and `body`, in this order (C1):
+  // a value of the module, so its name is a value path, and its body is
+  // statements ending in `return`, as a function's is.
+  private constDef(): ConstDef {
+    this.expectKeyword("const");
+    const path = this.definitionPath("const");
+    // In `ensures` and after `let ... else` the language's own binding
+    // would hide the constant (C3).
+    const last = path[path.length - 1];
+    if (last === "result" || last === "error") {
+      this.fail(`\`${last}\` is bound by the language and cannot name a constant.`, { code: "E0109", at: last });
+    }
+    this.definition = pathText(path);
+    this.expectNewline();
+    const doc = this.docSection();
+
+    this.sectionHeader("out");
+    const out = this.type();
+    this.expectNewline();
+
+    this.sectionHeader("body");
+    this.expectNewline();
+    const body = this.block(["end"]);
+
+    this.endDef("const", path);
+    return { kind: "const", path, doc, out, body };
   }
 
   private effect(): Effect {

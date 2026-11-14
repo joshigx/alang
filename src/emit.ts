@@ -13,7 +13,7 @@
 // checker's side tables for expression types (Int vs Float operations) and
 // for how names resolved.
 
-import type { Definition, Expr, FnDef, Path, Pattern, Stmt, TypeDef, TypeRef } from "./ast.ts";
+import type { ConstDef, Definition, Expr, FnDef, Path, Pattern, Stmt, TypeDef, TypeRef } from "./ast.ts";
 import { moduleOf, pathText } from "./ast.ts";
 import type { CheckInfo } from "./check.ts";
 import { AlangError, diagnostic } from "./diagnostic.ts";
@@ -75,12 +75,19 @@ export function emitProgram(defs: readonly Definition[], info: CheckInfo, option
     "",
   ];
   const examples: string[] = [];
+  const constants: string[] = [];
   for (const def of defs) {
     const e = new DefinitionEmitter(def, info);
-    out.push(...(def.kind === "fn" ? e.fn(def) : e.type(def)), "");
+    out.push(...(def.kind === "fn" ? e.fn(def) : def.kind === "const" ? e.constant(def) : e.type(def)), "");
     if (def.kind === "fn") examples.push(...e.examples(def));
+    if (def.kind === "const") {
+      constants.push(`{ definition: ${JSON.stringify(pathText(def.path))}, value: ${mangle(def.path)} }`);
+    }
   }
   out.push(`export const $examples: readonly ${RT}.Example[] = [`, ...examples.map((e) => `  ${e},`), "];", "");
+  // After every binding, so the list can name them; acceptance evaluates
+  // each before the examples run (C4).
+  out.push(`export const $constants: readonly ${RT}.Constant[] = [`, ...constants.map((c) => `  ${c},`), "];", "");
   return out.join("\n");
 }
 
@@ -291,6 +298,18 @@ class DefinitionEmitter {
     }
     lines.push("}");
     return lines;
+  }
+
+  // A constant is a getter that evaluates its body once, on first use (C13).
+  // Pure, so synchronous; nothing runs at load, so a constant may be defined
+  // after its users, and a cycle traps instead of reading an unset binding.
+  constant(def: ConstDef): string[] {
+    const out = this.ts(def.out);
+    return [
+      `export const ${mangle(def.path)}: () => ${out} = ${RT}.constant(${JSON.stringify(this.name)}, (): ${out} => {`,
+      ...indent(this.block(def.body, new Scope(), DISCARD), 1),
+      "});",
+    ];
   }
 
   private check(kind: "requires" | "ensures", cond: Expr, scope: Scope): string[] {
@@ -508,6 +527,9 @@ class DefinitionEmitter {
       case "name": {
         const resolved = this.info.names.get(e);
         if (resolved?.kind === "fn") return this.globalRef(resolved.name.split("."));
+        if (resolved?.kind === "const") {
+          return [`${this.globalRef(resolved.name.split("."))}()`, ...e.path.slice(resolved.segments)].join(".");
+        }
         const head = scope.lookup(e.path[0]);
         if (head === undefined) {
           this.fail("E0301", `Unknown name \`${pathText(e.path)}\`.`, pathText(e.path));

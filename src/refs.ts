@@ -12,7 +12,7 @@ import type { CheckInfo } from "./check.ts";
 import { BUILTIN_TYPES } from "./types.ts";
 
 // `case` references name a variant case by its full name (`net.port.OutOfRange`).
-export type RefKind = "type" | "fn" | "case";
+export type RefKind = "type" | "fn" | "case" | "const";
 
 export interface Ref {
   readonly kind: RefKind;
@@ -32,7 +32,8 @@ export function references(def: Definition, info: CheckInfo): Ref[] {
 }
 
 // Distinct full names `def` refers to, in order of first use: types,
-// functions and variant cases (a case by its own full name, not its type's).
+// functions, constants and variant cases (a case by its own full name, not
+// its type's).
 // Includes std names, and `def` itself if it recurses or has examples.
 //
 // The result depends on the text alone: locals are resolved within `def`,
@@ -152,6 +153,16 @@ function rebuild(
   };
   const arm = (a: Arm): Arm => ({ patterns: a.patterns.map(pattern), body: stmts(a.body) });
 
+  // A function value by its whole path; a constant by the segments that
+  // spell it, its fields kept (`shop.limits` in `shop.limits.items`).
+  const name = (e: Extract<Expr, { kind: "name" }>): Extract<Expr, { kind: "name" }> => {
+    const r = info.names.get(e);
+    if (r?.kind === "fn") return { kind: "name", path: spell(e, e.path, { kind: "fn", full: r.name }) };
+    if (r?.kind !== "const") return e;
+    const spelled = spell(e, e.path.slice(0, r.segments), { kind: "const", full: r.name });
+    return { kind: "name", path: [...spelled, ...e.path.slice(r.segments)] };
+  };
+
   function expr(e: Expr): Expr {
     switch (e.kind) {
       case "int":
@@ -159,11 +170,8 @@ function rebuild(
       case "string":
       case "bool":
         return e;
-      case "name": {
-        const r = info.names.get(e);
-        if (r?.kind !== "fn") return e;
-        return { kind: "name", path: spell(e, e.path, { kind: "fn", full: r.name }) };
-      }
+      case "name":
+        return name(e);
       case "field":
         return { kind: "field", target: expr(e.target), field: e.field };
       case "call": {
@@ -175,10 +183,10 @@ function rebuild(
           args: e.args.map((a) => ({ name: a.name, value: expr(a.value) })),
         };
       }
-      // The target is a local, never a reference; a named call is never an
-      // apply, so a rename never changes what an apply denotes.
+      // The target is a local or a constant (its field holds the function);
+      // a named call is never an apply.
       case "apply":
-        return { kind: "apply", target: e.target, args: e.args.map(expr) };
+        return { kind: "apply", target: name(e.target), args: e.args.map(expr) };
       case "construct": {
         const r = info.constructs.get(e);
         const ref: Ref | null = !r || r.kind === "builtin"
@@ -207,6 +215,7 @@ function rebuild(
     }
   }
 
+  if (def.kind === "const") return { kind: "const", path, doc: def.doc, out: type(def.out), body: stmts(def.body) };
   if (def.kind === "fn") {
     return {
       kind: "fn",

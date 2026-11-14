@@ -30,7 +30,8 @@ export type Expr =
   | { readonly kind: "string"; readonly value: string }
   | { readonly kind: "bool"; readonly value: boolean }
   // A dotted chain of snake_case names: a local, a field chain on a local,
-  // or a qualified constant. Which one is decided by name resolution.
+  // a constant (with fields) or a function value. Which one is decided by
+  // name resolution.
   | { readonly kind: "name"; readonly path: Path }
   // Field access on an expression that is not a plain name (call, construct, parenthesized).
   | { readonly kind: "field"; readonly target: Expr; readonly field: string }
@@ -154,7 +155,17 @@ export interface TypeDef {
   readonly where: Expr | null;
 }
 
-export type Definition = FnDef | TypeDef;
+// `const shop.max_items` (C1): a named value of a module, pure, evaluated
+// once when first used; its body ends in `return`, as a function's does.
+export interface ConstDef {
+  readonly kind: "const";
+  readonly path: Path;
+  readonly doc: string;
+  readonly out: TypeRef;
+  readonly body: readonly Stmt[];
+}
+
+export type Definition = FnDef | TypeDef | ConstDef;
 
 export const EFFECTS = [
   "fs.read",

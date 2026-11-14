@@ -25,7 +25,7 @@ function codeBlocks(markdown: string): Block[] {
 
 const blocks = codeBlocks(spec).filter((b) => b.lang === "");
 const firstWord = (b: Block) => b.text.trimStart().split(/\s/, 1)[0];
-const definitionBlocks = blocks.filter((b) => firstWord(b) === "fn" || firstWord(b) === "type");
+const definitionBlocks = blocks.filter((b) => ["fn", "type", "const"].includes(firstWord(b)));
 const letBlocks = blocks.filter((b) => firstWord(b) === "let");
 // A `let` block that ends in an open call is the prefix example of rule 1.6.
 const prefixBlocks = letBlocks.filter((b) => b.text.trimEnd().endsWith("("));
@@ -33,8 +33,8 @@ const statementBlocks = letBlocks.filter((b) => !prefixBlocks.includes(b));
 
 Deno.test("spec: block inventory", () => {
   // Guards against blocks silently dropping out of the test set.
-  assertEquals(definitionBlocks.length, 7);
-  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 18);
+  assertEquals(definitionBlocks.length, 8);
+  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 20);
   assertEquals(statementBlocks.length, 3);
   assertEquals(prefixBlocks.length, 1);
 });
@@ -89,6 +89,13 @@ Deno.test("spec: the server of 7.9 is accepted, its examples run", async () => {
 Deno.test("spec: the function that takes a function of section 4 is accepted, its examples run", async () => {
   const block = definitionBlocks.find((b) => b.text.startsWith("fn calc.first_true\n"));
   const out = new URL("../out/test/spec/first_true.ts", import.meta.url).pathname;
+  const { examples } = await accept(block!.text, out);
+  assertEquals(examples.map((e) => e.passed), [true, true]);
+});
+
+Deno.test("spec: the constant of 7.3 is accepted, with the examples of the function that reads it", async () => {
+  const block = definitionBlocks.find((b) => b.text.startsWith("const shop.sizes\n"));
+  const out = new URL("../out/test/spec/sizes.ts", import.meta.url).pathname;
   const { examples } = await accept(block!.text, out);
   assertEquals(examples.map((e) => e.passed), [true, true]);
 });

@@ -7,7 +7,20 @@
 // (expression types, how names resolved) goes into side tables keyed by
 // tree node, so the tree stays pure for equality and hashing (6.1).
 
-import type { Arg, Arm, Definition, Expr, FnDef, Literal, Path, Pattern, Stmt, TypeDef, TypeRef } from "./ast.ts";
+import type {
+  Arg,
+  Arm,
+  ConstDef,
+  Definition,
+  Expr,
+  FnDef,
+  Literal,
+  Path,
+  Pattern,
+  Stmt,
+  TypeDef,
+  TypeRef,
+} from "./ast.ts";
 import { type Effect, EFFECTS, moduleOf, pathText } from "./ast.ts";
 import { type Diagnostic, diagnostic, type Fix } from "./diagnostic.ts";
 import { printExpr, printStmts, printString, printTypeRef } from "./printer.ts";
@@ -43,7 +56,17 @@ import {
 
 // ---- results ----
 
-export type NameResolution = { readonly kind: "local" } | { readonly kind: "fn"; readonly name: string };
+// A constant's `segments` are how many leading segments of the path spell it
+// (`shop.limits` in `shop.limits.items`); the rest are fields (C2).
+export type NameResolution =
+  | { readonly kind: "local" }
+  | { readonly kind: "fn"; readonly name: string }
+  | { readonly kind: "const"; readonly name: string; readonly segments: number };
+
+// How a dotted name that is no local can read (C2).
+type Reading =
+  | { readonly kind: "fn"; readonly name: string }
+  | { readonly kind: "const"; readonly name: string; readonly segments: number };
 
 export type ConstructResolution =
   | { readonly kind: "builtin" }
@@ -118,6 +141,8 @@ const BUILTIN_VALUES = new Set(["Ok", "Err", "Some", "None", "Unit", "Less", "Eq
 class Env {
   readonly types = new Map<string, TypeShape>();
   readonly fns = new Map<string, FnSig>();
+  // Full name of each constant -> its declared type.
+  readonly consts = new Map<string, Type>();
   // Full case name (`module.Case`) -> case.
   readonly cases = new Map<string, CaseInfo>();
 
@@ -342,6 +367,12 @@ class DefChecker {
       this.env.fns.set(this.name, { name: this.name, typeParams: [], params, out, effects: def.effects });
       return;
     }
+    if (def.kind === "const") {
+      this.section = "out";
+      this.env.consts.set(this.name, this.resolveType(def.out));
+      this.section = null;
+      return;
+    }
     const t = this.env.types.get(this.name);
     if (!t) return;
     if (def.shape.kind === "record" && t.kind === "record") {
@@ -434,7 +465,40 @@ class DefChecker {
   check(): void {
     const def = this.def;
     if (def.kind === "fn") this.checkFn(def);
+    else if (def.kind === "const") this.checkConst(def);
     else this.checkType(def);
+  }
+
+  // A constant (C3, C5): its body is checked as a function body with `out`
+  // as the result type, and it is pure (E0233 in `effectsOfCall`). Its type
+  // carries a value: not `Unit`, not a function type; a function type inside
+  // another type is fine (a table of functions). It keeps its declared type,
+  // so its uses report nothing more (5.6).
+  private checkConst(def: ConstDef): void {
+    const out = this.env.consts.get(this.name)!;
+    this.section = "out";
+    if (typeEquals(out, UNIT)) {
+      this.report("E0248", printTypeRef(def.out), "A constant holds a value, and `Unit` carries none (3).");
+    } else if (out.k === "fn") {
+      this.report(
+        "E0248",
+        printTypeRef(def.out),
+        `A constant holds no function; write \`fn ${this.name}\` with parameters instead (3).`,
+      );
+    }
+    this.section = "body";
+    this.out = out;
+    this.block(def.body, new Scope(), DISCARD);
+    const last = def.body[def.body.length - 1];
+    if (last.kind !== "return") {
+      this.report(
+        "E0218",
+        firstLine(printStmts([last], "")),
+        "A constant's body ends with an explicit `return` (3.4).",
+      );
+    }
+    this.out = null;
+    this.section = null;
   }
 
   private checkFn(def: FnDef): void {
@@ -892,8 +956,15 @@ class DefChecker {
       this.report("E0236", head, hidden);
       return ERROR;
     }
+    const readings = this.readings(e.path);
+    if (readings.length > 1) {
+      this.ambiguous(e.path, readings);
+      return ERROR;
+    }
+    const reading = readings[0];
+    if (reading?.kind === "const") return this.constant(e, reading, scope);
     const full = this.resolvePath(e.path);
-    const fn = this.env.fns.get(full);
+    const fn = reading && this.env.fns.get(reading.name);
     if (fn) {
       // A local with the short name would take it (`by: compare` with a
       // parameter `compare`), and a hidden name of a shared case would be
@@ -929,8 +1000,8 @@ class DefChecker {
     }
     const written = pathText(e.path);
     const candidates = e.path.length === 1
-      ? [...scope.visibleNames(), ...this.moduleFnNames()]
-      : [...this.env.fns.keys()].map((n) => this.written(n));
+      ? [...scope.visibleNames(), ...this.moduleConstNames(), ...this.moduleFnNames()]
+      : [...this.env.consts.keys(), ...this.env.fns.keys()].map((n) => this.written(n));
     const suggestion = closest(written, candidates);
     this.report("E0203", written, `Unknown name \`${written}\`.`, {
       expected: suggestion ?? undefined,
@@ -939,8 +1010,70 @@ class DefChecker {
     return ERROR;
   }
 
+  // The readings of a dotted name whose head is no local (C2), read from the
+  // left: (A) a constant of this module and its fields, (B) a constant or a
+  // function by the whole path (one segment: this module), (C) a constant by
+  // a shorter prefix of at least two segments and its fields. They depend on
+  // which definitions exist, never on a field's type.
+  private readings(path: Path): Reading[] {
+    const found: Reading[] = [];
+    if (path.length > 1) {
+      const own = `${this.module}.${path[0]}`;
+      if (this.env.consts.has(own)) found.push({ kind: "const", name: own, segments: 1 });
+    }
+    const full = this.resolvePath(path);
+    if (this.env.consts.has(full)) found.push({ kind: "const", name: full, segments: path.length });
+    else if (this.env.fns.has(full)) found.push({ kind: "fn", name: full });
+    for (let n = 2; n < path.length; n++) {
+      const prefix = pathText(path.slice(0, n));
+      if (this.env.consts.has(prefix)) found.push({ kind: "const", name: prefix, segments: n });
+    }
+    return found;
+  }
+
+  // E0249: a name that two readings fit; a name has one meaning (2.6), so
+  // the checker picks none, and adding a definition never changes what a
+  // name means silently.
+  private ambiguous(path: Path, readings: readonly Reading[]): void {
+    const what = (r: Reading): string => {
+      if (r.kind === "fn") return `the function \`${r.name}\``;
+      const fields = path.slice(r.segments);
+      if (fields.length === 0) return `the constant \`${r.name}\``;
+      const own = r.segments === 1 ? ` of this module` : "";
+      const constant = own ? path[0] : r.name;
+      return `the field${fields.length > 1 ? "s" : ""} \`${fields.join(".")}\` of the constant \`${constant}\`${own}`;
+    };
+    const all = readings.map(what);
+    const joined = `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
+    this.report(
+      "E0249",
+      pathText(path),
+      `\`${pathText(path)}\` names both ${joined}; rename one of them, since a name has one meaning (2.6).`,
+    );
+  }
+
+  // A constant by one reading: its type, then its fields. A constant of this
+  // module written in full is E0226 on the constant's segments only, unless
+  // a local or a hidden name takes the short name there (then the full name
+  // is the only spelling, as for a function value).
+  private constant(e: Extract<Expr, { kind: "name" }>, r: Extract<Reading, { kind: "const" }>, scope: Scope): Type {
+    const spelled = e.path.slice(0, r.segments);
+    const short = spelled[spelled.length - 1];
+    if (scope.lookup(short) === undefined && scope.hiddenWhy(short) === undefined) {
+      this.shortForm(e, spelled, pathText(e.path));
+    }
+    this.info.names.set(e, { kind: "const", name: r.name, segments: r.segments });
+    let t = this.env.consts.get(r.name)!;
+    for (const seg of e.path.slice(r.segments)) t = this.field(t, seg, e);
+    return t;
+  }
+
   private moduleFnNames(): string[] {
     return [...this.env.fns.keys()].filter((n) => n.startsWith(this.module + ".")).map((n) => this.written(n));
+  }
+
+  private moduleConstNames(): string[] {
+    return [...this.env.consts.keys()].filter((n) => n.startsWith(this.module + ".")).map((n) => this.written(n));
   }
 
   private field(t: Type, field: string, e: Expr): Type {
@@ -1048,6 +1181,10 @@ class DefChecker {
         return ERROR;
       }
     }
+    if (local === undefined && scope.hiddenWhy(e.path[0]) === undefined) {
+      const constant = this.calledConstant(e, scope, at);
+      if (constant !== null) return constant;
+    }
     const full = this.resolvePath(e.path);
     const sig = this.env.fns.get(full);
     if (!sig) {
@@ -1146,6 +1283,39 @@ class DefChecker {
     return out;
   }
 
+  // A call whose path names no function but a constant: E0247 for the
+  // constant itself (C2), and for a function value in a constant's field the
+  // E0220 of named arguments, as on a local's field; null otherwise. A call
+  // path that names a function always calls it.
+  private calledConstant(e: Extract<Expr, { kind: "call" }>, scope: Scope, at: string): Type | null {
+    const full = this.resolvePath(e.path);
+    if (this.env.fns.has(full)) return null;
+    const rest = () => {
+      for (const a of e.args) this.expr(a.value, scope, null);
+      return ERROR;
+    };
+    if (this.env.consts.has(full)) {
+      const written = pathText(e.path);
+      const message = `\`${written}\` is a constant, not a function; it is used without parentheses: \`${written}\`.`;
+      const plain = e.args.length === 0 && e.typeArgs.length === 0 && !printExpr(e, "").includes("\n");
+      this.report("E0247", at, message, plain ? { expected: written, fix: { replace: at, with: written } } : {});
+      return rest();
+    }
+    const readings = this.readings(e.path).filter((r) => r.kind === "const" && r.segments < e.path.length);
+    if (readings.length !== 1 || readings[0].kind !== "const") return null;
+    const r = readings[0];
+    const t = this.fieldPath(this.env.consts.get(r.name)!, e.path.slice(r.segments));
+    if (t?.k === "fn") return this.namedApplication(e, t, scope, at);
+    this.report(
+      "E0220",
+      at,
+      `There are no method calls (3.1); \`${
+        pathText(e.path.slice(0, r.segments))
+      }\` is a value. Pass it as a named argument instead.`,
+    );
+    return rest();
+  }
+
   // `by(a, b)` (F2): applies a function value, a local or a field chain on
   // one, by position. Pure, so it adds no effects. A path that is no local
   // is a function defined with `fn`, called by position (E0107).
@@ -1158,8 +1328,12 @@ class DefChecker {
     };
     const head = scope.lookup(path[0]);
     // A hidden name of a shared case counts as a local, so `name_` reports
-    // E0236 for it (T7).
-    if (head === undefined && scope.hiddenWhy(path[0]) === undefined) return this.positionalCall(e, scope, at);
+    // E0236 for it (T7). A constant, or a field of one, is applied like a
+    // local's field (C2), so `name_` resolves it, E0249 included.
+    const constant = this.readings(path).some((r) => r.kind === "const");
+    if (head === undefined && scope.hiddenWhy(path[0]) === undefined && !constant) {
+      return this.positionalCall(e, scope, at);
+    }
     if (head !== undefined && path.length > 1 && this.fieldPath(head, path.slice(1)) === null) {
       // `xs.map(f)`: the method-call habit (5.7), as with named arguments.
       this.report(
@@ -1306,6 +1480,15 @@ class DefChecker {
         ? "To give the handler effects, pass a named function instead of a lambda."
         : "Apply effects per element with `for`.";
       this.report("E0232", at, `\`${written}\` has effects (${list}); lambdas are pure (2.4). ${advice}`);
+      return;
+    }
+    if (this.def.kind === "const") {
+      // No fix: E0230's rewrites an `effects:` line, which a constant lacks.
+      this.report(
+        "E0233",
+        at,
+        `\`${written}\` has effects (${list}); a constant is pure, so its body calls only functions with \`effects: none\` (2.2).`,
+      );
       return;
     }
     if (this.section !== "body") {

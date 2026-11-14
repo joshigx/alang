@@ -315,6 +315,8 @@ export interface TrapInfo {
   readonly definition: string | null;
   readonly at: string;
   readonly message: string;
+  // The constant whose evaluation the trap left first, if any (C4).
+  readonly origin?: string;
 }
 
 export interface ExampleResult {
@@ -345,14 +347,96 @@ export function runExamples(examples: readonly Example[]): ExampleResult[] {
       const actual = ex.actual();
       return result(actual, eq(actual, ex.expected()), null);
     } catch (e) {
-      if (e instanceof Trap) {
-        return result(undefined, false, { kind: e.kind, definition: e.definition, at: e.at, message: e.message });
-      }
-      if (isStackOverflow(e)) {
-        const message = "The call stack overflowed; a recursion does not reach its base case, or recurses too deep.";
-        return result(undefined, false, { kind: "stack", definition: null, at: ex.text, message });
-      }
+      const info = trapInfo(e, ex.text);
+      if (info === null) throw e;
+      const origin = trapOrigin(e);
+      return result(undefined, false, origin === undefined ? info : { ...info, origin });
+    }
+  });
+}
+
+const STACK_MESSAGE = "The call stack overflowed; a recursion does not reach its base case, or recurses too deep.";
+
+// A trap, or a stack overflow as a trap of kind `stack` located at `at`;
+// null for anything else, which is a bug of the tool, not of the program.
+function trapInfo(e: unknown, at: string): TrapInfo | null {
+  if (e instanceof Trap) return { kind: e.kind, definition: e.definition, at: e.at, message: e.message };
+  if (isStackOverflow(e)) return { kind: "stack", definition: null, at, message: STACK_MESSAGE };
+  return null;
+}
+
+// ---- constants (C4, C13) ----
+
+// Constants whose evaluation is in progress, innermost last. Pure code is
+// synchronous, so one stack serves the whole process.
+const evaluating: string[] = [];
+// The constant a trap first left; for a cycle, the one entered again.
+const origins = new WeakMap<object, string>();
+// The chain of constants of each `cycle` trap, its first one at both ends.
+const cycles = new WeakMap<object, readonly string[]>();
+
+export function trapOrigin(e: unknown): string | undefined {
+  return typeof e === "object" && e !== null ? origins.get(e) : undefined;
+}
+
+// The getter of a constant: evaluates `compute` once, when first called, and
+// keeps the value. A trap leaves the constant unevaluated, so the next use
+// traps the same way; a use during its own evaluation is a cycle.
+export function constant<T>(name: string, compute: () => T): () => T {
+  let state: "new" | "busy" | "done" = "new";
+  let value: T | undefined;
+  return () => {
+    if (state === "done") return value as T;
+    if (state === "busy") {
+      const chain = [...evaluating.slice(evaluating.indexOf(name)), name];
+      const t = new Trap("cycle", name, name, `The constant ${name} depends on itself: ${chain.join(" -> ")}.`);
+      origins.set(t, name);
+      cycles.set(t, chain);
+      throw t;
+    }
+    state = "busy";
+    evaluating.push(name);
+    try {
+      value = compute();
+      state = "done";
+      return value;
+    } catch (e) {
+      if (typeof e === "object" && e !== null && !origins.has(e)) origins.set(e, name);
       throw e;
+    } finally {
+      evaluating.pop();
+      if (state === "busy") state = "new";
+    }
+  };
+}
+
+export interface Constant {
+  readonly definition: string;
+  readonly value: () => unknown;
+}
+
+export interface ConstantResult {
+  readonly definition: string;
+  // Null if the constant was evaluated.
+  readonly trap: TrapInfo | null;
+  // The constant the trap came from: this one, or one it uses.
+  readonly origin: string | null;
+  // The chain of a `cycle` trap.
+  readonly cycle: readonly string[] | null;
+}
+
+// Evaluates every constant in the given order, as acceptance does before the
+// examples run; a value evaluated here is kept for the examples.
+export function runConstants(constants: readonly Constant[]): ConstantResult[] {
+  return constants.map((c) => {
+    try {
+      c.value();
+      return { definition: c.definition, trap: null, origin: null, cycle: null };
+    } catch (e) {
+      const trap = trapInfo(e, c.definition);
+      if (trap === null) throw e;
+      const cycle = cycles.get(e as object) ?? null;
+      return { definition: c.definition, trap, origin: trapOrigin(e) ?? c.definition, cycle };
     }
   });
 }

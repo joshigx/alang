@@ -13,7 +13,14 @@ import type { CheckInfo, TypeShape } from "./check.ts";
 import { toTypeRef, writable } from "./check.ts";
 import { type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { printExpr, printTypeRef } from "./printer.ts";
-import { type ExampleResult, map_entries, type SortedMap, std$text$show, type TrapInfo } from "./runtime.ts";
+import {
+  type ConstantResult,
+  type ExampleResult,
+  map_entries,
+  type SortedMap,
+  std$text$show,
+  type TrapInfo,
+} from "./runtime.ts";
 import type { Type } from "./types.ts";
 
 // ---- presence ----
@@ -97,6 +104,30 @@ export function exampleDiagnostics(outcomes: readonly ExampleOutcome[]): Diagnos
       message: `The example does not hold: \`${o.call}\` is \`${o.actual}\`.`,
     });
   });
+}
+
+// E0404 (C4): a constant whose evaluation at acceptance traps, reported where
+// the trap came from, once per cause. A constant that traps only because one
+// it uses does is that one's E0404; a cycle is reported once, at the first
+// of its constants that acceptance evaluated.
+export function constantDiagnostics(results: readonly ConstantResult[]): Diagnostic[] {
+  const reported = new Set<string>();
+  const out: Diagnostic[] = [];
+  for (const r of results) {
+    if (r.trap === null || r.origin !== r.definition) continue;
+    if (r.cycle !== null && r.cycle.every((n) => reported.has(n))) continue;
+    for (const n of r.cycle ?? [r.definition]) reported.add(n);
+    const { kind, at, message } = r.trap;
+    const where = at === r.definition || message.includes(at) ? "" : ` (at \`${at}\`)`;
+    out.push(diagnostic({
+      code: "E0404",
+      definition: r.definition,
+      section: "body",
+      at: `const ${r.definition}`,
+      message: `Evaluating the constant ends in a trap (\`${kind}\`). ${message.replace(/\.$/, "")}${where}.`,
+    }));
+  }
+  return out;
 }
 
 // ---- values as alang text ----

@@ -8,11 +8,17 @@ import { EFFECTS, pathText } from "./ast.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { type CheckInfo, checkProgram, type CheckResult } from "./check.ts";
 import { emitProgram } from "./emit.ts";
-import { describeResults, exampleDiagnostics, type ExampleOutcome, missingExamples } from "./examples.ts";
+import {
+  constantDiagnostics,
+  describeResults,
+  exampleDiagnostics,
+  type ExampleOutcome,
+  missingExamples,
+} from "./examples.ts";
 import { parseProgram } from "./parser.ts";
 import { printTypeRef } from "./printer.ts";
-import type { Example } from "./runtime.ts";
-import { runExamples } from "./runtime.ts";
+import type { Constant, ConstantResult, Example } from "./runtime.ts";
+import { runConstants, runExamples } from "./runtime.ts";
 
 const RUNTIME_PATH = fileURLToPath(new URL("./runtime.ts", import.meta.url));
 
@@ -77,8 +83,13 @@ export async function acceptDefinitions(
   const all = byDefinition(defs, [...diagnostics, ...missingExamples(defs)]);
   if (all.length > 0) throw new AlangError(all);
   const built = await emitTo(defs, info, outPath);
-  const examples = await testExamples(built);
-  const failed = exampleDiagnostics(examples);
+  const { constants, examples } = await testProgram(built);
+  // An example that traps inside a trapping constant has its cause reported
+  // already (5.6); without an E0404 every constant was evaluated, so no
+  // example can trap inside one.
+  const trapped = constantDiagnostics(constants);
+  const shown = trapped.length === 0 ? examples : examples.filter((o) => o.trap?.origin === undefined);
+  const failed = [...trapped, ...exampleDiagnostics(shown)];
   if (failed.length > 0) throw new AlangError(failed);
   return { built, examples };
 }
@@ -100,10 +111,20 @@ async function load(outPath: string): Promise<Record<string, any>> {
   return await import(`${pathToFileURL(outPath).href}?v=${++loads}`);
 }
 
-// Runs every example of a built program, in this process (spec, Toolchain).
-export async function testExamples(built: Built): Promise<ExampleOutcome[]> {
+// Evaluates every constant of a built program, then runs every example, in
+// this process and from one load of its module (spec, Toolchain; C4).
+export async function testProgram(
+  built: Built,
+): Promise<{ constants: ConstantResult[]; examples: ExampleOutcome[] }> {
   const mod = await load(built.outPath);
-  return describeResults(built.defs, built.info, runExamples(mod.$examples as readonly Example[]));
+  const constants = runConstants(mod.$constants as readonly Constant[]);
+  const examples = describeResults(built.defs, built.info, runExamples(mod.$examples as readonly Example[]));
+  return { constants, examples };
+}
+
+// Runs every example of a built program, its constants evaluated first.
+export async function testExamples(built: Built): Promise<ExampleOutcome[]> {
+  return (await testProgram(built)).examples;
 }
 
 // The function a program starts at (spec, section 1): a function named

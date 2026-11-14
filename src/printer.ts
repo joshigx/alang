@@ -1,7 +1,7 @@
 // Canonical text output (rule 3.7): one statement per line, two spaces per
 // level, and only the parentheses that rule 3.5 requires.
 
-import type { Definition, Expr, FnDef, Param, Pattern, Payload, Stmt, TypeDef, TypeRef } from "./ast.ts";
+import type { ConstDef, Definition, Expr, FnDef, Param, Pattern, Payload, Stmt, TypeDef, TypeRef } from "./ast.ts";
 import { pathText } from "./ast.ts";
 import { escapeChar, groupDigits } from "./lexer.ts";
 
@@ -12,7 +12,7 @@ export function printProgram(defs: readonly Definition[]): string {
 }
 
 export function printDefinition(def: Definition): string {
-  return def.kind === "fn" ? printFn(def) : printType(def);
+  return def.kind === "fn" ? printFn(def) : def.kind === "const" ? printConst(def) : printType(def);
 }
 
 function section(name: string, entries: readonly string[] | string | null): string[] {
@@ -27,9 +27,21 @@ function printParam(p: Param): string {
 }
 
 // The signature of a definition: every section except `body` (section 6).
-// A type has no body, so its signature is its whole text.
+// A type has no body, so its signature is its whole text; a constant's is its
+// `doc` and `out` (C10).
 export function printSignature(def: Definition): string {
-  return def.kind === "fn" ? printFn(def, false) : printType(def);
+  return def.kind === "fn" ? printFn(def, false) : def.kind === "const" ? printConst(def, false) : printType(def);
+}
+
+export function printConst(def: ConstDef, body = true): string {
+  const name = pathText(def.path);
+  return [
+    `const ${name}`,
+    ...section("doc", printString(def.doc)),
+    ...section("out", printTypeRef(def.out)),
+    ...(body ? [`${STEP}body:`, printStmts(def.body, STEP + STEP)] : []),
+    `end const ${name}`,
+  ].join("\n");
 }
 
 function printFn(def: FnDef, body = true): string {

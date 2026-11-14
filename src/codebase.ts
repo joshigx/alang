@@ -139,7 +139,7 @@ export interface Used {
 export interface Hit {
   readonly name: string;
   readonly hash: string | null;
-  readonly kind: "fn" | "type";
+  readonly kind: Definition["kind"];
   readonly signature: string;
   readonly doc: string;
 }
@@ -239,7 +239,7 @@ interface Row {
   // The old name of a rename.
   readonly other?: string;
   readonly hash: string;
-  readonly kind: "fn" | "type";
+  readonly kind: Definition["kind"];
   readonly text: string;
   readonly signature: string;
   readonly refs: readonly string[];
@@ -249,17 +249,18 @@ interface Row {
 interface Stored {
   readonly name: string;
   readonly hash: string;
-  readonly kind: "fn" | "type";
+  readonly kind: Definition["kind"];
   readonly text: string;
   readonly signature: string;
   readonly def: Definition;
 }
 
 // The types in the caller-facing part of a definition's signature: `in` and
-// `out` of a function, the fields or case payloads of a type.
+// `out` of a function or a constant, the fields or case payloads of a type.
 function signatureTypes(def: Definition): TypeTree[] {
   const module = moduleOf(def.path);
   if (def.kind === "fn") return [...def.params.map((p) => treeOfRef(p.type, module)), treeOfRef(def.out, module)];
+  if (def.kind === "const") return [treeOfRef(def.out, module)];
   if (def.shape.kind === "record") return def.shape.fields.map((f) => treeOfRef(f.type, module));
   return def.shape.cases.flatMap((c) => (c.payload ? [treeOfRef(c.payload, module)] : []));
 }
@@ -287,9 +288,14 @@ function typeHead(name: string, def: TypeDef): string {
   return `type ${name}, ${shape}${def.where ? `, where: ${printExpr(def.where, "")}` : ""}`;
 }
 
-// The `list` and `search` entry of a stored definition.
+// The `list` and `search` entry of a stored definition; a constant's line is
+// `const name: Type`, the type in full as in `storedHead` (C9).
 function storedHit(r: Stored): Hit {
-  const signature = r.def.kind === "fn" ? storedHead(r.name, r.def) : typeHead(r.name, r.def);
+  const signature = r.def.kind === "fn"
+    ? storedHead(r.name, r.def)
+    : r.def.kind === "const"
+    ? `const ${r.name}: ${showTree(treeOfRef(r.def.out, moduleOf(r.def.path)))}`
+    : typeHead(r.name, r.def);
   return { name: r.name, hash: r.hash, kind: r.kind, signature, doc: r.def.doc };
 }
 
@@ -548,7 +554,7 @@ export class Codebase {
   private row(name: string, query: string): Stored {
     const row = this.db.prepare(
       "SELECT n.hash, d.kind, d.text, d.signature FROM names n JOIN definitions d ON d.hash = n.hash WHERE n.name = ?",
-    ).get(name) as { hash: string; kind: "fn" | "type"; text: string; signature: string } | undefined;
+    ).get(name) as { hash: string; kind: Definition["kind"]; text: string; signature: string } | undefined;
     if (!row) throw new AlangError(this.unknownName(name, `${query}(${name})`));
     return { name, ...row, def: parseProgram(row.text)[0] };
   }
@@ -558,7 +564,7 @@ export class Codebase {
     const rows = this.db.prepare(
       `SELECT n.name, n.hash, d.kind, d.text, d.signature FROM names n JOIN definitions d ON d.hash = n.hash
        WHERE n.name GLOB ? ORDER BY n.name`,
-    ).all(`${prefix}*`) as { name: string; hash: string; kind: "fn" | "type"; text: string; signature: string }[];
+    ).all(`${prefix}*`) as { name: string; hash: string; kind: Definition["kind"]; text: string; signature: string }[];
     return rows.map((r) => ({ ...r, def: parseProgram(r.text)[0] }));
   }
 

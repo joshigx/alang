@@ -103,7 +103,7 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 
 ## Not in alang
 
-No comments (the \`doc\` describes), \`const\`, \`extern fn\`, imports, \`var\`, assignment, \`null\`, exceptions, \`while\`
+No comments (the \`doc\` describes), \`extern fn\`, imports, \`var\`, assignment, \`null\`, exceptions, \`while\`
 (use recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, generic definitions, concurrency. Most of
 these get E0006, which names the alang form.
 
