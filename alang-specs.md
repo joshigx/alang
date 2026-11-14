@@ -530,7 +530,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Other values.** `true`, `false`, and `Unit`, the one value of the type `Unit`.
 - **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them.
 - **Foreign forms.** `===`, `!==`, `&&`, `||`, `|`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7). The message for `{` and `}` names the map literal `[key: value]`, and the one for index access names `std.list.get` and `std.map.get`. A function type written as in another language, `(Int) => Int`, `(x: Int) -> Int`, `Int -> Int` or `fn(Int) -> Int`, is E0006, naming `(Int) -> Int`.
-- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction and inside the brackets of a list or a map, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
+- **Layout.** A line break separates statements and section entries. Inside the parentheses of a call, an application or a construction and inside the brackets of a list or a map, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
 - **Files.** In a file given to `alang check` or `alang run`, the order of definitions has no meaning (6.2). The stored text and the export sort them by name, with one empty line between them.
 
 ### 7.3 Definitions and names
@@ -915,7 +915,7 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | Codes | Concern |
 | --- | --- |
 | E0001 to E0006 | Characters, names, numbers, strings, foreign forms |
-| E0101 to E0199 | Syntax and section order |
+| E0101 to E0199 | Syntax and section order; E0107 also for a function defined with `fn` called by position, which the checker finds |
 | E0201 to E0229 | Names, types, calls, patterns, examples' form, the empty list or map, map keys |
 | E0230 to E0233 | Effects |
 | E0234 | A key written twice in a map literal |
