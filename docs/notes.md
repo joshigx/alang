@@ -127,14 +127,16 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     a connection closed without an answer has one `Failed` text, 7.8 names four host differences, the `serve` doc
     warns about blocked ports, and `std.http.describe_serve_error`. 310 tests.
 
-**Next (2026-11-14, overnight run):** build `std-net` from `docs/plans/std-net.md` on branch `std-net` (fresh Opus
-agent), verify, run its playground round with `scripts/playground-round.sh` (plan section 7: adapt the setup, since
-the script starts from an empty directory and no user is present), analyze it (fresh Opus agent), fix, merge into
-`main`. Then `statements` from `docs/plans/statements.md`, the same way (its section with the round prompt; mind the
-addendum at the end). Then the roadmap rows that remain (`fn-types`, `const`, `generics`, `extern-fn`; a new row 9
-`records` from the statements plan), each planned by a fresh Opus agent first (no Fable planners until the weekly
-reset, Sunday 2026-11-15 21:00 local; the Fable advisor is fine). The user, before going to sleep on 2026-11-14:
-continue with the remaining items of the to-do list, never push, and shut the PC down when everything is finished.
+**Next (2026-11-14, overnight run, updated by the main session at ~03:10):** `std-net` (item 20) is built, its
+round analyzed and fixed, re-verified by a second automated round, and fast-forwarded into `main` (unpushed). Next:
+`statements` from `docs/plans/statements.md` on branch `statements` (fresh Opus agent; mind the addendum at the end and
+re-grep everything `std-net` moved), its round with `~/coding_projects/alang-rounds/prompts/tickets.md` (the plan's
+section 7 prompt, saved), analysis, fixes, merge. Then `fn-types` (`docs/plans/fn-types.md`) and `const`
+(`docs/plans/const.md`), both planned by fresh Opus agents on 2026-11-14 and committed; their round prompts are in the
+plans (`rank`, with `~/coding_projects/alang-rounds/prompts/rank-reference.ts`, and `parcel`). `generics` is being
+planned; `extern-fn` and row 9 `records` are not planned yet. No Fable planners until the weekly reset (Sunday
+2026-11-15 21:00 local); the Fable advisor is fine. The user, before going to sleep on 2026-11-14: continue with the
+remaining items of the to-do list, never push, and shut the PC down when everything is finished.
 
 **Earlier next steps (kept for reference):** `logstat-fixes` is merged into `main` (2026-11-13). The `tasks` playground round, from an empty codebase,
 was started on 2026-11-14: prompt, checks and the steps after it are in `docs/plans/tasks-round.md`. When the user
@@ -1025,6 +1027,12 @@ What the fixes after it changed (on `std-net`, one commit each):
 - `a2665ca`: `std.http.describe_serve_error` (`address already in use`, `permission denied`, the host's message);
   `examples/server.alang` and 7.9 use it.
 - `77473ef`: the round's `CLAUDE.md` says that redirections are refused and how to see an exit code.
+
+**Confirmation rerun** against `439acae` (all fixes; folder `~/coding_projects/alang-rounds/2026-11-14-std-net-2/`,
+checked by the main session from the result and the transcript, no analysis agent): correct on the three runs and
+two extra error cases, 19 tool calls (`card` 1, `list` 9, `submit` 2, Bash 5, Read 1, TaskStop 1), both submits
+accepted without a diagnostic, no denied command (the redirection line worked), 85 s, $0.49. The server was again
+started in the background and stopped with TaskStop.
 
 Left for later:
 
