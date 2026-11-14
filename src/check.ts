@@ -2289,7 +2289,7 @@ class DefChecker {
             this.report(
               "E0222",
               at,
-              `\`${e.op}\` compares values of \`${letter}\`, a type parameter, which may stand for a type with function values (3.9). Compare with a function taken as a parameter, such as \`same: (${letter}, ${letter}) -> Bool\`, or tell cases apart with \`match\`.`,
+              `\`${e.op}\` compares values of \`${letter}\`, a type parameter, which may stand for a type with function values (3.9). Compare with a function taken as a parameter, such as \`same: (${letter}, ${letter}) -> Bool\`, with a value built from literals and cases, such as \`option == None\`, or tell cases apart with \`match\`.`,
             );
           }
         }

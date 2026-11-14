@@ -252,7 +252,7 @@ Deno.test("generics: no `==`, order, show or contains on a type parameter (G2)",
   const eq = one(fn("return a == b", ab), "E0222");
   assertEquals(
     eq.message,
-    "`==` compares values of `T`, a type parameter, which may stand for a type with function values (3.9). Compare with a function taken as a parameter, such as `same: (T, T) -> Bool`, or tell cases apart with `match`.",
+    "`==` compares values of `T`, a type parameter, which may stand for a type with function values (3.9). Compare with a function taken as a parameter, such as `same: (T, T) -> Bool`, with a value built from literals and cases, such as `option == None`, or tell cases apart with `match`.",
   );
   assert_(one(fn("return a != b", ab), "E0222").message.startsWith("`!=` compares values of `T`"));
   const show = one(fn("return std.text.show(value: a)", { ...ab, out: "String" }), "E0222");
