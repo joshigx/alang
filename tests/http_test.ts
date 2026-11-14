@@ -708,11 +708,13 @@ Deno.test("send: odd answers of a server are Failed; content is read as UTF-8", 
 Deno.test("send: the bad ports are those Node.js's fetch refuses, and 0", async () => {
   if (!(await hasNode())) return;
   const closed = freePort();
-  // Node.js tries port 0 and is refused; the runtime decides it before sending.
+  // Node.js tries port 0 and is refused (on Linux; other systems may answer
+  // otherwise); the runtime decides it before sending.
   const bad = [...BAD_PORTS].filter((port) => port !== 0);
   assertEquals(bad.length, BAD_PORTS.size - 1);
+  const zero = Deno.build.os === "linux" ? [0] : [];
   const script = `
-    const ports = ${JSON.stringify([...bad, 0, closed])};
+    const ports = ${JSON.stringify([...bad, ...zero, closed])};
     const out = [];
     for (const port of ports) {
       try {
@@ -726,7 +728,7 @@ Deno.test("send: the bad ports are those Node.js's fetch refuses, and 0", async 
   const node = await new Deno.Command("node", { args: ["-e", script], stdout: "piped", stderr: "piped" }).output();
   assertEquals(node.code, 0, decode(node.stderr));
   const answers: string[] = JSON.parse(decode(node.stdout));
-  assertEquals(answers, [...bad.map(() => "bad port"), "ECONNREFUSED", "ECONNREFUSED"]);
+  assertEquals(answers, [...bad.map(() => "bad port"), ...zero.map(() => "ECONNREFUSED"), "ECONNREFUSED"]);
 });
 
 Deno.test("send: sending without the net permission traps", async () => {

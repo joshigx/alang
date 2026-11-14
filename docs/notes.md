@@ -932,7 +932,7 @@ observed with `deno run` and `node` scripts and in-process servers unless marked
 | Redirect to a bad port | followed | cause "bad port" |
 | Redirect loop | "Maximum number of redirects (20) reached", after 21 requests | cause "redirect count exceeded" |
 | `HTTP_PROXY` set | used: the listener named there got `GET http://example.invalid/... HTTP/1.1` | not used by default |
-| Waiting for headers, for more content | no limit found | 300 s each (`headersTimeout`, `bodyTimeout` default `3e5` in the bundled undici; read, not observed) |
+| Waiting for headers, for more content | not probed | 300 s each (`headersTimeout`, `bodyTimeout` default `3e5` in the bundled undici; read, not observed) |
 | Method "GE T", a header value with `\n`, GET with a body | `TypeError` | `TypeError` |
 | Request header `host` / `content-length: 99` | replaced / ignored | replaced / fails |
 | Request headers `transfer-encoding`, `keep-alive`, `upgrade`, `expect` | sent | fail (`UND_ERR_INVALID_ARG` / `UND_ERR_NOT_SUPPORTED`) |
@@ -965,6 +965,10 @@ were probed again or first by the implementer.
 - **The card** is 158 lines and 9,439 bytes (+48), within the brief's budget.
 - **The playground's exports** with a four-arm `match` over `std.fs.Error` (`ledger`, `wordcount`, `logstat`,
   `tasks`) fail E0213 since N3, so the round of this phase starts from an empty codebase (plan, section 7).
+- **Checked once by hand, not in the tests:** `examples/probe.alang` on both hosts against `localhost` with nothing
+  listening, `http://name.invalid/` and a URL of an in-process `std.http.serve`. Both printed `failed: cannot reach
+  the server` twice and `200`, and exited right after the last line. On Node.js, `localhost` has two addresses and
+  fetch fails with an `AggregateError` cause whose `code` is still `ECONNREFUSED`; the name gives `ENOTFOUND`.
 
 ## Spec observations
 
