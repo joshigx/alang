@@ -14,6 +14,7 @@ import {
   exampleDiagnostics,
   type ExampleOutcome,
   externsByModule,
+  type IsolationContext,
   isolationDiagnostics,
   type IsolationFailure,
   missingExamples,
@@ -21,7 +22,7 @@ import {
   noRunPermission,
 } from "./examples.ts";
 import { parseProgram } from "./parser.ts";
-import { printTypeRef } from "./printer.ts";
+import { printExpr, printTypeRef } from "./printer.ts";
 import type { Constant, ConstantResult, Example, ExampleResult, TrapInfo } from "./runtime.ts";
 import { decode_value, runConstants, runExamples } from "./runtime.ts";
 
@@ -164,11 +165,25 @@ export async function testProgram(
   built: Built,
   options: AcceptOptions = {},
 ): Promise<{ constants: ConstantResult[]; examples: ExampleOutcome[] }> {
-  const { constants, examples } = options.isolate === true || hasExtern(built.defs)
-    ? await runIsolated(built, options.limitMs ?? LIMIT_MS)
-    : await runHere(built);
+  if (options.isolate === true || hasExtern(built.defs)) {
+    const { constants, examples } = await runIsolated(built, options.limitMs ?? LIMIT_MS);
+    // The values came from a process that ran foreign code: one that cannot
+    // be shown is a malformed report, never an exception in the tool.
+    try {
+      return { constants, examples: describeResults(built.defs, built.info, examples) };
+    } catch {
+      throw new AlangError(isolationDiagnostics({ kind: "malformed" }, isolationContext(built, options)));
+    }
+  }
+  const { constants, examples } = await runHere(built);
   return { constants, examples: describeResults(built.defs, built.info, examples) };
 }
+
+const isolationContext = (built: Built, options: AcceptOptions) => ({
+  defs: built.defs,
+  base: built.base,
+  limitMs: options.limitMs ?? LIMIT_MS,
+});
 
 async function runHere(built: Built): Promise<Results> {
   const mod = await load(built.outPath);
@@ -208,8 +223,10 @@ async function runIsolated(built: Built, limitMs: number): Promise<Results> {
     throw new AlangError([noRunPermission(built.defs)]);
   }
   const entry = built.outPath.replace(/\.ts$/, ".check.ts");
-  // Written into the entry only: foreign code, which cannot read files, cannot
-  // learn it, so it cannot forge a report.
+  // Written into the entry only, which foreign code cannot read: it tells the
+  // report from whatever else the process prints. The module runs where the
+  // report is made, so it can still falsify its own results (the parent
+  // checks their form, not their truth); it never gains the tool's permissions.
   const marker = crypto.randomUUID();
   const program = basename(built.outPath);
   await Deno.writeTextFile(
@@ -250,20 +267,15 @@ async function runIsolated(built: Built, limitMs: number): Promise<Results> {
     } finally {
       clearTimeout(timer);
     }
-    const report = readReport(new TextDecoder().decode(output.stdout), marker);
-    const stderr = new TextDecoder().decode(output.stderr);
-    if (report.done !== null) {
-      const results = parseResults(report.done, built.defs);
-      if (results === null) {
-        throw new AlangError(isolationDiagnostics({ kind: "failed", code: output.code, stderr: MALFORMED }, context));
-      }
-      if (results.kind === "missing") throw new AlangError(isolationDiagnostics(results, context));
-      return results;
+    // The report comes from a process that ran foreign code, which may have
+    // changed the built-ins the report is made with: whatever cannot be read
+    // is a malformed report, never an exception in the tool.
+    try {
+      return interpret(output, killed, marker, context);
+    } catch (e) {
+      if (e instanceof AlangError) throw e;
+      throw new AlangError(isolationDiagnostics({ kind: "malformed" }, context));
     }
-    const failure: IsolationFailure = killed
-      ? { kind: "killed", last: report.last }
-      : { kind: "failed", code: output.code, stderr };
-    throw new AlangError(isolationDiagnostics(failure, context));
   } finally {
     await Deno.remove(entry).catch((e) => {
       if (!(e instanceof Deno.errors.NotFound)) throw e;
@@ -271,7 +283,38 @@ async function runIsolated(built: Built, limitMs: number): Promise<Results> {
   }
 }
 
-const MALFORMED = "its report was malformed";
+function interpret(output: Deno.CommandOutput, killed: boolean, marker: string, context: IsolationContext): Results {
+  const malformed = () => new AlangError(isolationDiagnostics({ kind: "malformed" }, context));
+  const report = readReport(new TextDecoder().decode(output.stdout), marker);
+  if (report.done !== null) {
+    const results = parseResults(report.done, context.defs);
+    if (results === null) throw malformed();
+    if (results.kind === "missing") throw new AlangError(isolationDiagnostics(results, context));
+    return results;
+  }
+  if (killed) {
+    const { last } = report;
+    const count = last?.kind === "constant"
+      ? context.defs.filter((d) => d.kind === "const").length
+      : exampleTexts(context.defs).length;
+    if (last !== null && last.index >= count) throw malformed();
+    throw new AlangError(isolationDiagnostics({ kind: "killed", last }, context));
+  }
+  const failure: IsolationFailure = {
+    kind: "failed",
+    code: output.code,
+    stderr: new TextDecoder().decode(output.stderr),
+  };
+  throw new AlangError(isolationDiagnostics(failure, context));
+}
+
+// Each example of a program as its definition and printed text, in the
+// order the emitter lists them.
+function exampleTexts(defs: readonly Definition[]): { definition: string; text: string }[] {
+  return defs.flatMap((d) =>
+    d.kind === "fn" ? d.examples.map((ex) => ({ definition: pathText(d.path), text: printExpr(ex, "") })) : []
+  );
+}
 
 // The lines of the process's report, found by its marker anywhere in a line
 // (a module may print without a line break before it).
@@ -324,20 +367,21 @@ function parseResults(
     );
     return valid ? { kind: "missing", missing } : null;
   }
-  const constantCount = defs.filter((d) => d.kind === "const").length;
-  const exampleCount = defs.reduce((n, d) => n + (d.kind === "fn" ? d.examples.length : 0), 0);
-  if (constants.length !== constantCount || examples.length !== exampleCount) return null;
+  // Item by item, the program's own constants and examples, in its order.
+  const constantNames = defs.filter((d) => d.kind === "const").map((d) => pathText(d.path));
+  const texts = exampleTexts(defs);
+  if (constants.length !== constantNames.length || examples.length !== texts.length) return null;
   const fields = (x: unknown): Record<string, unknown> =>
     x !== null && typeof x === "object" ? x as Record<string, unknown> : {};
-  const validConstant = (x: unknown) => {
+  const validConstant = (x: unknown, i: number) => {
     const c = fields(x);
-    return isString(c.definition) && (c.trap === null || isTrap(c.trap)) &&
+    return c.definition === constantNames[i] && (c.trap === null || isTrap(c.trap)) &&
       (c.origin === null || isString(c.origin)) &&
       (c.cycle === null || (Array.isArray(c.cycle) && c.cycle.every(isString)));
   };
-  const validExample = (x: unknown) => {
+  const validExample = (x: unknown, i: number) => {
     const e = fields(x);
-    return isString(e.definition) && isString(e.text) && typeof e.passed === "boolean" &&
+    return e.definition === texts[i].definition && e.text === texts[i].text && typeof e.passed === "boolean" &&
       (e.trap === null || isTrap(e.trap));
   };
   if (!constants.every(validConstant) || !examples.every(validExample)) return null;

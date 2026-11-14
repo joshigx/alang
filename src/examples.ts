@@ -169,7 +169,10 @@ export type IsolationFailure =
   // loading its modules).
   | { readonly kind: "killed"; readonly last: { readonly kind: "constant" | "example"; readonly index: number } | null }
   // Ended without a result: a module did not load, or ended the process.
-  | { readonly kind: "failed"; readonly code: number; readonly stderr: string };
+  | { readonly kind: "failed"; readonly code: number; readonly stderr: string }
+  // A report the tool cannot read: foreign code may change the built-ins
+  // the report is made with.
+  | { readonly kind: "malformed" };
 
 export interface IsolationContext {
   readonly defs: readonly Definition[];
@@ -234,6 +237,14 @@ const seconds = (ms: number) => `${ms / 1000} seconds`;
 export function isolationDiagnostics(failure: IsolationFailure, context: IsolationContext): Diagnostic[] {
   const { defs, base, limitMs } = context;
   switch (failure.kind) {
+    case "malformed":
+      return [diagnostic({
+        code: "E0406",
+        definition: null,
+        at: "<program>",
+        message: "The examples' process gave a report this tool cannot read, so no example counts as run: a module " +
+          "of an `extern fn` may have changed what JavaScript provides, such as `Array.prototype` or `JSON`.",
+      })];
     case "missing":
       return failure.missing.map((m) => {
         const def = defs.find((d): d is FnDef => d.kind === "fn" && pathText(d.path) === m.definition)!;

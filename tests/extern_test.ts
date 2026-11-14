@@ -9,7 +9,22 @@ import { parseProgram } from "../src/parser.ts";
 import { printProgram, printSignature } from "../src/printer.ts";
 import { accept, type AcceptOptions, build, readReport, run, testExamples, writeEntry } from "../src/toolchain.ts";
 import * as rt from "../src/runtime.ts";
-import { B, B_TS, DEEP, FILES, FILES_TS, G, G_DEEP, G_TS, LEAVE, TEXT, TEXT_TS } from "./extern_fixtures.ts";
+import {
+  B,
+  B_TS,
+  C,
+  C_BROKEN,
+  C_TS,
+  DEEP,
+  FILES,
+  FILES_TS,
+  G,
+  G_DEEP,
+  G_TS,
+  LEAVE,
+  TEXT,
+  TEXT_TS,
+} from "./extern_fixtures.ts";
 
 const OUT = new URL("../out/test/extern/", import.meta.url).pathname;
 const CLI = new URL("../src/cli.ts", import.meta.url).pathname;
@@ -528,6 +543,36 @@ Deno.test("extern: a module that never finishes loading is stopped (E0407); its 
       ),
   });
   assertEquals(await acceptIn(noisy, TEXT), []);
+});
+
+Deno.test("extern: a module that changes the built-ins the report is made with is E0406, never a crash", async () => {
+  // Every example reported failed with a value of the wrong type.
+  const values = "const map = Array.prototype.map;\nArray.prototype.map = function (...args) {\n" +
+    "  const r = map.apply(this, args);\n" +
+    '  for (const x of r) if (x !== null && typeof x === "object" && "actual" in x) { x.actual = 42; x.passed = false; }\n' +
+    "  return r;\n};\n";
+  // A progress line for an example that does not exist, then no end.
+  const index = "const map = Array.prototype.map;\nArray.prototype.map = function (f, t) {\n" +
+    '  if (this.length > 0 && typeof this[0] === "object" && this[0] !== null && "expected" in this[0]) {\n' +
+    "    f(this[0], 999);\n    for (;;) {}\n  }\n  return map.call(this, f, t);\n};\n";
+  for (const [name, attack] of [["forged_values", values], ["forged_index", index]]) {
+    const dir = await project(name, { "text.ts": attack + TEXT_TS });
+    const ds = await acceptIn(dir, TEXT, { limitMs: 3_000 });
+    assertEquals(ds.map((d) => [d.code, d.definition, d.at]), [["E0406", null, "<program>"]], name);
+    assertEquals(ds[0].message.startsWith("The examples' process gave a report this tool cannot read"), true);
+  }
+});
+
+Deno.test("extern: contracts around an extern, and an extern passed by name", async () => {
+  const dir = await project("contracts", { "c.ts": C_TS });
+  assertEquals(await acceptIn(dir, C), []);
+  const built = await build(C, `${dir}out/c.ts`, { base: dir });
+  builtFiles.push(built.outPath);
+  const broken = await acceptIn(dir, C_BROKEN);
+  assertEquals(broken.map((d) => [d.code, d.definition, d.message]), [
+    ["E0403", "c.halve", "The example ends in a trap (`requires`). Precondition of c.halve violated: n >= 0."],
+    ["E0403", "c.halve", "The example ends in a trap (`ensures`). Postcondition of c.halve violated: result * 2 <= n."],
+  ]);
 });
 
 Deno.test("extern: a tool without --allow-run refuses the program, never runs it itself (E0408)", async () => {

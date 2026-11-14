@@ -271,6 +271,43 @@ export const FILES_TS = `export async function touch(path: string): Promise<{ ta
 }
 `;
 
+// Contracts around an extern, and an extern passed by name.
+export const C = `extern fn c.halve
+  doc: "Half of a number that is not negative, rounded down."
+  in:
+    n: Int
+  out: Int
+  effects: none
+  requires: n >= 0
+  ensures: result * 2 <= n
+  examples:
+    halve(n: 7) == 3
+  target: "./c.ts#halve"
+end extern fn c.halve
+
+fn c.halves
+  doc: "Half of each number, through halve passed by name."
+  in:
+    numbers: List<Int>
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    halves(numbers: [2, 5]) == [1, 2]
+  body:
+    return std.list.map(list: numbers, with: halve)
+end fn c.halves
+`;
+
+// One example breaks `requires`, the other `ensures` (c.ts errs at 9).
+export const C_BROKEN = C.replace("    halve(n: 7) == 3", "    halve(n: -1) == 0\n    halve(n: 9) == 4");
+
+export const C_TS = `export function halve(n: number): number {
+  return n === 9 ? 9 : Math.floor(n / 2);
+}
+`;
+
 // Generic and std types across the boundary, and `show` of a returned record.
 function gExtern(name: string, params: string[], out: string, example: string): string {
   const inSection = params.length === 0 ? "  in: none" : `  in:\n${params.map((p) => `    ${p}`).join("\n")}`;
