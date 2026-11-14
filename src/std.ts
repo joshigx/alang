@@ -73,7 +73,7 @@ type std.http.Response
 end type std.http.Response
 
 type std.http.ServeError
-  doc: "Why the server could not start listening."
+  doc: "Why the server could not start listening; \`std.http.describe_serve_error\` gives it as text. Other carries the host's message, which differs between runtimes: show it, do not compare it."
   variant:
     AddressInUse
     PermissionDenied
@@ -261,6 +261,13 @@ export const STD: readonly Signature[] = [
     "The error as a short text for a message, starting in lower case and without a final period: `invalid URL`, `cannot reach the server`, `timed out`, or the host's message that `Failed` carries.",
     [],
     [["error", con("std.http.SendError")]],
+    STRING,
+  ),
+  sig(
+    "std.http.describe_serve_error",
+    "The error as a short text for a message, starting in lower case and without a final period: `address already in use`, `permission denied`, or the host's message that `Other` carries.",
+    [],
+    [["error", con("std.http.ServeError")]],
     STRING,
   ),
 

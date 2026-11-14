@@ -56,7 +56,7 @@ fn server.main
       case Ok(done) then
         "Stopped."
       case Err(reason) then
-        std.string.concat(left: "Cannot serve: ", right: std.text.show(value: reason))
+        std.string.concat(left: "Cannot serve: ", right: std.http.describe_serve_error(error: reason))
     end match
     std.console.print_line(text: text)
     return Unit

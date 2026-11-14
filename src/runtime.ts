@@ -1394,6 +1394,19 @@ export function std$http$describe(error: std$http$SendError): string {
   }
 }
 
+// The texts a program shows for a server that cannot listen; `Other`
+// carries the host's own.
+export function std$http$describe_serve_error(error: std$http$ServeError): string {
+  switch (error.tag) {
+    case "AddressInUse":
+      return "address already in use";
+    case "PermissionDenied":
+      return "permission denied";
+    case "Other":
+      return error.value;
+  }
+}
+
 // ---- std.log, std.random, std.time ----
 
 // The log is stderr on every host; the console (print_line) is stdout.

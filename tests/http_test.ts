@@ -206,7 +206,7 @@ fn web.main
       case Ok(done) then
         "stopped"
       case Err(reason) then
-        std.string.concat(left: "cannot serve: ", right: std.text.show(value: reason))
+        std.string.concat(left: "cannot serve: ", right: std.http.describe_serve_error(error: reason))
     end match
     std.console.print_line(text: text)
     return Unit
@@ -348,10 +348,10 @@ Deno.test("http: a port in use reaches the program as an error value, on Deno an
   const taken = Deno.listen({ hostname: "127.0.0.1", port: Number(new URL(url).port) });
   try {
     const out = await run(built, { stdio: "piped" });
-    assertEquals([out.code, decode(out.stdout)], [0, "cannot serve: AddressInUse"], decode(out.stderr));
+    assertEquals([out.code, decode(out.stdout)], [0, "cannot serve: address already in use"], decode(out.stderr));
     if (!(await hasNode())) return;
     const node = await new Deno.Command("node", { args: [entry], stdout: "piped", stderr: "piped" }).output();
-    assertEquals([node.code, decode(node.stdout)], [0, "cannot serve: AddressInUse"], decode(node.stderr));
+    assertEquals([node.code, decode(node.stdout)], [0, "cannot serve: address already in use"], decode(node.stderr));
   } finally {
     taken.close();
   }

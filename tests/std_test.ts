@@ -46,6 +46,15 @@ Deno.test("std.http: describe gives each error of send as a short text", () => {
   for (const [error, text] of cases) assertEquals(rt.std$http$describe(error), text);
 });
 
+Deno.test("std.http: describe_serve_error gives each error of serve as a short text", () => {
+  const cases: [rt.std$http$ServeError, string][] = [
+    [{ tag: "AddressInUse" }, "address already in use"],
+    [{ tag: "PermissionDenied" }, "permission denied"],
+    [{ tag: "Other", value: "Invalid argument (os error 22)" }, "Invalid argument (os error 22)"],
+  ];
+  for (const [error, text] of cases) assertEquals(rt.std$http$describe_serve_error(error), text);
+});
+
 Deno.test("std.int: min, max and abs", () => {
   assertEquals([rt.std$int$min(3, -4), rt.std$int$min(-4, 3), rt.std$int$min(2, 2)], [-4, -4, 2]);
   assertEquals([rt.std$int$max(3, -4), rt.std$int$max(-4, 3), rt.std$int$max(2, 2)], [3, 3, 2]);
