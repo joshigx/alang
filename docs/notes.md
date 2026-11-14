@@ -211,7 +211,7 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     every acceptance (E15). The MCP instructions name the module as the one file the model writes; the card teaches
     the form (158 lines, 9,910 bytes, 10 fewer). The spec gains `text.decode` and `text.encode` with their TypeScript
     (7.3), accepted with their examples, and section 7.12. Decisions in `decisions.md`, rows listed in the review list
-    below. 479 tests. See "From extern-fn".
+    below. 480 tests after the query round's fixes. See "From extern-fn" and "From the query round".
 
 **Next (2026-11-14, overnight run, updated by the main session at ~07:20):** `std-net` (item 20), `statements`
 (item 21), `fn-types` (item 22), `const` (item 23, with R7 of `docs/plans/records.md`) and `generics` (item 24, generic
@@ -1753,6 +1753,66 @@ Left for later:
 - **Caps for the separate process:** a heap limit (`--v8-flags=--max-old-space-size=…`) and a cap on the captured
   output.
 - **The module's code under the hash** (decisions, Open questions) and `context` showing the module (E19).
+
+## From the query round (2026-11-14)
+
+One automated round against `42514ed` on `extern-fn` (headless Opus 5.5, no advisor, the MCP server with
+`--allow-run`), the round of `extern-fn`; folder `~/coding_projects/alang-rounds/2026-11-14-query/` (a URL query tool
+with two `extern fn`s over a TypeScript module), analyzed by one fresh Opus agent (its report was condensed into
+`analysis/report.md` by the main session; call table, cases, isolation probes and scripts beside it).
+
+- **All correct.** 15 of 15 prompt runs match the plan's hand-computed results; 17 of 17 edge cases match an
+  independent Python reference (strict UTF-8, RFC 3986); no trap.
+- **The cheapest round so far:** 14 calls (card 1, list 4, submit 3, replace 1, Write 1, Edit 1, Bash 3), 91 s, 11.5k
+  output tokens, $0.50; no `context`, `search` or `search_type`, no denied command.
+- **Both externs right at the first submit, from the card alone** (`target: "./percent.ts#encode"`, `end extern fn`,
+  `effects: none`, three examples each), accepted as sent. The module returns `{ tag: "Some", value } | { tag:
+  "None" }`, so decode errors come back as `None`, never a throw; everything else is pure alang with examples.
+- **One diagnostic:** E0218 on a dummy `return Err(Usage)` after a `match` whose arms all return; the resend of all 10
+  definitions cost 30.6% of the output.
+- **Isolation confirmed** by code path (`testProgram` → `runIsolated`, a child `deno run` without any `--allow-*`,
+  killed after 30 s, E0408 without the run permission, no fallback) and by probes: a module reading a file
+  (`/etc/hostname`) traps `effect` (E0403); an endless loop ends in E0407 after 30 s with nothing left running; a
+  syntax error gives E0406 naming the module and line:column.
+- **The RFC change** was one `replace` of `query.encode` with a new example; no old example held `!'()*`, so the
+  stale-example risk (E15) was not exercised. Probe (`stale.py`): with the module reverted, `db run` refuses with
+  E0402 at the right example, but did not name the module.
+- **No regressions** (the dummy-default unwrap a third time, the whole-transaction resend again). The generated code
+  imports `../percent.ts` and wraps the calls in `$rt.extern_call`; Node 26 gives the same output; `deno check` passes.
+- **Fixed (this session):**
+  - `eddf8b7`: E0218 after an `if` or `match` whose every branch returns names the way out: for a `match`, "Make the
+    `match` the value of a `let` (`let x: T = match …`, each arm ending in its value) and `return x` (3.4)."; for an
+    `if`, "Drop its `else` and put that branch after the `if` (3.4)."; after a literal `return` the text stays.
+  - `cd47efe`: E0402 of an extern appends "`text.encode` runs `./text.ts#encode`: if the module changed, `replace` the
+    example; if the example is right, fix the module."; tested by the stale-module test of `extern_db_test`, where the
+    caller `text.pair` keeps the plain text.
+  - `cf9ec50`: a host refusal (E0403, trap `effect`) drops Deno's ", run again with the --allow-<x> flag" (Deno
+    2.8.0's wording for read, net, env and run, probed); the way out for alang is the extern's `effects`.
+  - `ae1b8e9`: E0502 of `list` for an unknown `std.` module without a near name adds "`list("std")` gives the std
+    modules." (the round's `list("std.result")`); `std.lst` still gets "Did you mean `std.list`?".
+
+Left for later:
+
+- **`std.list.try_map`:** a third round with the check-then-unwrap-with-a-dummy-default pattern; a naming decision.
+- **E0403 once per cause**, and **E0407 naming the extern**.
+- **A round that exercises E15** and E0260/E0261/E0406–E0408.
+- **The whole-transaction resend.**
+- **A card line on catching only expected errors in a module** (card budget).
+
+## From the fleet round (2026-11-14)
+
+The evidence round `fleet` of `docs/plans/records.md` (R6), run by the main session against `42514ed`; folder
+`~/coding_projects/alang-rounds/2026-11-14-fleet/`, no analysis agent, checked from the result, the transcript and
+`count-records.ts`.
+
+- **All 14 commands right** by the model's report; 283 s, $1.34.
+- **5 submits, 2 rejected** for causes unrelated to records: E0101 (a missing `end if`), then E0004 (an int64 literal
+  `9_223_372_036_854_775_807`) and E0109 (`error` as a name).
+- **`count-records.ts`:** 17 record constructions in bodies and 80 in examples, 9 copies, among them three wide copies
+  of the 6-field `Vehicle` (5, 4 and 4 fields copied from `vehicle`). No update form was attempted, and no copy caused
+  a rejected submit or a wrong value.
+- **So the cost and habit parts of R5's trigger did not fire** (the task makes wide copies by design, so the width
+  alone does not count): R1 stands, row 9 stays unbuilt.
 
 ## Spec observations
 
