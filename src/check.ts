@@ -383,6 +383,8 @@ class DefChecker {
   }
 
   private resolveType(ref: TypeRef): Type {
+    // A function type is pure (F3); its parts are reported where they stand.
+    if (ref.kind === "function") return fnType(ref.params.map((p) => this.resolveType(p)), this.resolveType(ref.out));
     const args = ref.args.map((a) => this.resolveType(a));
     if (ref.path.length === 1 && BUILTIN_TYPES.has(ref.path[0])) {
       const arity = BUILTIN_TYPES.get(ref.path[0])!;
@@ -1148,7 +1150,7 @@ class DefChecker {
     const s: Subst = new Map();
     if (!unify(sig.out, expected, s)) return null;
     const types = sig.typeParams.map((tp) => s.get(tp));
-    // A type argument cannot name a function type yet (H5).
+    // A function type without parameters has no written form (H5, F5).
     if (types.some((t) => t === undefined || !writable(t))) return null;
     return types.map((t) => toTypeRef(t!, this.module));
   }
@@ -1898,14 +1900,22 @@ function badMapKey(t: Type): Type | null {
   }
 }
 
-// Whether `toTypeRef` writes the type: built from named types only, without
-// function types, type variables or the error type.
+// Whether `toTypeRef` writes the type: built from named types and pure
+// function types with at least one parameter (F8), without type variables,
+// the error type, or a function type that has no written form (`() -> T`,
+// F5; std's `with effects`, F3).
 export function writable(t: Type): boolean {
+  if (t.k === "fn") {
+    return t.params.length >= 1 && t.effects === undefined && t.params.every(writable) && writable(t.out);
+  }
   return t.k === "con" && t.args.every(writable);
 }
 
-// A type as it is written in `module` (rule 1.2).
+// A type as it is written in `module` (rule 1.2), if it is `writable`.
 export function toTypeRef(t: Type, module: string): TypeRef {
+  if (t.k === "fn") {
+    return { kind: "function", params: t.params.map((p) => toTypeRef(p, module)), out: toTypeRef(t.out, module) };
+  }
   if (t.k !== "con") return { kind: "type", path: ["Unit"], args: [] };
   const prefix = module + ".";
   const path = t.name.startsWith(prefix) && !t.name.slice(prefix.length).includes(".")

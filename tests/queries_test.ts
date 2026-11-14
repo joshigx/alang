@@ -11,6 +11,7 @@ import { casesOf } from "../src/interface.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printDefinition, printSignature, printString } from "../src/printer.ts";
 import { dependencies } from "../src/refs.ts";
+import { namedTypes, treeOfRef } from "../src/search.ts";
 import { signatureLine, STD, STD_BY_NAME, STD_TYPES } from "../src/std.ts";
 
 function throwsCode(f: () => unknown, code: string): AlangError {
@@ -191,6 +192,24 @@ Deno.test("queries: list gives a module's definitions and submodules", async () 
   assertEquals(cb.list("").submodules, ["config", "net"]);
   const e = throwsCode(() => cb.list("nett"), "E0502");
   assertEquals(e.diagnostic.fix, { replace: "nett", with: "net" });
+  await done(cb);
+});
+
+Deno.test("queries: a function type shows in full in a hit, and its types are named (F1)", async () => {
+  const cb = await fresh();
+  const row = 'type m.Row\n  doc: "A row."\n  record:\n    name: String\n  where: none\nend type m.Row';
+  const keepIf = fn("m.keep_if", {
+    params: ["rows: List<Row>", "keep: (Row) -> Bool"],
+    out: "List<Row>",
+    examples: ['keep_if(rows: [Row(name: "a")], keep: fn(row: Row): Bool => row.name == "b") == std.list.empty<Row>()'],
+    body: "return std.list.filter(list: rows, with: keep)",
+  });
+  await ok(cb, [add(row), add(keepIf)]);
+  const hit = cb.list("m").definitions.find((d) => d.name === "m.keep_if")!;
+  assertEquals(hit.signature, "fn m.keep_if(rows: List<m.Row>, keep: (m.Row) -> Bool): List<m.Row>, effects: none");
+  const keep = parseProgram(keepIf)[0];
+  assert_(keep.kind === "fn");
+  assertEquals(namedTypes(treeOfRef(keep.params[1].type, ["m"])), ["m.Row"]);
   await done(cb);
 });
 

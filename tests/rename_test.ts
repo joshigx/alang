@@ -301,6 +301,37 @@ Deno.test("rename: calls in the keys and values of a map literal are references 
   await done(cb);
 });
 
+Deno.test("rename: a type inside a function type is a reference and is rewritten (F1)", async () => {
+  const cb = await fresh();
+  const row = 'type old.Row\n  doc: "A row."\n  record:\n    name: String\n  where: none\nend type old.Row';
+  const count = fn("other.count", {
+    params: ["names: List<String>", "keep: (old.Row) -> Bool"],
+    out: "Int",
+    examples: ['count(names: ["a"], keep: fn(row: old.Row): Bool => true) == 1'],
+    body:
+      "let rows: List<old.Row> = std.list.map(list: names, with: fn(name: String): old.Row => old.Row(name: name))\nreturn std.list.length(list: std.list.filter(list: rows, with: keep))",
+  });
+  const user = fn("other.user", {
+    out: "Int",
+    examples: ["user() == 0"],
+    body: "return count(names: std.list.empty<String>(), keep: fn(row: old.Row): Bool => false)",
+  });
+  await ok(cb, [add(row), add(count), add(user)]);
+  assertEquals(cb.callers("old.Row").callers, ["other.count", "other.user"]);
+  await ok(cb, [rename(cb, "old.Row", "fresh.Row")]);
+  assertEquals(cb.definition("other.count").text, count.replaceAll("old.Row", "fresh.Row"));
+  assert_(cb.definition("other.count").text.includes("    keep: (fresh.Row) -> Bool\n"));
+  // The function type belongs to the interface: changing it with a caller
+  // outside the transaction is E0506.
+  const changed = cb.definition("other.count").text.replace("keep: (fresh.Row) -> Bool", "keep: (fresh.Row) -> Int")
+    .replace("fn(row: fresh.Row): Bool => true", "fn(row: fresh.Row): Int => 1")
+    .replace("with: keep))", "with: fn(row: fresh.Row): Bool => true))");
+  const r = await fails(cb, [{ op: "replace", name: "other.count", hash: hashOf(cb, "other.count"), text: changed }]);
+  assertEquals(codes(r.diagnostics), ["E0506"]);
+  assert_(r.diagnostics[0].message.includes("`in`"), r.diagnostics[0].message);
+  await done(cb);
+});
+
 Deno.test("rename: a new name captured by a local binding is rejected (E0510)", async () => {
   // A function value `by: cmp` would read the local `g` after renaming cmp to g.
   const cb = await fresh();

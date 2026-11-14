@@ -1,6 +1,6 @@
-// Types as the checker sees them. Only builtins are generic; function types
-// and type variables exist for std signatures, which the surface language
-// cannot express yet (see docs/notes.md).
+// Types as the checker sees them. Only builtins are generic; type variables
+// exist for std signatures, which the surface language cannot express yet
+// (see docs/notes.md). Function types are written `(A, B) -> R` (F1).
 
 export type Type =
   // Nominal types: builtins (`Int`, `List`, ...) and user types by full name.

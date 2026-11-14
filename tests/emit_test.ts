@@ -843,6 +843,146 @@ fn maps.main
 end fn maps.main
 `;
 
+// Function types (F1): parameters, a record field, a `let` chosen by an
+// `if` or taken from a map literal, and an empty list of functions.
+const FNVALUES = `
+type fnvalues.Rule
+  doc: "A named check of a line."
+  record:
+    name: String
+    broken: (String) -> Bool
+  where: none
+end type fnvalues.Rule
+
+fn fnvalues.blank
+  doc: "Whether a line is empty."
+  in:
+    line: String
+  out: Bool
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    blank(line: "") == true
+    blank(line: "a") == false
+  body:
+    return line == ""
+end fn fnvalues.blank
+
+fn fnvalues.double
+  doc: "Twice the number."
+  in:
+    n: Int
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    double(n: 2) == 4
+  body:
+    return n * 2
+end fn fnvalues.double
+
+fn fnvalues.triple
+  doc: "Three times the number."
+  in:
+    n: Int
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    triple(n: 2) == 6
+  body:
+    return n * 3
+end fn fnvalues.triple
+
+fn fnvalues.rule_names
+  doc: "The names of the rules."
+  in:
+    rules: List<Rule>
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    rule_names(rules: [Rule(name: "blank", broken: blank), Rule(name: "long", broken: fn(line: String): Bool => std.string.length(text: line) > 80)]) == ["blank", "long"]
+  body:
+    return std.list.map(list: rules, with: fn(rule: Rule): String => rule.name)
+end fn fnvalues.rule_names
+
+fn fnvalues.sorted
+  doc: "The numbers in the order the comparison gives."
+  in:
+    numbers: List<Int>
+    by: (Int, Int) -> Order
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    sorted(numbers: [3, 1, 2], by: std.int.compare) == [1, 2, 3]
+    sorted(numbers: [3, 1, 2], by: fn(a: Int, b: Int): Order => std.int.compare(left: b, right: a)) == [3, 2, 1]
+  body:
+    return std.list.sort(list: numbers, by: by)
+end fn fnvalues.sorted
+
+fn fnvalues.ordered
+  doc: "The numbers from the smallest, or from the largest."
+  in:
+    numbers: List<Int>
+    up: Bool
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    ordered(numbers: [2, 3, 1], up: true) == [1, 2, 3]
+    ordered(numbers: [2, 3, 1], up: false) == [3, 2, 1]
+  body:
+    let by: (Int, Int) -> Order = if up then
+      std.int.compare
+    else
+      fn(a: Int, b: Int): Order => std.int.compare(left: b, right: a)
+    end if
+    return sorted(numbers: numbers, by: by)
+end fn fnvalues.ordered
+
+fn fnvalues.scaled
+  doc: "Every number doubled or tripled, by the name of the scale; unchanged for another name."
+  in:
+    numbers: List<Int>
+    name: String
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    scaled(numbers: [1, 2], name: "double") == [2, 4]
+    scaled(numbers: [1, 2], name: "triple") == [3, 6]
+    scaled(numbers: [1, 2], name: "other") == [1, 2]
+  body:
+    let scales: Map<String, (Int) -> Int> = ["double": double, "triple": triple]
+    let by: (Int) -> Int = std.map.get(map: scales, key: name) else return numbers
+    return std.list.map(list: numbers, with: by)
+end fn fnvalues.scaled
+
+fn fnvalues.scales
+  doc: "How many scales there are with the extra ones."
+  in:
+    extra: List<(Int) -> Int>
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    scales(extra: std.list.empty<(Int) -> Int>()) == 2
+    scales(extra: [double]) == 3
+  body:
+    return std.list.length(list: std.list.concat(left: [double, triple], right: extra))
+end fn fnvalues.scales
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
@@ -857,6 +997,7 @@ const PROGRAMS: Record<string, string> = {
   kinds: KINDS,
   lists: LISTS,
   maps: MAPS,
+  fnvalues: FNVALUES,
   io: IO_PROGRAM,
   ending: ENDING_PROGRAM,
   net: NET_PROGRAM,
@@ -896,7 +1037,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
   assert_(!bad.success, "deno check accepted an ill-typed file");
 });
 
-for (const name of ["hello", "port", "clamp", "calc", "port_plus", "propagate", "shared"]) {
+for (const name of ["hello", "port", "clamp", "calc", "port_plus", "propagate", "shared", "fnvalues"]) {
   Deno.test(`emit: spec examples of ${name} pass`, async () => {
     const results = await testExamples(built[name]);
     assertEquals(results.filter((r) => !r.passed), []);
@@ -962,6 +1103,7 @@ Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(KINDS)), KINDS.trimStart());
   assertEquals(printProgram(parseProgram(LISTS)), LISTS.trimStart());
   assertEquals(printProgram(parseProgram(MAPS)), MAPS.trimStart());
+  assertEquals(printProgram(parseProgram(FNVALUES)), FNVALUES.trimStart());
   assertEquals(printProgram(parseProgram(IO_PROGRAM)), IO_PROGRAM);
   assertEquals(printProgram(parseProgram(ENDING_PROGRAM)), ENDING_PROGRAM);
   assertEquals(printProgram(parseProgram(NET_PROGRAM)), NET_PROGRAM);
@@ -1086,6 +1228,18 @@ Deno.test("emit: a propagation statement returns the else value, or goes on (T1)
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("emit: function types are TypeScript function types, values synchronous (F1)", async () => {
+  const mod = await load("fnvalues");
+  assertEquals(mod.fnvalues$sorted([3, 1, 2], (a: number, b: number) => rt.std$int$compare(b, a)), [3, 2, 1]);
+  assertEquals(mod.fnvalues$ordered([2, 3, 1], true), [1, 2, 3]);
+  assertEquals(mod.fnvalues$scaled([1, 2], "triple"), [3, 6]);
+  const rule = mod.fnvalues$Rule({ name: "blank", broken: mod.fnvalues$blank });
+  assertEquals([rule.broken(""), mod.fnvalues$rule_names([rule])], [true, ["blank"]]);
+  // The type of a function-typed parameter, as the emitter writes it.
+  const text = await Deno.readTextFile(built.fnvalues.outPath);
+  assert_(text.includes("by: ((p0: number, p1: number) => $rt.Order)"), text);
 });
 
 Deno.test("emit: a block ending without a value delivers Unit to a return (sink fix)", async () => {

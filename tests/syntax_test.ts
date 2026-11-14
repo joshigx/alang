@@ -426,3 +426,100 @@ Deno.test("shared cases: the forms of other languages name `or` (T9, 5.7)", () =
   const logic = diagnostic("let x: Bool = a || b");
   assertEquals([logic.code, logic.fix], ["E0006", { replace: "||", with: "or" }]);
 });
+
+// ---- function types (F1, F5, F6) ----
+
+const FN_TYPES = `type m.Rule
+  doc: "A named check of a line."
+  record:
+    name: String
+    broken: (String) -> Bool
+  where: none
+end type m.Rule
+
+type m.Check
+  doc: "How a number is checked."
+  variant:
+    Custom: (Int) -> Bool
+    Off
+  where: none
+end type m.Check
+
+fn m.f
+  doc: "Takes functions."
+  in:
+    f: (Int) -> Int
+    by: (Int, Int) -> Order
+    g: ((Int) -> Int) -> Int
+    h: (Int) -> (Int) -> Int
+    fs: List<(Int) -> Bool>
+    table: Map<String, (net.port.Port) -> Bool>
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let d: (Int) -> Int = double
+    let same: (Int) -> Int = fn(k: (Int) -> Int): (Int) -> Int => k
+    let empty: List<(Int) -> Bool> = std.list.empty<(Int) -> Bool>()
+    return 0
+end fn m.f
+`;
+
+Deno.test("function types: written wherever a type is, round-trip (F1)", () => {
+  const tree = parseProgram(FN_TYPES);
+  assertEquals(printProgram(tree), FN_TYPES);
+  assertEquals(parseProgram(printProgram(tree)), tree);
+  const f = tree[2];
+  const int = { kind: "type", path: ["Int"], args: [] } as const;
+  // `->` nests to the right.
+  assertEquals(f.kind === "fn" && f.params[3].type, {
+    kind: "function",
+    params: [int],
+    out: { kind: "function", params: [int], out: int },
+  });
+  assertEquals(canonicalExpr("std.list.empty<(Int) -> Bool>()"), "std.list.empty<(Int) -> Bool>()");
+  assertEquals(canonicalExpr("fn(f: (Int) -> Int): (Int) -> Int => f"), "fn(f: (Int) -> Int): (Int) -> Int => f");
+});
+
+Deno.test("function types: the forms of other languages name `(Int) -> Int` (F5, F6)", () => {
+  const message = (type: string) => {
+    const source = FN_TYPES.replace("    f: (Int) -> Int\n", `    f: ${type}\n`);
+    const d = assertThrows(() => parseProgram(source), AlangError).diagnostic;
+    return [d.code, d.message];
+  };
+  const p1 = [
+    "E0006",
+    "A function type names no parameters: `(Int) -> Int`; the names belong to a lambda, `fn(x: Int): Int => ...`.",
+  ];
+  const p3 = ["E0006", "A function type puts its parameter types in parentheses: `(Int) -> Int`."];
+  const p4 = [
+    "E0006",
+    "A function type is written `(Int) -> Int`, without `fn`; `fn(x: Int): Int => ...` is a lambda, which is a value.",
+  ];
+  assertEquals(message("(x: Int) -> Int"), p1);
+  assertEquals(message("(Int) => Int"), [
+    "E0006",
+    "A function type is written with `->`: `(Int) -> Int`; `=>` starts the body of a lambda.",
+  ]);
+  assertEquals(message("Int -> Int"), p3);
+  assertEquals(message("(Int) -> Int -> Int"), p3);
+  assertEquals(message("fn(Int) -> Int"), p4);
+  assertEquals(message("fn(Int): Int"), p4);
+  assertEquals(message("() -> Int"), [
+    "E0101",
+    "A function type takes at least one parameter: a pure function without parameters always gives the same value, so take that value instead (`limit: Int`).",
+  ]);
+  assertEquals(message("(Int) -> Int with effects"), [
+    "E0101",
+    "Function types in your own code are pure (2.4); only the `handler` of `std.http.serve` takes a function with effects. Take a pure function, and put effects in a `for` or in the function that calls it.",
+  ]);
+  // Inside type arguments the form's own message comes through
+  // (tryTypeArgs), while a comparison still reads as one.
+  const d = assertThrows(() => parseExpression("std.list.empty<(x: Int) -> Int>()"), AlangError).diagnostic;
+  assertEquals([d.code, d.message], p1);
+  assertEquals(canonicalExpr("n < (limit)"), "n < limit");
+  assertEquals(canonicalExpr("n < Limit"), "n < Limit");
+  assertEquals(canonicalExpr("n < (a + b)"), "n < a + b");
+});

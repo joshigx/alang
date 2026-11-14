@@ -4,11 +4,10 @@
 
 export type Path = readonly string[];
 
-export interface TypeRef {
-  readonly kind: "type";
-  readonly path: Path;
-  readonly args: readonly TypeRef[];
-}
+export type TypeRef =
+  | { readonly kind: "type"; readonly path: Path; readonly args: readonly TypeRef[] }
+  // `(A, B) -> R`: at least one parameter (F5); always pure (F3).
+  | { readonly kind: "function"; readonly params: readonly TypeRef[]; readonly out: TypeRef };
 
 export interface Param {
   readonly name: string;

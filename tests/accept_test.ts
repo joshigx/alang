@@ -323,12 +323,17 @@ Deno.test("accept: values without a failing example print canonically too", () =
     ),
     "[1: std.map.empty<Int, Int>()]",
   );
-  // An empty list or map whose type holds a function type cannot be written
-  // with type arguments yet; it falls back to std.text.show (H5).
+  // An empty list or map whose type holds a function type names it (F8).
   const fnType_ = fnType([INT], INT);
-  assertEquals(showValue([], list(fnType_), shapes, "m"), "[]");
-  assertEquals(showValue(std$map$empty(), con("Map", STRING, fnType_), shapes, "m"), "[:]");
-  assertEquals(showValue(Some([]), option(list(fnType_)), shapes, "m"), "Some([])");
+  assertEquals(showValue([], list(fnType_), shapes, "m"), "std.list.empty<(Int) -> Int>()");
+  assertEquals(
+    showValue(std$map$empty(), con("Map", STRING, fnType_), shapes, "m"),
+    "std.map.empty<String, (Int) -> Int>()",
+  );
+  assertEquals(showValue(Some([]), option(list(fnType_)), shapes, "m"), "Some(std.list.empty<(Int) -> Int>())");
+  // A function type without parameters has no written form (F5), so its
+  // empty list falls back to std.text.show (H5).
+  assertEquals(showValue([], list(fnType([], INT)), shapes, "m"), "[]");
 });
 
 // ---- the command line ----

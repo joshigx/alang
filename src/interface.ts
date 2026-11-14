@@ -30,6 +30,9 @@ export interface InterfaceChange {
 }
 
 function fullType(t: TypeRef, module: Path): string {
+  if (t.kind === "function") {
+    return `(${t.params.map((p) => fullType(p, module)).join(", ")}) -> ${fullType(t.out, module)}`;
+  }
   const head = t.path.length === 1 && !BUILTIN_TYPES.has(t.path[0])
     ? pathText([...module, t.path[0]])
     : pathText(t.path);

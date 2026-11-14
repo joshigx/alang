@@ -44,6 +44,7 @@ The built-in types have a fixed meaning. A trap ends the program with a diagnost
 | `List<T>`, `Map<K, V>` | Immutable collections |
 | `Option<T>` | `Some(T)` or `None` |
 | `Result<T, E>` | `Ok(T)` or `Err(E)` |
+| `(T) -> U`, `(T, U) -> V` | A function value: a lambda or the name of a pure function. Pure (2.4), at least one parameter |
 
 Two types and one function as a complete example:
 
@@ -108,7 +109,7 @@ To change a definition correctly, its own text and the signatures of the definit
 - **2.1 Effects in the signature.** `effects` lists every effect a function triggers directly or through calls. The checker requires that the caller's effects include those of every callee.
 - **2.2 Closed set of effects.** Only the effects in the table below exist. `effects: none` means: equal inputs always produce the same result.
 - **2.3 Errors in the type.** There are no exceptions and no `null`. Expected errors appear as `Result<T, E>` in the result type, missing values as `Option<T>`.
-- **2.4 Pure lambdas.** Lambdas passed to functions have no effects. Effects per element go through `for`.
+- **2.4 Pure lambdas.** Lambdas passed to functions have no effects, and neither has any other function value: a function type such as `(Int) -> Bool` is pure. Effects per element go through `for`.
 - **2.5 Trust boundary.** The effects of an `extern fn` are declared, not checked. Every `extern fn` is thereby recognizable as an unchecked assumption.
 - **2.6 No action at a distance.** Constructs whose behaviour is determined elsewhere are not part of the language (second table).
 
@@ -222,7 +223,8 @@ type_def   = "type" path
 param      = name ":" type ;
 case       = TypeName [ ":" type ] ;
 example    = call "==" expr ;
-type       = TypePath [ "<" type { "," type } ">" ] ;
+type       = TypePath [ "<" type { "," type } ">" ]
+           | "(" type { "," type } ")" "->" type ;
 
 stmt       = let | destructure | propagate | return | expr ;
 let        = "let" name ":" type "=" expr [ "else" "return" expr ] ;
@@ -477,7 +479,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | `const` and `extern fn` (not parsed yet) | A function with `in: none` for a constant value, called as `limit()`; like every pure function it needs an example |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
-| Function types in your own signatures | Only std functions take functions (`with`, `by`, `handler`) |
+| A function type with effects, `(T) -> U with effects`, or without parameters, `() -> T` (E0101) | A pure function type with at least one parameter; effects go in a `for` or in the function that calls it, and a value that needs no parameters is passed as the value itself |
 | Binary files and binary HTTP content, renaming and copying files, the log without a line break | A text file is copied or renamed with `std.fs.read_text`, `std.fs.create_text` or `write_text`, and `std.fs.remove`; `std.log.print_line` takes whole lines |
 | Taking URLs apart or encoding a query | Nothing yet; `std.string.cut` and `split` take a query apart, `std.string.join` builds one |
 | Static proofs (5.2) and prefix checking (1.6) | Every `requires`, `ensures` and `where` is checked at runtime |
@@ -494,7 +496,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Numbers.** An integer with more than four digits is grouped in threes with `_` (`65_535`, `1_000_000`); `65535`, `1_000` and leading zeros are errors (4.7). A float is written `digits.digits` (`1.0`, `0.25`), never `1.`, `.5` or `1e3`. A negative number is a literal (`-3`, `-0.5`). There is no minus in front of other expressions; write `0 - x`.
 - **Other values.** `true`, `false`, and `Unit`, the one value of the type `Unit`.
 - **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them.
-- **Foreign forms.** `===`, `!==`, `&&`, `||`, `|`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7). The message for `{` and `}` names the map literal `[key: value]`, and the one for index access names `std.list.get` and `std.map.get`.
+- **Foreign forms.** `===`, `!==`, `&&`, `||`, `|`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7). The message for `{` and `}` names the map literal `[key: value]`, and the one for index access names `std.list.get` and `std.map.get`. A function type written as in another language, `(Int) => Int`, `(x: Int) -> Int`, `Int -> Int` or `fn(Int) -> Int`, is E0006, naming `(Int) -> Int`.
 - **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction and inside the brackets of a list or a map, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
 - **Files.** In a file given to `alang check` or `alang run`, the order of definitions has no meaning (6.2). The stored text and the export sort them by name, with one empty line between them.
 
@@ -537,6 +539,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Arithmetic.** `+ - * / %` work on two `Int` or two `Float`; nothing is converted implicitly (`std.int.to_float`). `Int` division truncates toward zero, and `%` takes the sign of the dividend (`-7 % 2 == -1`). Division by zero and leaving the `Int` range trap. An `Int` is never negative zero: `0 * -1` and `-1 / 2` are `0`, while a `Float` keeps IEEE's `-0.0`. A `Float` result that is NaN traps (`0.0 / 0.0`); infinities are ordinary values.
 - **Comparison and logic.** `==` and `!=` work on every type without functions, by structure (3.9). `< <= > >=` work only on `Int`, `Float` and `String` (E0211); other types are ordered by a function that returns `Order`. The logical operators are `and`, `or` and `not`. `not` binds more loosely than comparison: `not a == b` means `not (a == b)`. Mixing `+ -` with `* / %`, or `and` with `or`, needs parentheses (3.5). Within `* / %`, or within `+ -`, operators group from the left without them: `12 * 5 / 4` is `(12 * 5) / 4`. Parentheses that 3.5 does not require are dropped from the stored text. `==` compares variant values too (`outcome == Err(std.fs.NotFound)`); to branch on several cases, use `match`.
 - **Lambdas (2.4).** `fn(item: Int): Int => item * factor` has typed parameters, a result type, and one expression as its body: no `let` and no `return` (E0219). It has no effects (E0232) and may read the bindings around it. A lambda used as an operand is put in parentheses. Since its body is one expression, an `Option` inside it is unwrapped with `std.option.with_default` (or changed with `std.option.map`), and the `Some` results of a function over a list are kept with `std.list.filter_map`; neither needs a helper function.
+- **Function types.** A function type lists its parameter types in parentheses, at least one, then `->` and the result type: `(Int) -> Bool`, `(Row, Row) -> Order`. It stands wherever a type does (a parameter, a field, a case's value, a `let`, a `for`, a lambda, a type argument such as `List<(Int) -> Bool>` or `std.list.empty<(Int) -> Bool>()`), and it nests: `((Int) -> Int) -> Int` takes a function, `(Int) -> (Int) -> Int` gives one. Function types are pure (2.4).
 - **Function values.** Where a std function takes a function, a function name can be passed instead of a lambda (`by: std.int.compare`, `with: double`). The function must be pure (E0232) and not generic; a generic one needs a lambda (E0210). The exception is the `handler` of `std.http.serve`, which may have effects; the caller then declares them (E0230).
 - **Names.** A plain name means a local first, then a function of the own module. A path followed by `(` is always a call, so a local may share its name with a function: `let total: Int = total(items: xs)`. A local named like the first segment of a module hides calls into that module: with a parameter `net`, `net.port.parse(...)` reads as a method call (E0220). Choose another name.
 
@@ -562,7 +565,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 ### 7.8 Standard library
 
-This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) are bound from the arguments. A type such as `(T) -> U` is a function parameter; pass a lambda or a function name (7.5). `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
+This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) are bound from the arguments. A type such as `(T) -> U` is a function type (7.5); pass a lambda, a function name, or a local that holds a function. `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
 
 | Function | Effects | Meaning |
 | --- | --- | --- |

@@ -103,8 +103,9 @@ export function exampleDiagnostics(outcomes: readonly ExampleOutcome[]): Diagnos
 
 // A runtime value of type `t` as canonical alang text, written as it would
 // be in `module` (rule 1.2). Values without an alang form (function values,
-// and empty lists and maps whose type holds a function type, which a type
-// argument cannot name yet) fall back to std.text.show.
+// which no actual value holds since no `fn` returns one, and empty lists and
+// maps whose type holds a function type without parameters, which has no
+// written form: F5) fall back to std.text.show.
 export function showValue(value: unknown, t: Type, shapes: ReadonlyMap<string, TypeShape>, module: string): string {
   const e = valueExpr(value, t, shapes, module);
   return e ? printExpr(e, "") : std$text$show(value);

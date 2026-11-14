@@ -6,8 +6,7 @@
 // - A name with a module matches exactly that type; a one-segment name
 //   matches a type by its last segment (`Port` matches `net.port.Port`).
 // - A type variable of a std signature matches any type, the same one at
-//   each occurrence; a function type (std parameters only) matches only `_`,
-//   since alang has no syntax for it.
+//   each occurrence; a function type matches only `_`.
 // - Parameters match by position; their names do not matter.
 
 import type { Path, TypeRef } from "./ast.ts";
@@ -19,7 +18,7 @@ import { BUILTIN_TYPES, type Type } from "./types.ts";
 export type TypeTree =
   | { readonly k: "con"; readonly name: string; readonly args: readonly TypeTree[] }
   | { readonly k: "var"; readonly name: string }
-  | { readonly k: "fn" };
+  | { readonly k: "fn"; readonly params: readonly TypeTree[]; readonly out: TypeTree };
 
 export interface TypePattern {
   readonly name: string; // "_" matches anything
@@ -35,6 +34,9 @@ export interface FnPattern {
 
 // A type as written in `module`, with full names.
 export function treeOfRef(t: TypeRef, module: Path): TypeTree {
+  if (t.kind === "function") {
+    return { k: "fn", params: t.params.map((p) => treeOfRef(p, module)), out: treeOfRef(t.out, module) };
+  }
   const name = t.path.length === 1 && !BUILTIN_TYPES.has(t.path[0])
     ? pathText([...module, t.path[0]])
     : pathText(t.path);
@@ -46,7 +48,7 @@ export function treeOfType(t: Type): TypeTree {
     case "con":
       return { k: "con", name: t.name, args: t.args.map(treeOfType) };
     case "fn":
-      return { k: "fn" };
+      return { k: "fn", params: t.params.map(treeOfType), out: treeOfType(t.out) };
     case "var":
       return { k: "var", name: t.name };
     default:
@@ -54,8 +56,13 @@ export function treeOfType(t: Type): TypeTree {
   }
 }
 
-// Full names of the user and std types in `t`, builtins left out.
+// Full names of the user and std types in `t`, builtins left out, those
+// inside function types included (`Sale` in `(Sale) -> Int`).
 export function namedTypes(t: TypeTree, into: string[] = []): string[] {
+  if (t.k === "fn") {
+    for (const p of t.params) namedTypes(p, into);
+    return namedTypes(t.out, into);
+  }
   if (t.k !== "con") return into;
   if (!BUILTIN_TYPES.has(t.name) && !into.includes(t.name)) into.push(t.name);
   for (const a of t.args) namedTypes(a, into);
@@ -64,7 +71,7 @@ export function namedTypes(t: TypeTree, into: string[] = []): string[] {
 
 export function showTree(t: TypeTree): string {
   if (t.k === "var") return t.name;
-  if (t.k === "fn") return "fn";
+  if (t.k === "fn") return `(${t.params.map(showTree).join(", ")}) -> ${showTree(t.out)}`;
   return t.args.length === 0 ? t.name : `${t.name}<${t.args.map(showTree).join(", ")}>`;
 }
 

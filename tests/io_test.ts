@@ -32,6 +32,7 @@ import {
 import { accept, type Built, findMain, run, type RunOptions, writeEntry } from "../src/toolchain.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import { parseProgram } from "../src/parser.ts";
+import { printTypeRef } from "../src/printer.ts";
 
 const OUT = new URL("../out/test/io/", import.meta.url).pathname;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -749,8 +750,8 @@ Deno.test("io: main returns Unit or Result<Unit, String>, and takes nothing (E03
     parseProgram(
       ENDING_PROGRAM.replace("  out: Result<Unit, String>", `  out: ${out}`).replace("  in: none", params),
     );
-  assertEquals(findMain(main("Unit")).out.path, ["Unit"]);
-  assertEquals(findMain(main("Result<Unit, String>")).out.path, ["Result"]);
+  assertEquals(printTypeRef(findMain(main("Unit")).out), "Unit");
+  assertEquals(printTypeRef(findMain(main("Result<Unit, String>")).out), "Result<Unit, String>");
   for (const out of ["Int", "Result<Unit, Int>", "Result<String, String>", "Option<Unit>"]) {
     const e = assertThrows(() => findMain(main(out)), AlangError);
     assertEquals([e.diagnostic.code, e.diagnostic.message], [

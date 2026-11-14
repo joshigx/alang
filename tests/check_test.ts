@@ -948,7 +948,7 @@ Deno.test("check: the empty list is written std.list.empty<T>() (E0228)", () => 
   // Without an expected item type there is no fix.
   const bare = one(fn("return std.list.length(list: [])"), "E0228");
   assertEquals([bare.expected, bare.fix], ["std.list.empty<T>()", null]);
-  // Nor when the item type holds a function type, which a type argument cannot name.
+  // Nor when the item type is `() -> Int`: a zero-parameter function type has no written form (F5).
   const fns = one(fn("return std.list.length(list: std.list.concat(left: [g], right: []))", { extra: G }), "E0228");
   assertEquals([fns.expected, fns.fix], ["std.list.empty<T>()", null]);
 });
@@ -998,12 +998,124 @@ Deno.test("check: a for passes its declared type to a list literal (1.4)", () =>
 });
 
 Deno.test("check: the E0209 guess offers no type argument it cannot write (H5)", () => {
-  // The expected type holds a function type, which a type argument cannot name yet.
+  // The expected type holds `() -> Int`: a zero-parameter function type has no written form (F5).
   const d = one(
     fn("return std.list.length(list: std.list.concat(left: [g], right: std.list.empty()))", { extra: G }),
     "E0209",
   );
   assertEquals([d.expected, d.fix], ["std.list.empty<T>", null]);
+});
+
+// ---- function types (F1, F3, F8) ----
+
+// A pure function `m.<name>` of one parameter, with one example.
+function pureFn(name: string, param: string, out: string, value: string, example: string): string {
+  return [
+    `fn m.${name}`,
+    '  doc: "Test."',
+    "  in:",
+    `    ${param}`,
+    `  out: ${out}`,
+    "  effects: none",
+    "  requires: none",
+    "  ensures: none",
+    "  examples:",
+    `    ${example}`,
+    "  body:",
+    `    return ${value}`,
+    `end fn m.${name}`,
+  ].join("\n");
+}
+
+const RULE =
+  'type m.Rule\n  doc: "A named check of a line."\n  record:\n    name: String\n    broken: (String) -> Bool\n  where: none\nend type m.Rule';
+const CHECK =
+  'type m.Check\n  doc: "How a number is checked."\n  variant:\n    Custom: (Int) -> Bool\n    Off\n  where: none\nend type m.Check';
+const ROW = 'type m.Row\n  doc: "A row."\n  record:\n    name: String\n  where: none\nend type m.Row';
+const FNS = [
+  RULE,
+  CHECK,
+  pureFn("double", "n: Int", "Int", "n * 2", "double(n: 2) == 4"),
+  pureFn("triple", "n: Int", "Int", "n * 3", "triple(n: 2) == 6"),
+  pureFn("to_text", "n: Int", "String", "std.text.show(value: n)", 'to_text(n: 2) == "2"'),
+  pureFn("blank", "line: String", "Bool", 'line == ""', 'blank(line: "") == true'),
+].join("\n\n");
+
+Deno.test("check: function types stand wherever a type does (F1)", () => {
+  clean(fn("return std.list.sort(list: xs, by: by)", {
+    params: ["xs: List<Int>", "by: (Int, Int) -> Order"],
+    out: "List<Int>",
+    examples: [
+      "f(xs: [3, 1, 2], by: std.int.compare) == [1, 2, 3]",
+      "f(xs: [3, 1, 2], by: fn(a: Int, b: Int): Order => std.int.compare(left: b, right: a)) == [3, 2, 1]",
+    ],
+  }));
+  // A record with a function field, from a lambda and from a function name;
+  // a case with a function value.
+  clean(fn(
+    [
+      'let long: Rule = Rule(name: "long", broken: fn(line: String): Bool => std.string.length(text: line) > 80)',
+      'let rules: List<Rule> = [long, Rule(name: "blank", broken: blank)]',
+      "let checks: List<Check> = [Custom(fn(n: Int): Bool => n > 0), Off]",
+      "return std.list.length(list: rules) + std.list.length(list: checks)",
+    ].join("\n"),
+    { extra: FNS },
+  ));
+  // A function chosen by an `if`, and one from a map literal.
+  clean(fn(
+    [
+      "let pick: (Int) -> Int = if flag then",
+      "  double",
+      "else",
+      "  triple",
+      "end if",
+      "return std.list.length(list: std.list.map(list: [1, 2], with: pick))",
+    ].join("\n"),
+    { params: ["flag: Bool"], extra: FNS },
+  ));
+  clean(fn(
+    [
+      'let ops: Map<String, (Int) -> Int> = ["d": double, "t": triple]',
+      "let op: (Int) -> Int = std.map.get(map: ops, key: k) else return 0",
+      "return std.list.length(list: std.list.map(list: [1], with: op))",
+    ].join("\n"),
+    { params: ["k: String"], extra: FNS },
+  ));
+});
+
+Deno.test("check: function types follow the rules of every type (F1, F3)", () => {
+  const wrong = one(fn("let t: (Int) -> Int = to_text\nreturn 0", { extra: FNS }), "E0204");
+  assertEquals([wrong.at, wrong.message, wrong.expected], [
+    "to_text",
+    "Expected `(Int) -> Int`, found `(Int) -> String`.",
+    "(Int) -> Int",
+  ]);
+  // A generic function is no value yet (F10), and a function with effects
+  // is none where a pure function type is expected (F3).
+  one(fn("let n: (List<Int>) -> Int = std.list.length\nreturn 0"), "E0210");
+  one(fn("let say: (String) -> Unit = shout\nreturn 0", { extra: SHOUT }), "E0232");
+  // Types holding a function value have no `==` and no `show` (3.9).
+  one(fn("return by == by", { params: ["by: (Int, Int) -> Order"], out: "Bool" }), "E0222");
+  one(fn("return std.text.show(value: rule)", { params: ["rule: Rule"], out: "String", extra: FNS }), "E0222");
+  // Map keys, unknown types and own-module long forms inside a function type.
+  const key = one(fn("return 0", { params: ["table: Map<(Int) -> Int, Int>"] }), "E0229");
+  assertEquals(key.message, keyMessage("(Int) -> Int"));
+  const unknown = one(fn("return 0", { params: ["keep: (Rowz) -> Bool"], extra: ROW }), "E0202");
+  assertEquals([unknown.at, unknown.fix], ["Rowz", { replace: "Rowz", with: "Row" }]);
+  const long = fn("return 0", { params: ["keep: (m.Row) -> Bool"], extra: ROW });
+  const d = one(long, "E0226");
+  assertEquals([d.at, d.fix], ["m.Row", { replace: "m.Row", with: "Row" }]);
+  assertEquals(shortened(long).includes("    keep: (Row) -> Bool\n"), true);
+});
+
+Deno.test("check: an empty collection of a function type is written with its type (F8)", () => {
+  const source = fn("let fs: List<(Int) -> Int> = []\nreturn 0");
+  const d = one(source, "E0228");
+  assertEquals(d.fix, { replace: "[]", with: "std.list.empty<(Int) -> Int>()" });
+  // Applied, the fix gives an accepted program; `[]` occurs once.
+  clean(source.replace(d.at, d.fix!.with));
+  const guess = one(fn("let fs: List<(Int) -> Int> = std.list.empty()\nreturn 0"), "E0209");
+  assertEquals(guess.fix, { replace: "std.list.empty()", with: "std.list.empty<(Int) -> Int>()" });
 });
 
 // ---- maps ----
@@ -1167,7 +1279,7 @@ Deno.test("check: the empty map is written std.map.empty<K, V>() (E0228), in bot
     assertEquals([d.at, d.message, d.expected, d.fix], [at, message, empty, { replace: at, with: empty }]);
     clean(source.replace(at, empty));
   }
-  // Without expected types, or with a function type among them, there is no fix.
+  // Without expected types, or with `() -> Int` among them (no written form, F5), there is no fix.
   const bare = one(fn("return std.map.size(map: [:])"), "E0228");
   assertEquals([bare.message, bare.expected, bare.fix], [mapMessage, "std.map.empty<K, V>()", null]);
   const fns = one(fn('return std.list.length(list: [["a": g], [:]])', { extra: G }), "E0228");

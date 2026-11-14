@@ -103,6 +103,7 @@ function rebuild(
   const resolve = (p: Path) => (p.length === 1 ? [...oldModule, p[0]].join(".") : pathText(p));
 
   const type = (t: TypeRef): TypeRef => {
+    if (t.kind === "function") return { kind: "function", params: t.params.map(type), out: type(t.out) };
     const args = t.args.map(type);
     if (t.path.length === 1 && BUILTIN_TYPES.has(t.path[0])) return { ...t, args };
     return { kind: "type", path: spell(t, t.path, { kind: "type", full: resolve(t.path) }), args };

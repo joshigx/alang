@@ -65,7 +65,10 @@ function printType(def: TypeDef): string {
   ].join("\n");
 }
 
+// No parentheses beyond the parameter list are ever needed: parameters stand
+// inside `( )`, and a function type's result nests to the right.
 export function printTypeRef(t: TypeRef): string {
+  if (t.kind === "function") return `(${t.params.map(printTypeRef).join(", ")}) -> ${printTypeRef(t.out)}`;
   const head = pathText(t.path);
   return t.args.length === 0 ? head : `${head}<${t.args.map(printTypeRef).join(", ")}>`;
 }

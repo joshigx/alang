@@ -28,6 +28,9 @@ const COMPARE_OPS: readonly string[] = ["==", "!=", "<", "<=", ">", ">="];
 const ADDITIVE: readonly string[] = ["+", "-"];
 const MULTIPLICATIVE: readonly string[] = ["*", "/", "%"];
 
+// Errors about the form of a function type (`Parser.typeForm`).
+const TYPE_FORM_ERRORS = new WeakSet<AlangError>();
+
 export function parseProgram(source: string): Definition[] {
   return new Parser(lex(source)).program();
 }
@@ -392,6 +395,14 @@ class Parser {
   // ---- types ----
 
   type(): TypeRef {
+    if (this.isKeyword("fn")) {
+      // Not through `typeForm`: a lambda may follow `<` in a comparison.
+      this.fail(
+        "A function type is written `(Int) -> Int`, without `fn`; `fn(x: Int): Int => ...` is a lambda, which is a value.",
+        { code: "E0006" },
+      );
+    }
+    if (this.isSymbol("(")) return this.functionType();
     const path = this.typePath();
     const args: TypeRef[] = [];
     if (this.isSymbol("<")) {
@@ -406,7 +417,66 @@ class Parser {
     if (this.isSymbol("[")) {
       this.fail("A list type is written `List<T>`.", { code: "E0006", expected: "List<T>" });
     }
+    if (this.isSymbol("->")) {
+      this.typeForm("A function type puts its parameter types in parentheses: `(Int) -> Int`.", "E0006");
+    }
     return { kind: "type", path, args };
+  }
+
+  // `(A, B) -> R` (F1): at least one parameter type (F5), nested to the
+  // right, on one line, pure (F3). The forms of other languages name it.
+  private functionType(): TypeRef {
+    this.expectSymbol("(");
+    if (this.isSymbol(")")) {
+      this.typeForm(
+        "A function type takes at least one parameter: a pure function without parameters always gives the same value, so take that value instead (`limit: Int`).",
+        "E0101",
+      );
+    }
+    const params = [this.parameterType()];
+    while (this.isSymbol(",")) {
+      this.next();
+      params.push(this.parameterType());
+    }
+    this.expectSymbol(")");
+    if (this.isSymbol("=>")) {
+      this.typeForm(
+        "A function type is written with `->`: `(Int) -> Int`; `=>` starts the body of a lambda.",
+        "E0006",
+      );
+    }
+    this.expectSymbol("->");
+    const out = this.type();
+    if (this.peek().kind === "name" && this.peek().text === "with" && this.isKeyword("effects", 1)) {
+      this.typeForm(
+        "Function types in your own code are pure (2.4); only the `handler` of `std.http.serve` takes a function with effects. Take a pure function, and put effects in a `for` or in the function that calls it.",
+        "E0101",
+      );
+    }
+    return { kind: "function", params, out };
+  }
+
+  private parameterType(): TypeRef {
+    if (this.peek().kind === "name" && this.isSymbol(":", 1)) {
+      this.typeForm(
+        "A function type names no parameters: `(Int) -> Int`; the names belong to a lambda, `fn(x: Int): Int => ...`.",
+        "E0006",
+      );
+    }
+    return this.type();
+  }
+
+  // Fails like `fail`, and marks the error as one about the form of a
+  // function type, which `tryTypeArgs` passes on: no expression can hold
+  // these forms after `<`, so reading a comparison instead would only fail
+  // later with a worse message.
+  private typeForm(message: string, code: string): never {
+    try {
+      return this.fail(message, { code });
+    } catch (e) {
+      if (e instanceof AlangError) TYPE_FORM_ERRORS.add(e);
+      throw e;
+    }
   }
 
   // ---- statements ----
@@ -654,6 +724,7 @@ class Parser {
 
   // `<T, U>` directly followed by `(`, or null without consuming anything.
   // Distinguishes `std.list.empty<Int>()` from the comparison `n < limit`.
+  // An error about the form of a function type is passed on (`typeForm`).
   private tryTypeArgs(): TypeRef[] | null {
     if (!this.isSymbol("<")) return null;
     const start = this.pos;
@@ -667,7 +738,7 @@ class Parser {
       this.expectSymbol(">");
       if (this.isSymbol("(")) return args;
     } catch (e) {
-      if (!(e instanceof AlangError)) throw e;
+      if (!(e instanceof AlangError) || TYPE_FORM_ERRORS.has(e)) throw e;
     }
     this.pos = start;
     return null;

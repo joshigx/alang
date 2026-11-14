@@ -60,9 +60,11 @@ export const KEYWORDS = new Set([
 ]);
 
 // Longest first, so that `<=` wins over `<`. There is deliberately no `>>`:
-// `List<Result<Int, E>>` must close two type argument lists.
+// `List<Result<Int, E>>` must close two type argument lists. `->` belongs to
+// function types (`(Int) -> Bool`); no other text has `-` right before `>`.
 const SYMBOLS = [
   "=>",
+  "->",
   "==",
   "!=",
   "<=",

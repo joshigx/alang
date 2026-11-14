@@ -190,6 +190,11 @@ class DefinitionEmitter {
   }
 
   private ts(t: TypeRef): string {
+    // The shape of `tsType`; function values are synchronous, since every
+    // one outside std's handler is pure (F3).
+    if (t.kind === "function") {
+      return `((${t.params.map((p, i) => `p${i}: ${this.ts(p)}`).join(", ")}) => ${this.ts(t.out)})`;
+    }
     const args = t.args.map((a) => this.ts(a));
     if (t.path.length === 1) {
       switch (t.path[0]) {
@@ -374,6 +379,7 @@ class DefinitionEmitter {
         return this.unpack(s.value, s.elseReturn, scope)[0];
       case "destructure": {
         // The checker accepted it, so the type is `List<T>`.
+        if (s.type.kind !== "type") throw new Error(`destructure without a List type in ${this.name}`);
         const item = this.ts(s.type.args[0]);
         const tmp = this.temp("r");
         const elseScope = scope.child();
