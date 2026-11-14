@@ -10,8 +10,7 @@
 
 export const CARD = `# The alang card
 
-alang is written by LLMs and transpiled to TypeScript. This card holds the rules every definition needs: write
-from it. The standard library is not on it; find it with the tools.
+alang is written by LLMs and transpiled to TypeScript. Write from this card; the tools find the standard library.
 
 ## Working through the tools
 
@@ -43,7 +42,8 @@ from it. The standard library is not on it; find it with the tools.
   Unit List<T> Map<K, V> Option<T> Result<T, E> Order\` and \`Some None Ok Err Less Equal Greater\`.
 - Keywords, section words included (\`in\`, \`out\`, \`type\`, \`body\`, \`end\`, \`record\`), name nothing. \`result\` and
   \`error\` name no parameter or binding (E0109).
-- \`main\`: \`in: none\`, \`out: Unit\` or \`out: Result<Unit, String>\` (an \`Err\` goes to stderr, exit code 1).
+- \`main\`: \`in: none\`, \`out: Unit\` or \`out: Result<Unit, String>\` (an \`Err\` goes to stderr, exit code 1). Its I/O
+  errors become text: \`let t: String = std.fs.read_text(path: p) else return Err(std.fs.describe(error: error))\`.
 
 ## Bodies
 
@@ -102,7 +102,7 @@ from it. The standard library is not on it; find it with the tools.
 
 No comments (the \`doc\` describes), \`const\`, \`extern fn\`, imports, \`var\`, assignment, \`null\`, exceptions, \`while\`
 (use recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, generic definitions, function types in your
-own signatures, waiting, concurrency. Most of these get E0006, which names the alang form.
+own signatures, concurrency. Most of these get E0006, which names the alang form.
 
 ## A complete program
 

@@ -110,6 +110,19 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     definition. Also `scripts/playground-round.sh`, which runs a playground round headless (see Working conventions).
     289 tests. The plan of phase `statements` (`docs/plans/statements.md`, Opus, T1 to T15) was committed on the same
     branch.
+20. `std-net`, on branch `std-net` (plan in `docs/plans/std-net.md`; the main session took every recommendation, N1
+    to N11, and N3 was approved by the user on 2026-11-13), one commit per step: `std.fs.Error` gains `AlreadyExists`,
+    with `std.fs.create_text`, an exclusive create (`EEXIST` maps in every fs function, so `create_directory` over a
+    file, or over a dangling link at the path or on the way, is `AlreadyExists`, no longer `Other`);
+    `std.fs.describe` and `std.http.describe` give errors as lower-case text; `std.console.print` writes without a
+    line break; `std.time.wait`; the HTTP client `std.http.send` with `std.http.SendError` (`InvalidUrl`,
+    `Unreachable`, `TimedOut`, `Failed: String`), alike on Deno and Node.js but for three host differences that 7.8
+    names. `examples/probe.alang` checks URLs with a pure retry decision; `lines.alang` and `words.alang` print their
+    errors through `std.fs.describe`; the card's `main` line shows `else return Err(std.fs.describe(error: error))`.
+    The gaps 7.1 listed (waiting, an HTTP client, console output without a line break) are closed. Every four-arm
+    `match` over `std.fs.Error` is now E0213, among them the playground's `ledger`, `wordcount`, `logstat` and
+    `tasks`. Decisions in `decisions.md`: Files (Error type, `create_text`, `create_directory`, `describe`, Links,
+    `print`, Waiting) and HTTP (`std.http`), renamed from "HTTP server". 307 tests. See "From std-net".
 
 **Next (2026-11-14, overnight run):** build `std-net` from `docs/plans/std-net.md` on branch `std-net` (fresh Opus
 agent), verify, run its playground round with `scripts/playground-round.sh` (plan section 7: adapt the setup, since
@@ -145,7 +158,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (282 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (307 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -272,6 +285,24 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   `statements` (T1 to T15, all taken as recommended) will be built without the user's review. Its T3 makes a `let`
   of type `Unit` an error (E0235): the user's playground export `tasks.alang` has two such lines and is refused on its
   next acceptance until they change (T5 lets the codebase fix them on the next submit).
+- std-net (item 20, 2026-11-14; the main session took every recommendation of `docs/plans/std-net.md`). The change
+  that breaks programs first: N3, `std.fs.Error` gains `AlreadyExists` (approved by the user on 2026-11-13; every
+  existing four-arm `match` is now E0213), with `std.fs.create_text`, and `EEXIST` maps in every fs function, so
+  `create_directory` over a file is `AlreadyExists` instead of `Other`. The others: N1 the four cases of
+  `SendError`, with `Unreachable` read from Deno's message text; N2 the timeout as a parameter covering the whole
+  exchange, 20 redirects followed; N4 the two `describe` functions and their texts; N5 `send`'s five parameters
+  and the reuse of `Response`; N6 the program's mistakes trap (method, GET or HEAD content, the nine headers HTTP
+  manages, a timeout below 1); N7 the response headers as fetch iterates them, `content-encoding` and
+  `content-length` dropped after decompression, a status outside 200 to 599 `Failed`; N8 the Fetch standard's bad
+  ports as `InvalidUrl`; N9 `print`; N10 `wait(milliseconds:)`; N11 `text/plain; charset=utf-8` for request
+  content. Mine beyond the plan: a dangling link at the path is `AlreadyExists` for `create_text` (both hosts, also
+  with `fs.write` alone, probed), and for `create_directory` at the path and on the way, while a file on the way
+  stays `Other` (the asymmetry `mkdir -p` has too); port 0 is `InvalidUrl` as well, beyond Node.js's list; a
+  redirect to a blocked port stays a host difference (Node.js `Failed`, Deno follows it), documented instead of
+  following redirects by hand; 204, 205 and 304 responses get content `""`; the request header check shares
+  `checkHeader` with the server, its message naming a request or a response header; `ServeError` keeps
+  `std.text.show`. In `decisions.md`: Files (Error type, `create_text`, `create_directory`, `describe`, Links,
+  `print`, Waiting, Synchronous, Left out) and HTTP (`std.http`).
 
 ## Database phase: open points (2026-11-12)
 
@@ -503,7 +534,9 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   time, traps, headers) run on Deno only. `EACCES` is mapped on both hosts but not run, since it needs a port
   below 1024 without root.
 - **One handler at a time is slow** for a handler that waits (a file read, later an outgoing request). Concurrency
-  would be a language feature with its own rules; the queue is where it would start.
+  would be a language feature with its own rules; the queue is where it would start. Since item 20 the outgoing
+  request exists: `std.http.send` or `std.time.wait` in a handler holds every other request, and a handler that
+  sends to its own server waits for itself until its timeout (7.8 says both).
 - **`std.text.show` prints a whole Float without its fraction.** `std.text.show(value: 2.0)` gives `2`, as
   JavaScript prints the number, so a `Float` and an `Int` look alike in output. Found while writing section 7 of the
   spec, which states it as is. Printing `2.0` (the alang literal) would match the canonical text and the actual
@@ -594,7 +627,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   works is a thin `main` around pure functions with examples, as in `examples/lines.alang` (`sorted`).
 - **The cases of `std.fs.Error` cannot grow.** E0227 forbids a catch-all and 3.8 freezes signatures, so a case added
   later would break every `match`. A finer classification (not a directory, already exists, not empty) needs a new
-  type and new function names.
+  type and new function names. One case was added before publishing anyway (item 20, N3: `AlreadyExists`), and it
+  broke every such `match`, as foreseen.
 - **A text ending in a line break** splits into an empty last part (`split("a\n", "\n")` is `a` and `""`). Every
   program reading lines must drop it; a `lines` function in std breadth could. Resolved (item 15):
   `std.string.lines` adds no empty last line.
@@ -636,7 +670,8 @@ Left for later:
 
 - **`AlreadyExists` and an exclusive create.** An `AlreadyExists` case together with a function that creates a file
   only if none exists. `std.fs.Error` keeps its four cases, as the user decided in D2; settle this before
-  publishing, since 3.8 freezes the cases.
+  publishing, since 3.8 freezes the cases. Resolved (item 20): `AlreadyExists` and `std.fs.create_text` (N3, the
+  user's approval of 2026-11-13 reopened D2).
 - **Checked arithmetic.** An overflow traps, so a program cannot turn it into a message. Resolved (item 15):
   `std.int.checked_add`, `checked_subtract` and `checked_multiply` return `Option<Int>`.
 - **E0227 duplicates arms.** When every case but one is handled alike, each of them still needs its own arm.
@@ -678,7 +713,7 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
   `take_while` and `drop_while`, or a trim that takes the characters, belong to phase `std-maps` ("remaining text
   helpers"). Resolved (item 17): `std.string.trim_characters`, and `std.list.take_while` and `drop_while`.
 - **No std way to turn a `std.fs.Error` into text**, so every program repeats the same four-arm `match`. Phase
-  `std-net`, which reopens `std.fs.Error` anyway (N3).
+  `std-net`, which reopens `std.fs.Error` anyway (N3). Resolved (item 20): `std.fs.describe`.
 - **Discovery through the tools is untested for the second round.** The playground's `CLAUDE.md` and the MCP
   instructions (`SPEC_LINE` in `src/mcp.ts`) send the model to the full spec, whose 7.8 lists all of std, so
   `list("std")` and `context` add nothing. The phase that serves the spec through the MCP server; to test discovery,
@@ -793,7 +828,7 @@ uses.
 Left for later:
 
 - **No std way to turn a `std.fs.Error` into text.** The third program with the same four-arm `match`. Planned as
-  N3 in phase `std-net`.
+  N3 in phase `std-net`. Resolved (item 20): `std.fs.describe` (N4 of that plan).
 - **Taking a list apart by position.** `case [a, b, c, d, e]` (or similar) would replace lines of `std.list.get` that
   cannot fail after a length check. Phase `statements`.
 - **Cheaper recovery after a rejected submit.** The resend of all 13 definitions after one failing example cost about
@@ -870,10 +905,66 @@ Left for later:
   accepts the C escapes and stores `\u{D}`, reported under `fixed` as own-module names are (by position in the lexer,
   which avoids the `\\r` trap of text fixes), or a submit keeps its accepted part. No phase covers it.
 - **Invalid UTF-8 as an error.** A program cannot tell a decoded U+FFFD from a real one; N3 in `std-net` reopens
-  `std.fs.Error` and would be the place. A language decision; not taken.
+  `std.fs.Error` and would be the place. A language decision; not taken, in item 20 either (a sixth case would
+  break every `match` again).
 - **`std.list.set` (or update) and a record-update form.** No phase yet; the `statements` planner judges them.
 - **Writing to a real link loop from a write-only program** is `NotFound` on Deno and `Other` on Node.js; the one
   host difference left in `std.fs`.
+
+## From std-net (2026-11-14)
+
+Item 20, built from `docs/plans/std-net.md` in the overnight run. Host facts, on Deno 2.8.0 and Node.js 26.13.0,
+observed with `deno run` and `node` scripts and in-process servers unless marked:
+
+| Situation | Deno | Node.js |
+| --- | --- | --- |
+| Exclusive create (`createNew` / flag `wx`) on a file, a directory, a link to a file, a dangling link | `EEXIST`, with `-A`, `--allow-read --allow-write` and `--allow-write` alone | `EEXIST` |
+| Exclusive create through a dangling link on the way (`nowhere/a.txt`) | `ENOENT`, all three permission sets | `ENOENT` |
+| Recursive `mkdir` over a file / with a file on the way | `EEXIST` / `ENOTDIR` | `EEXIST` / `ENOTDIR` |
+| Recursive `mkdir` over a dangling link, at the path or on the way | `EEXIST` | `ENOENT` (the runtime makes it `EEXIST`) |
+| fetch: connection refused | `TypeError`, no code: "…client error (Connect): tcp connect error: Connection refused (os error 111)" | "fetch failed", `cause.code` `ECONNREFUSED` |
+| fetch: name does not resolve | "…client error (Connect): dns error: failed to lookup address information…" | `cause.code` `ENOTFOUND` |
+| fetch: nobody answers the connect (10.255.255.1) | not probed | `UND_ERR_CONNECT_TIMEOUT` after 10 s |
+| fetch without `--allow-net` | `NotCapable`, "Requires net access to …" | — |
+| fetch: `ftp:`, `u:p@` in the URL | "Url scheme 'ftp' not supported"; credentials ignored | "fetch failed"; `TypeError` for credentials |
+| fetch to a bad port (25) / to port 0 | connects | cause "bad port" / `ECONNREFUSED` (its list starts at 1) |
+| Redirect to `file:///etc/hostname` | "Fetch failed: Can not redirect to a non HTTP(s) url" | cause "URL scheme must be a HTTP(S) scheme" |
+| Redirect to a bad port | followed | cause "bad port" |
+| Redirect loop | "Maximum number of redirects (20) reached", after 21 requests | cause "redirect count exceeded" |
+| `HTTP_PROXY` set | used: the listener named there got `GET http://example.invalid/... HTTP/1.1` | not used by default |
+| Waiting for headers, for more content | no limit found | 300 s each (`headersTimeout`, `bodyTimeout` default `3e5` in the bundled undici; read, not observed) |
+| Method "GE T", a header value with `\n`, GET with a body | `TypeError` | `TypeError` |
+| Request header `host` / `content-length: 99` | replaced / ignored | replaced / fails |
+| Request headers `transfer-encoding`, `keep-alive`, `upgrade`, `expect` | sent | fail (`UND_ERR_INVALID_ARG` / `UND_ERR_NOT_SUPPORTED`) |
+| Response headers | lowercase and sorted, repeats joined `, `, one `set-cookie` per cookie; `connection` and `content-length` exposed | the same |
+| A response header value with the byte 0xE9 | `é` | `é` |
+| Compressed response | decompressed; drops `content-encoding` and `content-length`, also when the program set `accept-encoding: gzip` | decompressed; keeps both, the length being the compressed one |
+| Status 299 | accepted | accepted |
+| POST with body `""` | — | sends `content-type: text/plain;charset=UTF-8` and length 0 |
+
+Default request headers differ (Deno: user agent `Deno/2.8.0`, `accept-encoding: gzip,br`; Node.js: `node`,
+`gzip, deflate`, `sec-fetch-mode`); only the server sees them. The rows before "fetch: connection refused" and the
+plan's rows are from the planner's probes; the link, redirect, proxy, port 0, connect-timeout and permission rows
+were probed again or first by the implementer.
+
+- **The link decision.** The task brief asked whether `create_text` over a dangling link can be `AlreadyExists` on
+  both hosts for a program with `fs.write` alone. It can: an exclusive create never follows a link, and Deno does
+  not answer ELOOP there as it does for a plain open. So the plan's doc stands; `create_text` calls
+  `refuseDanglingLink` nowhere. `create_directory` over such a link became `AlreadyExists` with the `EEXIST`
+  mapping, at the path and on the way, while a file on the way stays `Other`; Deno cannot tell where the link is
+  without `fs.read`, so that asymmetry stays and is stated (Links row, 7.7, the doc line).
+- **A third host difference.** The plan named two (Node.js's limits, Deno's proxy); a redirect to a blocked port
+  is the third: Node.js refuses it, Deno follows it. Following redirects by hand would close it but repeats fetch's
+  redirect rules (method changes, dropped headers); 7.8 states it instead.
+- **Port 0** is `InvalidUrl` by the runtime's own choice: Node.js's list of bad ports starts at 1, and it tries
+  port 0 and is refused. The test compares the rest of `BAD_PORTS` with Node.js's answers.
+- **A handler that sends to its own server** waits for itself: the inner `send` timed out after its 300 ms (302 ms
+  measured), then the outer request was answered (in-process on Deno). 7.8 says so.
+- **`error:` as a label** works: `std.fs.describe(error: error)` in an `else` branch passes the checker (plan
+  finding 8; a test in `check_test.ts`).
+- **The card** is 158 lines and 9,439 bytes (+48), within the brief's budget.
+- **The playground's exports** with a four-arm `match` over `std.fs.Error` (`ledger`, `wordcount`, `logstat`,
+  `tasks`) fail E0213 since N3, so the round of this phase starts from an empty codebase (plan, section 7).
 
 ## Spec observations
 
