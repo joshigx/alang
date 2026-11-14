@@ -18,7 +18,8 @@
 //   every caller writes it.
 //
 // Contracts are compared as printed, since there is no proof that one
-// implies the other yet (5.2): any change counts. Types are compared by full
+// implies the other yet (5.2): any change counts, also a renamed type
+// parameter that a contract names (G13). Types are compared by full
 // name; a caller compares a version with what a rename makes of it.
 
 import type { Definition, Effect, Expr, Path, TypeRef } from "./ast.ts";
@@ -36,14 +37,20 @@ export interface InterfaceChange {
   readonly kind?: { readonly from: string; readonly to: string };
 }
 
-function fullType(t: TypeRef, module: Path): string {
-  if (t.kind === "function") {
-    return `(${t.params.map((p) => fullType(p, module)).join(", ")}) -> ${fullType(t.out, module)}`;
-  }
-  const head = t.path.length === 1 && !BUILTIN_TYPES.has(t.path[0])
+// A type with full names. A type parameter is written by its position,
+// `#0`, `#1` (G13): renaming one throughout its definition changes no
+// caller, while adding, removing or reordering one changes the types it
+// occurs in, since every letter occurs there (E0250).
+function fullType(t: TypeRef, module: Path, letters: readonly string[] = []): string {
+  const full = (u: TypeRef) => fullType(u, module, letters);
+  if (t.kind === "function") return `(${t.params.map(full).join(", ")}) -> ${full(t.out)}`;
+  const letter = t.path.length === 1 ? letters.indexOf(t.path[0]) : -1;
+  const head = letter >= 0
+    ? `#${letter}`
+    : t.path.length === 1 && !BUILTIN_TYPES.has(t.path[0])
     ? pathText([...module, t.path[0]])
     : pathText(t.path);
-  return t.args.length === 0 ? head : `${head}<${t.args.map((a) => fullType(a, module)).join(", ")}>`;
+  return t.args.length === 0 ? head : `${head}<${t.args.map(full).join(", ")}>`;
 }
 
 function shapeKey(def: Definition): string {
@@ -61,10 +68,11 @@ export function interfaceChange(before: Definition, after: Definition): Interfac
   const contract = (e: Expr | null) => (e === null ? "none" : printExpr(e, ""));
   if (before.kind === "fn" && after.kind === "fn") {
     const params = (d: typeof before) =>
-      d.params.map((p) => `${p.name}: ${fullType(p.type, moduleOf(d.path))}`).join(", ");
+      d.params.map((p) => `${p.name}: ${fullType(p.type, moduleOf(d.path), d.typeParams)}`).join(", ");
+    const out = (d: typeof before) => fullType(d.out, moduleOf(d.path), d.typeParams);
     const sections: string[] = [];
     if (params(before) !== params(after)) sections.push("in");
-    if (fullType(before.out, moduleOf(before.path)) !== fullType(after.out, moduleOf(after.path))) sections.push("out");
+    if (out(before) !== out(after)) sections.push("out");
     if (contract(before.requires) !== contract(after.requires)) sections.push("requires");
     if (contract(before.ensures) !== contract(after.ensures)) sections.push("ensures");
     return { sections, addedEffects: after.effects.filter((e) => !before.effects.includes(e)) };

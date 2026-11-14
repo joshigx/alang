@@ -259,20 +259,25 @@ interface Stored {
 // `out` of a function or a constant, the fields or case payloads of a type.
 function signatureTypes(def: Definition): TypeTree[] {
   const module = moduleOf(def.path);
-  if (def.kind === "fn") return [...def.params.map((p) => treeOfRef(p.type, module)), treeOfRef(def.out, module)];
+  if (def.kind === "fn") {
+    const tree = (t: TypeRef) => treeOfRef(t, module, def.typeParams);
+    return [...def.params.map((p) => tree(p.type)), tree(def.out)];
+  }
   if (def.kind === "const") return [treeOfRef(def.out, module)];
   if (def.shape.kind === "record") return def.shape.fields.map((f) => treeOfRef(f.type, module));
   return def.shape.cases.flatMap((c) => (c.payload ? [treeOfRef(c.payload, module)] : []));
 }
 
 // A stored function's signature on one line without the doc, its types in
-// full (as a caller outside its module writes them): the stored counterpart
-// of `signatureHead`.
+// full (as a caller outside its module writes them), its type parameters
+// after the name: the stored counterpart of `signatureHead` (G15).
 function storedHead(name: string, def: FnDef): string {
   const module = def.path.slice(0, -1);
-  const params = def.params.map((q) => `${q.name}: ${showTree(treeOfRef(q.type, module))}`).join(", ");
+  const full = (t: TypeRef) => showTree(treeOfRef(t, module, def.typeParams));
+  const params = def.params.map((q) => `${q.name}: ${full(q.type)}`).join(", ");
   const effects = def.effects.length === 0 ? "none" : def.effects.join(", ");
-  return `fn ${name}(${params}): ${showTree(treeOfRef(def.out, module))}, effects: ${effects}`;
+  const letters = def.typeParams.length === 0 ? "" : `<${def.typeParams.join(", ")}>`;
+  return `fn ${name}${letters}(${params}): ${full(def.out)}, effects: ${effects}`;
 }
 
 // A type's signature on one line without the doc, std and stored alike: its
@@ -385,7 +390,7 @@ function operationText(change: Change, name: string | null): string {
 // be what failed; null if that line is not such a header.
 function headerName(text: string): string | null {
   const first = text.trimStart().split("\n", 1)[0];
-  return /^(?:fn|type|const) ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$/.exec(first)?.[1] ?? null;
+  return /^(?:fn|type|const) ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:<[^>]*>)?\s*$/.exec(first)?.[1] ?? null;
 }
 
 function list(names: Iterable<string>): string {
@@ -765,8 +770,8 @@ export class Codebase {
     const found: { name: string; hash: string | null; line: string }[] = [];
     for (const r of this.rowsUnder("")) {
       if (r.def.kind !== "fn") continue;
-      const module = r.def.path.slice(0, -1);
-      if (!matchesFn(p, r.def.params.map((q) => treeOfRef(q.type, module)), treeOfRef(r.def.out, module))) continue;
+      const types = signatureTypes(r.def);
+      if (!matchesFn(p, types.slice(0, -1), types[types.length - 1])) continue;
       found.push({ name: r.name, hash: r.hash, line: `${storedHead(r.name, r.def)}, doc: ${printString(r.def.doc)}` });
     }
     for (const s of STD) {
@@ -1271,8 +1276,8 @@ export class Codebase {
         code: "E0510",
         definition: r.name,
         at: rename.at,
-        message: `The rename changes what \`${r.name}\` refers to: ${why}. A local binding probably has the new ` +
-          "name; choose another new name, or rename that binding first.",
+        message: `The rename changes what \`${r.name}\` refers to: ${why}. A local binding or a type parameter ` +
+          "probably has the new name; choose another new name, or rename that binding first.",
       }));
     }
     if (found.length === 0) return [];

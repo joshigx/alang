@@ -44,6 +44,11 @@ export function dependencies(def: Definition, info: CheckInfo): string[] {
   return [...new Set(references(def, info).map((r) => r.full))];
 }
 
+// The type parameters of a definition (G1); none for a constant.
+export function typeParamsOf(def: Definition): readonly string[] {
+  return def.kind === "fn" ? def.typeParams : [];
+}
+
 // A full name as written in `module`: short inside it, full elsewhere (1.2).
 export function writtenFrom(full: string, module: Path): Path {
   const segments = full.split(".");
@@ -102,11 +107,14 @@ function rebuild(
 ): Definition {
   const oldModule = moduleOf(def.path);
   const resolve = (p: Path) => (p.length === 1 ? [...oldModule, p[0]].join(".") : pathText(p));
+  // Inside a generic definition a short letter always means its type
+  // parameter (G4), which is no reference (G14).
+  const letters = typeParamsOf(def);
 
   const type = (t: TypeRef): TypeRef => {
     if (t.kind === "function") return { kind: "function", params: t.params.map(type), out: type(t.out) };
     const args = t.args.map(type);
-    if (t.path.length === 1 && BUILTIN_TYPES.has(t.path[0])) return { ...t, args };
+    if (t.path.length === 1 && (BUILTIN_TYPES.has(t.path[0]) || letters.includes(t.path[0]))) return { ...t, args };
     return { kind: "type", path: spell(t, t.path, { kind: "type", full: resolve(t.path) }), args };
   };
   const param = (p: Param): Param => ({ name: p.name, type: type(p.type) });

@@ -5,8 +5,9 @@
 // - `_` matches any type.
 // - A name with a module matches exactly that type; a one-segment name
 //   matches a type by its last segment (`Port` matches `net.port.Port`).
-// - A type variable of a std signature matches any type, the same one at
-//   each occurrence, a function type pattern included.
+// - A type variable of a std signature, or a type parameter of a stored
+//   function, matches any type, the same one at each occurrence, a function
+//   type pattern included.
 // - A function type is written as in alang, `(_) -> Bool` (F9), and matches
 //   a function type with as many parameters by the same rules; `_` matches
 //   it too. A whole pattern in parentheses, `(String) -> Option<Int>`, reads
@@ -36,15 +37,16 @@ export interface FnPattern {
 
 // ---- conversion ----
 
-// A type as written in `module`, with full names.
-export function treeOfRef(t: TypeRef, module: Path): TypeTree {
-  if (t.kind === "function") {
-    return { k: "fn", params: t.params.map((p) => treeOfRef(p, module)), out: treeOfRef(t.out, module) };
-  }
+// A type as written in `module`, with full names; a type parameter of the
+// definition (`letters`) is a variable, as in a std signature (G15).
+export function treeOfRef(t: TypeRef, module: Path, letters: readonly string[] = []): TypeTree {
+  const tree = (u: TypeRef) => treeOfRef(u, module, letters);
+  if (t.kind === "function") return { k: "fn", params: t.params.map(tree), out: tree(t.out) };
+  if (t.path.length === 1 && letters.includes(t.path[0])) return { k: "var", name: t.path[0] };
   const name = t.path.length === 1 && !BUILTIN_TYPES.has(t.path[0])
     ? pathText([...module, t.path[0]])
     : pathText(t.path);
-  return { k: "con", name, args: t.args.map((a) => treeOfRef(a, module)) };
+  return { k: "con", name, args: t.args.map(tree) };
 }
 
 export function treeOfType(t: Type): TypeTree {
@@ -54,6 +56,7 @@ export function treeOfType(t: Type): TypeTree {
     case "fn":
       return { k: "fn", params: t.params.map(treeOfType), out: treeOfType(t.out) };
     case "var":
+    case "rigid":
       return { k: "var", name: t.name };
     default:
       return { k: "var", name: "_" };
