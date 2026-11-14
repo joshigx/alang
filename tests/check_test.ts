@@ -896,6 +896,7 @@ const EFFECTFUL: [string, string][] = [
   ['std.log.print_line(text: "x")', "log"],
   ["let r: Int = std.random.int(low: 1, high: 6)", "random"],
   ["let r: Int = std.time.now_milliseconds()", "time"],
+  ["std.time.wait(milliseconds: 10)", "time"],
 ];
 
 Deno.test("effects: each std function with an effect needs it on the caller (2.1)", () => {

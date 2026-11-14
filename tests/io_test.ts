@@ -25,6 +25,7 @@ import {
   std$string$join,
   std$string$split,
   std$time$now_milliseconds,
+  std$time$wait,
   Trap,
   Unit,
 } from "../src/runtime.ts";
@@ -349,6 +350,35 @@ Deno.test("io: now_milliseconds is the clock's time", () => {
   const now = std$time$now_milliseconds();
   const after = Date.now();
   assert_(Number.isSafeInteger(now) && before <= now && now <= after, `${before} ${now} ${after}`);
+});
+
+Deno.test("io: wait waits, at least the time it is given", async () => {
+  const start = performance.now();
+  assertEquals(await std$time$wait(50), Unit);
+  const waited = performance.now() - start;
+  assert_(waited >= 49, `${waited} ms`);
+  assertEquals(await std$time$wait(0), Unit);
+  let refused: unknown = null;
+  await std$time$wait(-1).catch((e) => (refused = e));
+  assert_(refused instanceof Trap, String(refused));
+  assertEquals([refused.kind, refused.definition, refused.at], ["requires", "std.time.wait", "milliseconds >= 0"]);
+});
+
+Deno.test("io: a wait longer than setTimeout holds is a chain of timers", async () => {
+  // Each timer records its delay and fires at once.
+  const delays: number[] = [];
+  const original = globalThis.setTimeout;
+  globalThis.setTimeout = ((done: () => void, delay: number) => {
+    delays.push(delay);
+    done();
+    return 0;
+  }) as unknown as typeof setTimeout;
+  try {
+    assertEquals(await std$time$wait(5_000_000_000), Unit);
+  } finally {
+    globalThis.setTimeout = original;
+  }
+  assertEquals(delays, [2_147_483_647, 2_147_483_647, 705_032_706]);
 });
 
 // ---- programs: input and the permissions of main's effects ----

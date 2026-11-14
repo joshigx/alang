@@ -260,6 +260,14 @@ export const STD: readonly Signature[] = [
     INT,
     ["time"],
   ),
+  sig(
+    "std.time.wait",
+    "Waits (sleeps) for the given number of milliseconds; 0 returns at once and a negative number traps. Nothing else runs meanwhile, so a server whose handler waits answers no other request.",
+    [],
+    [["milliseconds", INT]],
+    UNIT,
+    ["time"],
+  ),
 
   sig(
     "std.int.parse",

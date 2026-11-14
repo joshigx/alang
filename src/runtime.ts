@@ -1140,6 +1140,28 @@ export function std$time$now_milliseconds(): number {
   return Date.now();
 }
 
+// setTimeout holds at most 2^31 - 1 ms (Node.js fires a longer one at once),
+// so a longer wait is a chain of timers. Returns a function that cancels it.
+const MAX_DELAY = 2_147_483_647;
+function after(milliseconds: number, done: () => void): () => void {
+  let handle: ReturnType<typeof setTimeout>;
+  const step = (left: number) => {
+    handle = setTimeout(() => (left > MAX_DELAY ? step(left - MAX_DELAY) : done()), Math.min(left, MAX_DELAY));
+  };
+  step(milliseconds);
+  return () => clearTimeout(handle);
+}
+
+// The program waits, and nothing else of it runs meanwhile (alang is
+// sequential); a server's queue holds the requests that arrive.
+export async function std$time$wait(milliseconds: number): Promise<Unit> {
+  if (milliseconds < 0) {
+    trap("requires", "std.time.wait", "milliseconds >= 0", "Precondition of std.time.wait violated: milliseconds >= 0");
+  }
+  await new Promise<void>((resolve) => after(milliseconds, resolve));
+  return Unit;
+}
+
 export function std$int$parse(text: string): Option<number> {
   if (!/^-?[0-9]+$/.test(text)) return None;
   const n = Number(text);
