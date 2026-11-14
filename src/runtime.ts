@@ -445,6 +445,330 @@ export function runConstants(constants: readonly Constant[], before?: (i: number
   });
 }
 
+// ---- extern functions (E2, E5, E8, E9) ----
+// An `extern fn` is called through a wrapper (emit.ts) that copies its
+// arguments out and checks its result against `out`, rebuilding it, so that a
+// value that does not fit traps where it enters alang (2.5, 5.3). The forms
+// are one per type, so a module builds every value without this runtime.
+
+// The form of a type at the boundary. Fields and cases are thunks, so that a
+// recursive type refers to its own shape, and a generic one (`Nest<T>` with
+// a field `Nest<List<T>>`) is unfolded only as deep as a value goes.
+export type Shape =
+  | { readonly kind: "Int" | "Float" | "Bool" | "String" | "Unit" }
+  | { readonly kind: "List"; readonly item: Shape }
+  | { readonly kind: "Map"; readonly key: Shape; readonly value: Shape }
+  | { readonly kind: "Option"; readonly some: Shape }
+  | { readonly kind: "Result"; readonly ok: Shape; readonly err: Shape }
+  | {
+    readonly kind: "record";
+    readonly name: string;
+    readonly fields: () => Readonly<Record<string, Shape>>;
+    // The record's constructor, which checks its `where` and registers its name.
+    // deno-lint-ignore no-explicit-any
+    readonly make: (fields: any) => unknown;
+  }
+  | { readonly kind: "variant"; readonly name: string; readonly cases: () => Readonly<Record<string, Shape | null>> };
+
+export const ORDER_SHAPE: Shape = {
+  kind: "variant",
+  name: "Order",
+  cases: () => ({ Less: null, Equal: null, Greater: null }),
+};
+
+// The type a shape stands for, as alang writes it in full.
+export function shape_name(shape: Shape): string {
+  switch (shape.kind) {
+    case "List":
+      return `List<${shape_name(shape.item)}>`;
+    case "Map":
+      return `Map<${shape_name(shape.key)}, ${shape_name(shape.value)}>`;
+    case "Option":
+      return `Option<${shape_name(shape.some)}>`;
+    case "Result":
+      return `Result<${shape_name(shape.ok)}, ${shape_name(shape.err)}>`;
+    case "record":
+    case "variant":
+      return shape.name;
+    default:
+      return shape.kind;
+  }
+}
+
+// An alang value as foreign code receives it: a fresh copy, which it may
+// change, a `Map` as a JavaScript `Map` in key order.
+export function to_host(shape: Shape, value: unknown): unknown {
+  switch (shape.kind) {
+    case "List":
+      return (value as readonly unknown[]).map((x) => to_host(shape.item, x));
+    case "Map":
+      return new Map(map_entries(value as SortedMap<unknown, unknown>).map(([k, x]) => [k, to_host(shape.value, x)]));
+    case "Option": {
+      const o = value as Option<unknown>;
+      return o.tag === "Some" ? { tag: "Some", value: to_host(shape.some, o.value) } : { tag: "None" };
+    }
+    case "Result": {
+      const r = value as Result<unknown, unknown>;
+      return { tag: r.tag, value: to_host(r.tag === "Ok" ? shape.ok : shape.err, r.value) };
+    }
+    case "record": {
+      const fields = value as Record<string, unknown>;
+      return Object.fromEntries(Object.entries(shape.fields()).map(([k, s]) => [k, to_host(s, fields[k])]));
+    }
+    case "variant": {
+      const c = value as { readonly tag: string; readonly value?: unknown };
+      const payload = shape.cases()[c.tag];
+      return payload ? { tag: c.tag, value: to_host(payload, c.value) } : { tag: c.tag };
+    }
+    default:
+      return value;
+  }
+}
+
+// What a foreign value looks like, for a message; never runs foreign code
+// beyond reading `tag` and `then`.
+function describeForeign(v: unknown): string {
+  if (v === undefined) return "undefined";
+  if (v === null) return "null";
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (typeof v === "string") return JSON.stringify(v.length > 40 ? `${v.slice(0, 40)}…` : v);
+  if (typeof v === "function") return "a function";
+  if (typeof v !== "object") return `a ${typeof v}`;
+  if (Array.isArray(v)) return "an array";
+  if (v instanceof Map) return "a Map";
+  if (typeof (v as { then?: unknown }).then === "function") return "a Promise";
+  const tag = (v as { tag?: unknown }).tag;
+  return typeof tag === "string" ? `an object with tag ${JSON.stringify(tag)}` : "an object";
+}
+
+const FORMS: Partial<Record<Shape["kind"], string>> = {
+  Int: "a safe integer",
+  Float: "a number that is not NaN",
+  Bool: "`true` or `false`",
+  String: "a string without lone surrogates",
+  Unit: "`null` or `undefined`",
+  List: "an array",
+  Map: "a `Map`",
+  Option: '`{ tag: "Some", value }` or `{ tag: "None" }`',
+  Result: '`{ tag: "Ok", value }` or `{ tag: "Err", value }`',
+};
+
+const orList = (items: readonly string[]) =>
+  items.length === 1 ? items[0] : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
+
+// The JavaScript form a type takes, for a message.
+function form(shape: Shape): string {
+  if (shape.kind === "record") {
+    return `an object with the fields ${Object.keys(shape.fields()).map((f) => `\`${f}\``).join(", ")}`;
+  }
+  if (shape.kind === "variant") {
+    return orList(
+      Object.entries(shape.cases()).map(([c, p]) => (p ? `\`{ tag: "${c}", value }\`` : `\`{ tag: "${c}" }\``)),
+    );
+  }
+  return FORMS[shape.kind]!;
+}
+
+// Thrown by `from_host`; the caller turns it into a trap that names the extern.
+// (No parameter properties, for Node.js's type stripping, as `Trap`.)
+class Misfit {
+  readonly at: string;
+  readonly value: unknown;
+  readonly shape: Shape;
+  constructor(at: string, value: unknown, shape: Shape) {
+    this.at = at;
+    this.value = value;
+    this.shape = shape;
+  }
+}
+
+// A foreign value checked against `shape` and rebuilt as an alang value, or a
+// `Misfit` naming the first place (`result[2]`, `result.value`) that does
+// not fit. Each property is read once.
+export function from_host(shape: Shape, value: unknown, at = "result"): unknown {
+  const misfit = (): never => {
+    throw new Misfit(at, value, shape);
+  };
+  const tagged = (): { tag: unknown; value: unknown } => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return misfit();
+    const o = value as { tag?: unknown; value?: unknown };
+    return { tag: o.tag, value: o.value };
+  };
+  switch (shape.kind) {
+    case "Int":
+      if (typeof value !== "number" || !Number.isSafeInteger(value)) return misfit();
+      return value === 0 ? 0 : value;
+    case "Float":
+      if (typeof value !== "number" || Number.isNaN(value)) return misfit();
+      return value;
+    case "Bool":
+      if (typeof value !== "boolean") return misfit();
+      return value;
+    case "String":
+      if (typeof value !== "string" || !value.isWellFormed()) return misfit();
+      return value;
+    case "Unit":
+      if (value !== null && value !== undefined) return misfit();
+      return Unit;
+    case "List": {
+      if (!Array.isArray(value)) return misfit();
+      return [...value].map((x, i) => from_host(shape.item, x, `${at}[${i}]`));
+    }
+    case "Map": {
+      if (!(value instanceof Map)) return misfit();
+      const entries = [...value].map(([k, x], i) => {
+        const key = from_host(shape.key, k, `${at}.keys()[${i}]`);
+        return [key, from_host(shape.value, x, `${at}.get(${describeForeign(k)})`)] as const;
+      });
+      // Keys that differ in JavaScript are different in alang too, so the
+      // literal's duplicate check never fires (`-0` and `0` are one key).
+      return map_literal(entries, "extern");
+    }
+    case "Option": {
+      const o = tagged();
+      if (o.tag === "None") return None;
+      if (o.tag === "Some") return Some(from_host(shape.some, o.value, `${at}.value`));
+      return misfit();
+    }
+    case "Result": {
+      const r = tagged();
+      if (r.tag === "Ok") return Ok(from_host(shape.ok, r.value, `${at}.value`));
+      if (r.tag === "Err") return Err(from_host(shape.err, r.value, `${at}.value`));
+      return misfit();
+    }
+    case "record": {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return misfit();
+      const fields: Record<string, unknown> = {};
+      for (const [k, s] of Object.entries(shape.fields())) {
+        if (!Object.hasOwn(value, k)) return misfit();
+        fields[k] = from_host(s, (value as Record<string, unknown>)[k], `${at}.${k}`);
+      }
+      // A fresh object of exactly the declared fields, through the
+      // constructor: other properties are dropped, `where` is checked, and
+      // the name is registered for `show`.
+      return shape.make(fields);
+    }
+    case "variant": {
+      const c = tagged();
+      const cases = shape.cases();
+      if (typeof c.tag !== "string" || !Object.hasOwn(cases, c.tag)) return misfit();
+      const payload = cases[c.tag];
+      return payload ? { tag: c.tag, value: from_host(payload, c.value, `${at}.value`) } : { tag: c.tag };
+    }
+  }
+}
+
+const withoutPeriod = (text: string) => text.replace(/\.$/, "");
+
+// A throw from foreign code as a trap (E9): a refusal for lack of a
+// permission is `effect`, as std's are, anything else `extern`.
+function foreignTrap(definition: string, target: string, e: unknown): Trap {
+  let name: unknown;
+  let message: unknown;
+  let code: unknown;
+  try {
+    ({ name, message, code } = (typeof e === "object" && e !== null ? e : {}) as Record<string, unknown>);
+  } catch {
+    // A getter of the thrown value threw.
+  }
+  const text = typeof message === "string" ? withoutPeriod(message) : "";
+  if (name === "NotCapable" || code === "ERR_ACCESS_DENIED") {
+    return new Trap(
+      "effect",
+      definition,
+      target,
+      `\`${target}\` was refused by the host: ${text}. An \`extern fn\` may do only what its \`effects\` declare, and a program only what \`main\` declares (2.5).`,
+    );
+  }
+  const shown = e instanceof Error ? `${String(name)}: ${text}` : withoutPeriod(typeof e === "string" ? e : String(e));
+  return new Trap("extern", definition, target, `\`${target}\` threw ${shown}.`);
+}
+
+// The result checked against `out` and rebuilt; a misfit traps at the call.
+function checkResult(definition: string, target: string, out: Shape, value: unknown): unknown {
+  try {
+    return from_host(out, value);
+  } catch (e) {
+    if (e instanceof Misfit) {
+      trap(
+        "extern",
+        definition,
+        target,
+        `\`${target}\` returned a value that does not fit \`out: ${shape_name(out)}\`: \`${e.at}\` is ${
+          describeForeign(e.value)
+        }, where \`${shape_name(e.shape)}\` needs ${form(e.shape)}.`,
+      );
+    }
+    // A record's `where`, from its constructor.
+    if (e instanceof Trap) throw e;
+    // A getter of the foreign value threw.
+    throw foreignTrap(definition, target, e);
+  }
+}
+
+function exported(definition: string, target: string, module: object, name: string): (...args: unknown[]) => unknown {
+  const f = (module as Record<string, unknown>)[name];
+  if (typeof f !== "function") {
+    trap("extern", definition, target, `\`${target}\` is not a function its module exports.`);
+  }
+  return f as (...args: unknown[]) => unknown;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === "object" && value !== null && typeof (value as { then?: unknown }).then === "function";
+}
+
+// Calls a pure extern (`effects: none`), which returns its value at once
+// (E5): a Promise traps.
+export function extern_call(
+  definition: string,
+  target: string,
+  module: object,
+  name: string,
+  args: readonly unknown[],
+  out: Shape,
+): unknown {
+  const f = exported(definition, target, module, name);
+  let value: unknown;
+  let thenable: boolean;
+  try {
+    value = f(...args);
+    thenable = isThenable(value);
+    // So that a rejected promise does not end the process later.
+    if (thenable) (value as PromiseLike<unknown>).then(undefined, () => {});
+  } catch (e) {
+    throw foreignTrap(definition, target, e);
+  }
+  if (thenable) {
+    trap(
+      "extern",
+      definition,
+      target,
+      `\`${target}\` returned a Promise; an \`extern fn\` with \`effects: none\` returns its value at once.`,
+    );
+  }
+  return checkResult(definition, target, out, value);
+}
+
+// Calls an extern with effects, which may be `async`: its result is awaited.
+export async function extern_call_async(
+  definition: string,
+  target: string,
+  module: object,
+  name: string,
+  args: readonly unknown[],
+  out: Shape,
+): Promise<unknown> {
+  const f = exported(definition, target, module, name);
+  let value: unknown;
+  try {
+    value = await f(...args);
+  } catch (e) {
+    throw foreignTrap(definition, target, e);
+  }
+  return checkResult(definition, target, out, value);
+}
+
 // ---- acceptance in a separate process (E10) ----
 // A program with an `extern fn` runs its constants and examples in a Deno
 // process without permissions (toolchain.ts). Its entry calls `run_isolated`,
@@ -2208,7 +2532,8 @@ export function std$text$show(value: unknown): string {
     const name = RECORD_NAMES.get(obj);
     if (name !== undefined) return `${name}(${fields()})`;
     if (typeof obj.tag === "string") return "value" in obj ? `${obj.tag}(${std$text$show(obj.value)})` : obj.tag;
-    // Only a record no constructor built, such as one an extern fn returns.
+    // Only a record no constructor built; none should reach here, since an
+    // extern's records are rebuilt through their constructors (E2).
     return `(${fields()})`;
   }
   return String(value);

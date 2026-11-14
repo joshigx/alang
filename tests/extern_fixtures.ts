@@ -270,3 +270,115 @@ export const FILES_TS = `export async function touch(path: string): Promise<{ ta
   return { tag: "Ok", value: null };
 }
 `;
+
+// Generic and std types across the boundary, and `show` of a returned record.
+function gExtern(name: string, params: string[], out: string, example: string): string {
+  const inSection = params.length === 0 ? "  in: none" : `  in:\n${params.map((p) => `    ${p}`).join("\n")}`;
+  return `extern fn g.${name}
+  doc: "The value g.ts gives for ${name}."
+${inSection}
+  out: ${out}
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    ${example}
+  target: "./g.ts#${name}"
+end extern fn g.${name}`;
+}
+
+const NEST = `type g.Nest<T>
+  doc: "An item and, maybe, a nest of lists of items: a type that grows at each level."
+  record:
+    item: T
+    inner: Option<Nest<List<T>>>
+  where: none
+end type g.Nest`;
+
+export const G = [
+  `type g.Box<T>
+  doc: "One value."
+  record:
+    value: T
+  where: none
+end type g.Box`,
+  NEST,
+  gExtern("box", ["n: Int"], "Box<Int>", "box(n: 2) == Box(value: 4)"),
+  gExtern("cut", ["text: String"], "std.string.Cut", 'cut(text: "a") == std.string.Cut(before: "a", after: "")'),
+  gExtern("nest", [], "Nest<Int>", "nest() == Nest(item: 1, inner: Some(Nest(item: [2, 3], inner: None)))"),
+  gExtern("order", ["a: Int"], "Order", "order(a: -1) == Less"),
+  gExtern("parse", ["text: String"], "Result<Int, String>", 'parse(text: "") == Err("empty")'),
+  gExtern(
+    "sum",
+    ["items: List<Int>", "counts: Map<String, Int>", "box: Box<Int>"],
+    "Int",
+    'sum(items: [1], counts: ["a": 5], box: Box(value: 1)) == 9',
+  ),
+  `fn g.copies
+  doc: "The arguments of sum, after sum changed its copies."
+  in:
+    n: Int
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    copies(n: 1) == [1, 1, 5]
+  body:
+    let items: List<Int> = [n]
+    let counts: Map<String, Int> = ["a": 5]
+    let held: Box<Int> = Box(value: n)
+    let total: Int = sum(items: items, counts: counts, box: held)
+    return [std.list.length(list: items), std.map.size(map: counts), total - 4]
+end fn g.copies`,
+  `fn g.shown
+  doc: "A box and a cut from g.ts, as text."
+  in:
+    n: Int
+  out: String
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    shown(n: 1) == "Box(value: 2) Cut(before: \\"x\\", after: \\"\\")"
+  body:
+    return std.string.join(parts: [std.text.show(value: box(n: n)), std.text.show(value: cut(text: "x"))], separator: " ")
+end fn g.shown`,
+].join("\n\n") + "\n";
+
+export const G_DEEP = [NEST, gExtern("bad_nest", [], "Nest<Int>", "bad_nest() == Nest(item: 1, inner: None)")].join(
+  "\n\n",
+) + "\n";
+
+export const G_TS = `export function box(n: number): unknown {
+  return { value: n * 2, extra: true };
+}
+
+export function cut(text: string): unknown {
+  return { before: text, after: "" };
+}
+
+export function nest(): unknown {
+  return { item: 1, inner: { tag: "Some", value: { item: [2, 3], inner: { tag: "None" } } } };
+}
+
+export function bad_nest(): unknown {
+  return { item: 1, inner: { tag: "Some", value: { item: [2, "x"], inner: { tag: "None" } } } };
+}
+
+export function order(a: number): unknown {
+  return a < 0 ? { tag: "Less" } : { tag: "Greater" };
+}
+
+export function parse(text: string): unknown {
+  return text === "" ? { tag: "Err", value: "empty" } : { tag: "Ok", value: text.length };
+}
+
+// Changes its copies; the caller's values stay as they were.
+export function sum(items: number[], counts: Map<string, number>, box: { value: number }): number {
+  items.push(99);
+  counts.set("b", 1);
+  box.value = 100;
+  return items.length + counts.size + (counts.get("a") ?? 0);
+}
+`;

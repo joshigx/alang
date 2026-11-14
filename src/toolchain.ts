@@ -13,9 +13,11 @@ import {
   describeResults,
   exampleDiagnostics,
   type ExampleOutcome,
+  externsByModule,
   isolationDiagnostics,
   type IsolationFailure,
   missingExamples,
+  missingModuleDiagnostic,
   noRunPermission,
 } from "./examples.ts";
 import { parseProgram } from "./parser.ts";
@@ -72,8 +74,10 @@ async function emitTo(defs: Definition[], info: CheckInfo, outPath: string, opti
   const absOut = resolve(outPath);
   const base = resolve(options.base ?? ".");
   const runtimeImport = specifier(dirname(absOut), RUNTIME_PATH);
+  // A target's module is relative to `base`, the generated file elsewhere.
+  const targetImport = (path: string) => specifier(dirname(absOut), resolve(base, path));
   await Deno.mkdir(dirname(absOut), { recursive: true });
-  await Deno.writeTextFile(absOut, emitProgram(defs, info, { runtimeImport }));
+  await Deno.writeTextFile(absOut, emitProgram(defs, info, { runtimeImport, targetImport }));
   return { defs, info, outPath: absOut, base };
 }
 
@@ -191,6 +195,14 @@ const ISOLATED_FLAGS = ["--no-prompt", "--no-config", "--no-lock", "--no-remote"
 // modules afresh, so a changed target module is tested as it is now.
 async function runIsolated(built: Built, limitMs: number): Promise<Results> {
   const context = { defs: built.defs, base: built.base, limitMs };
+  // Every module must be there before anything is spawned (E0406).
+  const absent: Diagnostic[] = [];
+  for (const [module, users] of externsByModule(built.defs)) {
+    const path = resolve(built.base, module);
+    const found = await Deno.stat(path).then((info) => info.isFile, () => false);
+    if (!found) absent.push(missingModuleDiagnostic(module, users, path));
+  }
+  if (absent.length > 0) throw new AlangError(absent);
   // Never a fallback to this process, which has the tool's permissions.
   if (Deno.permissions.querySync({ name: "run", command: Deno.execPath() }).state !== "granted") {
     throw new AlangError([noRunPermission(built.defs)]);
@@ -453,8 +465,9 @@ export async function writeEntry(built: Built, name?: string): Promise<string> {
 }
 
 // Runs the program's main in a separate Deno process that has exactly the
-// permissions main declares as effects, so that code doing more than its
-// effects (an extern function, rule 2.5) fails at runtime.
+// permissions main declares as effects, so that an `extern fn` whose code
+// does more than those fails at runtime (rule 2.5). Permissions are per
+// process: within main's effects, an extern that declares fewer is trusted.
 export async function run(built: Built, options: RunOptions = {}): Promise<Deno.CommandOutput> {
   const main = findMain(built.defs, options.main);
   const entry = await writeEntry(built, options.main);

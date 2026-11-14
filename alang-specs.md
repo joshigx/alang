@@ -110,7 +110,7 @@ To change a definition correctly, its own text and the signatures of the definit
 - **2.2 Closed set of effects.** Only the effects in the table below exist. `effects: none` means: equal inputs always produce the same result.
 - **2.3 Errors in the type.** There are no exceptions and no `null`. Expected errors appear as `Result<T, E>` in the result type, missing values as `Option<T>`.
 - **2.4 Pure lambdas.** Lambdas passed to functions have no effects, and neither has any other function value: a function type such as `(Int) -> Bool` is pure. Effects per element go through `for`.
-- **2.5 Trust boundary.** The effects of an `extern fn` are declared, not checked. Every `extern fn` is thereby recognizable as an unchecked assumption. Its result is checked against its `out` where it returns, so a wrong value traps there instead of spreading.
+- **2.5 Trust boundary.** The effects of an `extern fn` are declared, not checked. Every `extern fn` is thereby recognizable as an unchecked assumption. Its result is checked against its `out` where it returns, so a wrong value traps there instead of spreading (7.12).
 - **2.6 No action at a distance.** Constructs whose behaviour is determined elsewhere are not part of the language (second table).
 
 | Effect | Covers |
@@ -330,6 +330,7 @@ Every definition carries its own checks, and a definition that does not satisfy 
 | `where` | Invariant of every value of a type | At every construction |
 | `examples` | Call and expected value | Executed at every acceptance |
 | `body` of a `const` | Its value | Evaluated at every acceptance |
+| `out` of an `extern fn` | What its TypeScript returns | At every call |
 
 - **5.1 Examples are mandatory.** Every function with `effects: none` has at least one example. If one fails, the definition is rejected. A constant has none: every acceptance evaluates it, and a constant whose evaluation traps is rejected.
 - **5.2 Proved or checked.** Conditions made of comparisons, linear integer arithmetic and `and`, `or`, `not` are proved statically by the checker. All others become runtime checks. The database records `proved` or `checked` for each condition.
@@ -438,6 +439,7 @@ project/
   alang.db      SQLite file with the codebase
   export/       canonical text, one file per module, for Git and review
   out/          generated TypeScript
+  text.ts       a TypeScript module that an `extern fn` names in its `target`, in Git with the export
 ```
 
 | Table | Columns | Purpose |
@@ -463,10 +465,10 @@ Recommended for the prototype is the export in Git. Rule 6.2 then describes the 
 The transpiler is written in TypeScript and runs on Deno. Target language and tool language are thereby the same, so examples run on the real target semantics: in the same process as the checker, or, for a program with an `extern fn`, in a process of their own (below).
 
 - **One runtime library.** `std.*`, the overflow check for `Int` and the NaN check exist once and are shared by the checker and by generated programs.
-- **Effects enforced at runtime.** A program is started with exactly the Deno permissions that its `main` declares as effects (table below). This also catches an `extern fn` whose TypeScript code does more than its declared effects (rule 2.5).
+- **Effects enforced at runtime.** A program is started with exactly the Deno permissions that its `main` declares as effects (table below). This also catches an `extern fn` whose TypeScript code does more than `main`'s effects allow (rule 2.5); within them, and for the effects that need no permission, an extern is trusted.
 - **Foreign code in its own process.** A program with an `extern fn` runs its constants and examples in a separate Deno process without any permission, without remote modules and with a time limit, so that the TypeScript of an extern cannot read or write files, use the network or the environment, or start processes while it is tested (only the modules it imports are read as it loads), and every acceptance loads its current code. The tool therefore needs the permission to start processes (`--allow-run`).
 - **Checked output.** The test suite type-checks the generated TypeScript, to verify that whatever the checker accepts is never rejected by TypeScript.
-- **Runtime-neutral output.** Generated code does not depend on Deno, so alang programs also run on Node.js and Bun.
+- **Runtime-neutral output.** Generated code does not depend on Deno, so alang programs also run on Node.js and Bun. The module of an `extern fn` decides for itself: it runs everywhere if it uses what Deno, Node.js and Bun share (web APIs, `node:` modules) and TypeScript that Node.js can strip (no `enum`, `namespace` or parameter properties).
 
 | Effect | Deno permission |
 | --- | --- |
@@ -535,7 +537,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | A `fn` whose result holds a function value: `out: (Int) -> Int`, also inside a `List`, a `Map`, an `Option` or a record (E0237) | A table of functions is a `const` (7.3), which needs no example. Otherwise choose the function where it is applied: `let by: (Row, Row) -> Order = ...` there, from a `match`, an `if` or a map literal; or take what decides it, such as a name, as a parameter. A lookup returns the name, and the function is applied where it is used |
 | A function type with effects, `(T) -> U with effects`, or without parameters, `() -> T` (E0101) | A pure function type with at least one parameter; effects go in a `for` or in the function that calls it, and a value that needs no parameters is passed as the value itself |
 | Binary files and binary HTTP content, renaming and copying files, the log without a line break | A text file is copied or renamed with `std.fs.read_text`, `std.fs.create_text` or `write_text`, and `std.fs.remove`; `std.log.print_line` takes whole lines |
-| Taking URLs apart or encoding a query | Nothing yet; `std.string.cut` and `split` take a query apart, `std.string.join` builds one |
+| Taking URLs apart or encoding a query | An `extern fn` over JavaScript's `encodeURIComponent`, `decodeURIComponent` or `URL` (7.12); `std.string.cut` and `split` take a query apart, `std.string.join` builds one |
 | Static proofs (5.2) and prefix checking (1.6) | Every `requires`, `ensures` and `where` is checked at runtime |
 | The depth limit (4.8) | Not enforced yet; keep to it anyway |
 | Concurrency | Everything runs in order; `std.http.serve` answers one request at a time, and `std.http.send` and `std.time.wait` hold the program until they return |
@@ -649,7 +651,7 @@ fn tree.items<T>
 end fn tree.items
 ```
 
-- **Extern functions.** `extern fn text.encode` has the sections of a `fn` with `target: "./text.ts#encode"` in place of `body:`, then `end extern fn text.encode`: the function is `encode`, exported by the TypeScript module `text.ts`, which you write in the codebase's directory. It is called like any function. One with `effects: none` has examples (5.1), which test the TypeScript. An extern takes no function values (E0261) and no type parameters (E0101).
+- **Extern functions.** `extern fn text.encode` has the sections of a `fn` with `target: "./text.ts#encode"` in place of `body:`, then `end extern fn text.encode`: the function is `encode`, exported by the TypeScript module `text.ts`, which you write in the codebase's directory (7.12). It is called like any function. One with `effects: none` has examples (5.1), which test the TypeScript. An extern takes no function values (E0261) and no type parameters (E0101).
 
 ```
 extern fn text.decode
@@ -740,7 +742,7 @@ export function decode(text: string): { tag: "Some"; value: string } | { tag: "N
   - Every function with `effects: none` has at least one example (E0401); one without parameters is a constant (7.3). A function with effects has `examples: none` (5.4).
   - An example of a generic function calls it at concrete types: `contains_by(list: [1, 2], item: 3, same: …) == false`. A type parameter cannot be written in `examples` (E0202). One example type is enough, since the body cannot look into a value of a type parameter (3.9).
   - An example holds if both sides are equal (3.9). A failing one is reported with the actual value as alang text (E0402). A trapping one is reported with the trap (E0403); this includes a stack overflow from recursion without a base case.
-- **Acceptance.** Every change evaluates every constant, then re-runs every example of the program, so a changed body or a changed constant that breaks a caller's example is rejected too. A constant whose evaluation traps is rejected with the trap (E0404), and so is one that needs its own value, directly or through the constants and functions it uses (trap `cycle`, reported once per cycle); an example that traps only because of such a constant is not reported. An example whose call breaks the function's `requires` traps (E0403).
+- **Acceptance.** Every change evaluates every constant, then re-runs every example of the program, so a changed body or a changed constant that breaks a caller's example is rejected too. A constant whose evaluation traps is rejected with the trap (E0404), and so is one that needs its own value, directly or through the constants and functions it uses (trap `cycle`, reported once per cycle); an example that traps only because of such a constant is not reported. An example whose call breaks the function's `requires` traps (E0403). In a program with an `extern fn`, the constants and examples run in a separate process without permissions (7.12).
 - **Shape of a program.** Logic goes into pure functions with examples. Functions with effects stay thin and call them; see the server in 7.9.
 
 ### 7.7 Effects and running
@@ -1088,3 +1090,27 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | E0401 to E0404 | Missing, failing and trapping examples, and constants that trap |
 | E0406 to E0408 | Foreign code at acceptance: a module that cannot be loaded, a time limit, a tool without `--allow-run` |
 | E0501 to E0514 | Codebase operations |
+
+### 7.12 TypeScript through `extern fn`
+
+An `extern fn` is a function whose code is TypeScript (2.5). It is written like a `fn` (7.3) and called like one. This section says where its code is found, how values cross into TypeScript and back, and how it is tested.
+
+- **The module.** `target: "./text.ts#encode"` names the function `encode` that the module `text.ts` exports. The path starts with `./`, uses `/` between directories, has no `..`, and ends in `.ts`. It is relative to the codebase's directory, where `alang.db` is, or, for `alang check`, `run` and the other file commands, to the directory of the file (E0260). The module is a file you write and keep in Git beside `export/`; the codebase stores only the `target` text, so the hash and the history cover the name, not the code. A package or a `node:` module is imported inside the module, never named in a target. For the program to run on Node.js too, the module uses what Deno and Node.js share (web APIs such as `encodeURIComponent`, `node:` modules) and TypeScript that Node.js can strip: no `enum`, `namespace` or parameter properties.
+- **Values.** An argument reaches the TypeScript as a fresh copy, which it may change. The result is checked against `out` and rebuilt, so a value that does not fit traps (`extern`) at the call, naming the place in it, such as `result[2]`, and the form it needed:
+
+| Type | In TypeScript |
+| --- | --- |
+| `Int` | a number that is a safe integer; `-0` becomes `0` |
+| `Float` | a number, not NaN; infinities and `-0` are values |
+| `Bool`, `String` | a boolean, a string; a returned string has no lone surrogates |
+| `Unit` | `null`; a returned `undefined` counts too |
+| `List<T>` | an array |
+| `Map<K, V>` | a `Map`, its keys in order when passed |
+| `Option<T>`, `Result<T, E>`, `Order` | `{ tag: "Some", value }` or `{ tag: "None" }`; `{ tag: "Ok", value }` or `{ tag: "Err", value }`; `{ tag: "Less" }`, `{ tag: "Equal" }` or `{ tag: "Greater" }` |
+| A record | an object with its fields; other properties of a returned one are dropped, and its `where` is checked |
+| A case | `{ tag: "Name" }`, or `{ tag: "Name", value }` with its value |
+
+  Function values cross neither way (E0261, E0237), and an extern has no type parameters (E0101).
+- **Calls.** An extern with `effects: none` is called like any pure function and returns its value at once; a `Promise` traps. One with effects is awaited, so its TypeScript may be `async`. `requires` is checked before the call and `ensures` after the result is checked, as for a `fn`. An exception from the TypeScript traps (`extern`); a refusal by the host for lack of a permission traps (`effect`).
+- **Effects.** They are declared, not checked (2.5). Callers declare them as for any function (E0230), and a running program has the permissions of `main`'s effects, so an extern that does more than those is refused. Within them, and for `time`, `random`, `log` and `console`, which need no permission, nothing stops it.
+- **Acceptance.** A pure extern has examples (5.1); they test its TypeScript. In a program with an `extern fn`, acceptance runs the constants and examples in a separate Deno process without any permission and without remote modules, so foreign code cannot read or write files, use the network or the environment, or start processes while it is tested: a pure extern that tries traps (`effect`, E0403). Only the modules it imports are read as it loads; a remote (`https:`, `jsr:`) import is refused there, so such a module is not accepted, and an `npm:` package loads only from Deno's cache. The process is stopped after 30 seconds (E0407). A module that is missing, does not load, or does not export the function is E0406. The tool needs the permission to start that process: `alang` is installed with `--allow-run`, and the MCP server is started with it too (E0408). Every acceptance loads the module afresh. So a changed module is tested by the next change of any definition, or by `alang db run`, and an example it breaks is reported there, as E0402 or E0403 of the extern.

@@ -107,6 +107,17 @@ Deno.test("spec: the generic function of 7.3 is accepted, its examples run", asy
   assertEquals(examples.map((e) => e.passed), [true, true]);
 });
 
+Deno.test("spec: the externs of 7.3 are accepted with their TypeScript module, its examples run", async () => {
+  const block = definitionBlocks.find((b) => b.text.startsWith("extern fn text.decode\n"));
+  const module = codeBlocks(spec).filter((b) => b.lang === "ts");
+  assertEquals(module.length, 1);
+  const dir = new URL("../out/test/spec/text/", import.meta.url).pathname;
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(`${dir}text.ts`, module[0].text + "\n");
+  const { examples } = await accept(block!.text, `${dir}out/text.ts`, { base: dir });
+  assertEquals(examples.map((e) => e.passed), [true, true, true, true]);
+});
+
 Deno.test("spec: the generic type of 7.3 is accepted, its examples run", async () => {
   const block = definitionBlocks.find((b) => b.text.startsWith("type tree.Tree<T>\n"));
   const out = new URL("../out/test/spec/tree.ts", import.meta.url).pathname;

@@ -7,11 +7,18 @@ import { checkProgram } from "../src/check.ts";
 import { AlangError, type Diagnostic } from "../src/diagnostic.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram, printSignature } from "../src/printer.ts";
-import { accept, type AcceptOptions, readReport } from "../src/toolchain.ts";
+import { accept, type AcceptOptions, build, readReport, run, testExamples, writeEntry } from "../src/toolchain.ts";
 import * as rt from "../src/runtime.ts";
-import { TEXT } from "./extern_fixtures.ts";
+import { B, B_TS, DEEP, FILES, FILES_TS, G, G_DEEP, G_TS, LEAVE, TEXT, TEXT_TS } from "./extern_fixtures.ts";
 
 const OUT = new URL("../out/test/extern/", import.meta.url).pathname;
+const CLI = new URL("../src/cli.ts", import.meta.url).pathname;
+
+async function hasNode(): Promise<boolean> {
+  const node = await new Deno.Command("node", { args: ["--version"], stdout: "null", stderr: "null" }).output()
+    .catch(() => null);
+  return node?.success ?? false;
+}
 
 function check(source: string): Diagnostic[] {
   return checkProgram(parseProgram(source)).diagnostics;
@@ -356,9 +363,226 @@ Deno.test("extern: the report is found by its marker, whatever else is printed (
   }
 });
 
-Deno.test("extern: an extern cannot be built yet (E0303, until the boundary exists)", async () => {
-  const ds = await acceptance(TEXT);
-  assertEquals(ds.map((d) => [d.code, d.at, d.message]), [
-    ["E0303", "extern fn text.decode", "An `extern fn` cannot be built yet."],
+// ---- the boundary and running (4.3) ----
+
+// A scratch directory holding the given modules; the targets are relative
+// to it.
+async function project(name: string, modules: Record<string, string>): Promise<string> {
+  const dir = `${OUT}${name}/`;
+  await Deno.remove(dir, { recursive: true }).catch(() => {});
+  await Deno.mkdir(dir, { recursive: true });
+  for (const [file, text] of Object.entries(modules)) await Deno.writeTextFile(dir + file, text);
+  return dir;
+}
+
+async function acceptIn(dir: string, source: string, options: AcceptOptions = {}): Promise<Diagnostic[]> {
+  return await acceptance(source, { ...options, base: dir });
+}
+
+const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
+// Every program built here with its modules is also checked by TypeScript.
+const builtFiles: string[] = [];
+
+Deno.test("extern: TEXT runs its examples through text.ts; one import per module (E2, E3)", async () => {
+  const dir = await project("text", { "text.ts": TEXT_TS });
+  const built = await build(TEXT, `${dir}out/text.ts`, { base: dir });
+  const results = await testExamples(built);
+  assertEquals(results.map((r) => [r.definition, r.passed]), [
+    ["text.decode", true],
+    ["text.decode", true],
+    ["text.encode", true],
+    ["text.encode", true],
+    ["text.pair", true],
   ]);
+  const imports = (await Deno.readTextFile(built.outPath)).split("\n").filter((l) => l.startsWith("import * as $ext"));
+  assertEquals(imports, ['import * as $ext1 from "../text.ts";']);
+  assertEquals(checkFiles(), []);
+  builtFiles.push(built.outPath);
+});
+
+Deno.test("extern: every value that does not fit traps at the call, naming its place (E2, E5, E8, E9)", async () => {
+  const dir = await project("b", { "b.ts": B_TS });
+  const ds = await acceptIn(dir, B);
+  const extern = (
+    name: string,
+    message: string,
+  ) => ["E0403", `b.${name}`, `The example ends in a trap (\`extern\`). ${message}`];
+  assertEquals(ds.filter((d) => d.definition !== "b.peek").map((d) => [d.code, d.definition, d.message]), [
+    extern("fails", "`./b.ts#fails` threw TypeError: bad input."),
+    extern(
+      "half",
+      "`./b.ts#half` returned a value that does not fit `out: Int`: `result` is 1.5, where `Int` needs a safe integer.",
+    ),
+    extern(
+      "later",
+      "`./b.ts#later` returned a Promise; an `extern fn` with `effects: none` returns its value at once.",
+    ),
+    extern(
+      "lone",
+      '`./b.ts#lone` returned a value that does not fit `out: String`: `result` is "a\\ud800", where `String` needs a string without lone surrogates.',
+    ),
+    extern(
+      "missing",
+      '`./b.ts#missing` returned a value that does not fit `out: Option<Int>`: `result` is null, where `Option<Int>` needs `{ tag: "Some", value }` or `{ tag: "None" }`.',
+    ),
+    extern(
+      "nan",
+      "`./b.ts#nan` returned a value that does not fit `out: Float`: `result` is NaN, where `Float` needs a number that is not NaN.",
+    ),
+    ["E0403", "b.span", "The example ends in a trap (`where`). Invariant of b.Span violated: start <= stop."],
+  ]);
+  // Without permissions, a pure extern that reads a file is refused (E12).
+  const peek = ds.find((d) => d.definition === "b.peek")!;
+  assertEquals(
+    peek.message.startsWith("The example ends in a trap (`effect`). `./b.ts#peek` was refused by the host: "),
+    true,
+    peek.message,
+  );
+  assertEquals(
+    peek.message.endsWith(
+      "An `extern fn` may do only what its `effects` declare, and a program only what `main` declares (2.5).",
+    ),
+    true,
+  );
+  assertEquals(ds.length, 8);
+  const built = await build(B, `${dir}out/b.ts`, { base: dir });
+  builtFiles.push(built.outPath);
+});
+
+Deno.test("extern: the place of a misfit deep in a value; generic and std records rebuilt", async () => {
+  const dir = await project("deep", { "b.ts": B_TS, "g.ts": G_TS });
+  const ds = await acceptIn(dir, DEEP);
+  assertEquals(ds.map((d) => d.message), [
+    'The example ends in a trap (`extern`). `./b.ts#deep` returned a value that does not fit `out: List<b.Tree>`: `result[0].value.right` is an object with tag "Lef", where `b.Tree` needs `{ tag: "Leaf" }` or `{ tag: "Node", value }`.',
+  ]);
+  // A generic type that grows (`Nest<List<T>>` inside `Nest<T>`) is unfolded
+  // as deep as the value goes; a record comes back with its name (R7) and
+  // without extra properties; arguments are copies.
+  assertEquals(await acceptIn(dir, G), []);
+  const built = await build(G, `${dir}out/g.ts`, { base: dir });
+  builtFiles.push(built.outPath);
+  const nest = await acceptIn(dir, G_DEEP);
+  assertEquals(nest.map((d) => d.message), [
+    'The example ends in a trap (`extern`). `./g.ts#bad_nest` returned a value that does not fit `out: g.Nest<Int>`: `result.inner.value.item[1]` is "x", where `Int` needs a safe integer.',
+  ]);
+});
+
+Deno.test("extern: a module that is missing, misnamed or broken is E0406", async () => {
+  const none = await project("text_missing", {});
+  const missing = await acceptIn(none, TEXT);
+  assertEquals(missing.map((d) => [d.code, d.definition, d.section, d.at, d.message]), [[
+    "E0406",
+    "text.decode",
+    "target",
+    'target: "./text.ts#decode"',
+    `The module \`./text.ts\` of \`text.decode\` and \`text.encode\` does not exist: write it at \`${none}text.ts\`.`,
+  ]]);
+  const misnamed = await project("text_misnamed", {
+    "text.ts": TEXT_TS.replace("function encode(", "function encodex("),
+  });
+  const exported = await acceptIn(misnamed, TEXT);
+  assertEquals(exported.map((d) => [d.code, d.definition, d.message]), [[
+    "E0406",
+    "text.encode",
+    "`./text.ts` exports no function `encode`; its functions are `decode`, `encodex`.",
+  ]]);
+  const broken = await project("text_broken", {
+    "text.ts": TEXT_TS.replace("  return encodeURIComponent(text);", "  return (;"),
+  });
+  const loads = await acceptIn(broken, TEXT);
+  assertEquals(loads.map((d) => [d.code, d.definition]), [["E0406", "text.decode"]]);
+  assertEquals(
+    loads[0].message.startsWith(
+      "The module `./text.ts` of `text.decode` and `text.encode` cannot be loaded: SyntaxError",
+    ),
+    true,
+    loads[0].message,
+  );
+  assertEquals(loads[0].message.includes("(at `./text.ts:2:"), true, loads[0].message);
+  const leave = await project("leave", { "b.ts": B_TS });
+  const ended = await acceptIn(leave, LEAVE);
+  assertEquals(ended.map((d) => [d.code, d.definition, d.at, d.message]), [[
+    "E0406",
+    null,
+    "<program>",
+    "The examples' process ended without a result (exit code 3): no output.",
+  ]]);
+  assertEquals(checkFiles(), []);
+});
+
+Deno.test("extern: a module that never finishes loading is stopped (E0407); its output is ignored", async () => {
+  const hang = await project("hang", { "text.ts": "while (true) {}\n" + TEXT_TS });
+  const ds = await acceptIn(hang, TEXT, { limitMs: 3_000 });
+  assertEquals(ds.map((d) => [d.code, d.definition, d.at, d.message]), [[
+    "E0407",
+    null,
+    "<program>",
+    "Loading the program's modules did not end within 3 seconds.",
+  ]]);
+  const noisy = await project("noisy", {
+    "text.ts": 'console.log("noise");\nDeno.stdout.writeSync(new TextEncoder().encode("partial"));\n' +
+      TEXT_TS.replace(
+        "  return encodeURIComponent(text);",
+        '  console.log("more");\n  return encodeURIComponent(text);',
+      ),
+  });
+  assertEquals(await acceptIn(noisy, TEXT), []);
+});
+
+Deno.test("extern: a tool without --allow-run refuses the program, never runs it itself (E0408)", async () => {
+  const dir = await project("no_run", { "text.ts": TEXT_TS, "text.alang": TEXT });
+  const out = await new Deno.Command(Deno.execPath(), {
+    args: ["run", "--allow-read", "--allow-write", CLI, "check", `${dir}text.alang`],
+    cwd: dir,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(out.code, 1);
+  const ds = JSON.parse(decode(out.stderr)) as Diagnostic[];
+  assertEquals(ds.map((d) => [d.code, d.definition, d.at]), [["E0408", "text.decode", "extern fn text.decode"]]);
+});
+
+for (const host of ["deno", "node"] as const) {
+  Deno.test(`extern: a program with an extern runs alike on every host (${host})`, async () => {
+    if (host === "node" && !(await hasNode())) return;
+    const dir = await project(`run_${host}`, { "text.ts": TEXT_TS, "text.alang": TEXT });
+    const out = host === "deno"
+      ? await new Deno.Command(Deno.execPath(), {
+        args: ["run", "--allow-read", "--allow-write", "--allow-run", CLI, "run", "text.alang", "--", "café au lait"],
+        cwd: dir,
+        stdout: "piped",
+        stderr: "piped",
+      }).output()
+      : await (async () => {
+        const built = (await accept(TEXT, `${dir}out/text.ts`, { base: dir })).built;
+        return await new Deno.Command("node", {
+          args: [await writeEntry(built), "café au lait"],
+          cwd: dir,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+      })();
+    assertEquals([out.code, decode(out.stdout), decode(out.stderr)], [0, "q=caf%C3%A9%20au%20lait\n", ""]);
+  });
+}
+
+Deno.test("extern: an extern with effects is awaited, and has the permissions of main (E12)", async () => {
+  const dir = await project("files", { "files.ts": FILES_TS });
+  const built = (await accept(FILES, `${dir}out/files.ts`, { base: dir })).built;
+  builtFiles.push(built.outPath);
+  const made = await run(built, { stdio: "piped", cwd: dir });
+  assertEquals([made.code, decode(made.stdout)], [0, "made\n"]);
+  assertEquals((await Deno.stat(`${dir}made.txt`)).isFile, true);
+  await Deno.remove(`${dir}made.txt`);
+  const refused = await run(built, { stdio: "piped", cwd: dir, effects: ["console"] });
+  assertEquals(refused.code, 70);
+  const trap = JSON.parse(decode(refused.stderr));
+  assertEquals([trap.trap, trap.definition, trap.at], ["effect", "files.touch", "./files.ts#touch"]);
+});
+
+Deno.test("extern: every program built here with its modules is accepted by TypeScript too", async () => {
+  assertEquals(builtFiles.length >= 4, true, String(builtFiles.length));
+  const result = await new Deno.Command(Deno.execPath(), { args: ["check", ...builtFiles], stderr: "piped" }).output();
+  assertEquals(result.success, true, decode(result.stderr));
 });
