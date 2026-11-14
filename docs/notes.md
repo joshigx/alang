@@ -248,7 +248,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` were unparsed
 and needed their form decided (`const` built, item 23; `extern fn` built, item 25).
 
-**Checks before every commit:** `deno task test` (479 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (480 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
