@@ -156,6 +156,25 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     application and E0237 (159 lines, 9,757 bytes). Decisions in `decisions.md`, rows listed in the review list
     below. 363 tests. See "From fn-types".
 
+23. Constants, on branch `const` (plan in `docs/plans/const.md`; the main session took every recommendation, C1 to
+    C16, C6 included), one commit per plan step, after R7 of `docs/plans/records.md` as the phase's first commit
+    (`726da44`: records carry their type's short name at runtime, so `std.text.show` prints `Port(value: 8080)` and a
+    record with a `String` field `tag` no longer shows as a case). `const shop.max_items` with `doc`, `out` and `body`
+    (statements ending in `return`), used by its name without parentheses (`limit()` is E0247), short in its module
+    and in full elsewhere, with fields (`shop.limits.items`); a name is read from the left, and two readings are E0249
+    (C1, C2). A constant is pure (E0233), holds a value (not `Unit`, not a function type: E0248), may hold functions
+    inside (a table of measures, applied by position, as the `rank` round wanted), and has no examples: it is a getter
+    evaluated once, and acceptance evaluates every constant before the examples, a trap or a cycle there being E0404
+    (C3 to C5, C13). The codebase stores constants (`list` shows `const shop.limits: shop.Limits`, `context` a used
+    constant's whole text, `replace` may turn a `fn` into a `const` with its callers in one submit), and a database
+    made before constants is migrated when opened, its history kept (C7 to C11). Habits get the alang form (C12:
+    `const` in a body, `MAX_ITEMS`, the one-line form, `n < limit` with `()` as fix), and E0401 for a pure function
+    without parameters gives the constant's text (C6; such functions stay legal, E0405 is reserved). The `rank`
+    follow-ups: E0237 gives a pure `fn` without parameters the constant's text and tells lookups to return the name
+    and apply the function where it is used; the card says a table of functions is a `const`. The card teaches
+    constants (159 lines, 9,896 bytes). The spec gains `const shop.sizes` with `shop.is_size` (7.3), accepted with its
+    examples. Decisions in `decisions.md`, rows listed in the review list below. 400 tests. See "From const".
+
 **Next (2026-11-14, overnight run, updated by the main session at ~05:15):** `std-net` (item 20), `statements`
 (item 21) and `fn-types` (item 22) are built, their rounds analyzed and fixed, and fast-forwarded into `main`
 (unpushed); `std-net` and `statements` were each re-verified by a second automated round, `fn-types` was not (its
@@ -196,9 +215,9 @@ is done; see "From the MCP server". Claude Code connected and used every kind of
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
-and need their form decided.
+and need their form decided (`const` built, item 23).
 
-**Checks before every commit:** `deno task test` (363 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (400 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -419,6 +438,39 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   prints `Port(value: 8080)` and a record with a `String` field `tag` no longer shows as a case; equality untouched. A
   program that shows a record prints differently now; in the tests only the `NET_STDOUT` pin changed. In
   `decisions.md`, Semantics and runtime (Records in `show`, Representation in TS).
+
+- Constants (item 23, 2026-11-14; the main session took every recommendation of `docs/plans/const.md`, C1 to C16,
+  built without the user's review). Language changes first: C1 the form `const shop.max_items` with `doc`, `out` and
+  `body` (statements ending in `return`), a snake_case name with a module, `result` and `error` naming no constant
+  (E0109); C2 a constant is used without parentheses (`limit()` is E0247, with a fix), and a dotted name whose head
+  is no local is read from the left (an own constant and its fields, a constant or function by its whole path, a
+  constant prefix and its fields), two readings being E0249 without a fix, and a local hiding a constant of its
+  module (written in full there, not E0226); C3 pure (E0233 with its own message), no `effects` and no examples; C4
+  evaluated once, lazily, every constant at acceptance before the examples, a trap there E0404 at the constant it
+  came from, once per cause and once per cycle, examples that trap inside one unreported, and no static cycle check;
+  C5 not `Unit` and not a function type (E0248), function types inside allowed. The others: C6 a pure function
+  without parameters stays legal, E0401 gives it the constant's text (E0405 reserved); C7 `replace` may turn a `fn`
+  into a `const` of the same name or back, an interface change (E0506 "changes from a `fn` to a `const`"); C8 a
+  constant's interface is its `out`, not its value; C9 hits `const name: Type`, constants not in `search_type`; C10
+  `context` gives a used constant's whole text, `signature` its `doc` and `out`; C11 a database made before
+  constants is migrated on open by SQLite's table rebuild, its history kept; C12 the habit diagnostics (`const` in a
+  body E0006, `MAX_ITEMS` E0002, a PascalCase name E0002, the one-line form and a fn's sections E0101, `n < limit`
+  E0204 with `()`, `MaxItems` E0203); C13 constants as `$rt.constant` getters and `$constants`; C14 the codes E0247
+  to E0249 and E0404; C15 the card (K1 to K5); C16 the spec's `shop.sizes`. Mine beyond the plan: a constant, or a
+  field of one, is applied by position like a local's field (`ops.double(2)`, the plan predated fn-types), named
+  arguments on it are E0220 with the application as fix, and a constant applied as a function (`limit(1)`) is E0238;
+  E0247 only when no local takes the name; the `rank` follow-ups (E0237 gives a pure `fn` without parameters whose
+  result is no function itself the constant's text, and then E0401 is not reported beside it; for other functions it
+  adds "For a lookup, return the name and apply the function where it is used; a table of functions is a `const`.")
+  as their own commit after commit 1, so the cut order cannot drop them; K5 (`const` out of the card's "Not in
+  alang") in commit 1, so each commit's docs are true; E0404 leaves out `(at …)` when the trap's location is the
+  constant itself (a stack overflow); `alang test` evaluates the constants before the examples too (one load); E0203
+  names a constant only for a bare `MaxItems`, without a value; the tests in two new files, `tests/const_test.ts`
+  and `tests/const_db_test.ts`, with their own TypeScript check, instead of spread over the plan's eight files. In
+  `decisions.md`: Lexical (Foreign forms), Syntax (`const`, `a.b.c`), Semantics and runtime (Representation in TS),
+  Type checking (Names, Own module names, Constants, Function values, Function results), Examples and acceptance
+  (Constants, Missing examples), Database (`context`, Constants), MCP server (Hits, Card), Temporary limits, Open
+  questions (Form of `extern fn`, Rejecting a pure function without parameters, A constant named in a contract).
 
 ## Database phase: open points (2026-11-12)
 
@@ -720,7 +772,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   calls into that module. The diagnostic could say that the local hides the module.
 - **Constants are clumsy.** A function with `in: none` stands in for `const`, but needs an example, which repeats
   the value (a list of three items took a 250-character example line). `const` would need none (5.1 covers
-  functions).
+  functions). Resolved (item 23): `const` needs no example, and E0401 gives a pure function without parameters the
+  constant's text.
 
 ## From files and program I/O (2026-11-13)
 
@@ -1300,7 +1353,8 @@ Built from `docs/plans/fn-types.md` (written at `7700807`, before `statements`) 
 Left for later:
 
 - **F4 revisited in `const` and `generics`:** a table of functions as a constant (no examples, so F4's reason does
-  not apply) and a `fn` returning a function (`compose`). Loosening E0237 breaks no program.
+  not apply) and a `fn` returning a function (`compose`). Loosening E0237 breaks no program. The `const` part is done
+  (item 23): a constant may hold functions, and F4 stays for `fn`.
 - **Generic functions as values (F10):** E0210 stays even where an expected function type would fix the type
   arguments (`let n: (List<Int>) -> Int = std.list.length`); instantiation belongs to `generics`.
 
@@ -1343,6 +1397,8 @@ phase is the loosening. There E0237's message and `expected` point a function wi
 rerun. Reasons: 5.1 with 3.9 (loosening F4 for `fn` would also need an exemption from E0401, since a type holding a
 function has no `==`); principle 3 (a table as a `fn` now and as a `const` next would be two ways); 3.8 (loosening
 later breaks nothing). Caveat: one run. In `decisions.md`, Type checking (Function results), and in the review list.
+Done in `const` (item 23): E0237's message and `expected` (`10c6d30`) and the card (`7964510`); the rerun of `rank`
+is the main session's.
 
 What the fixes after it changed (on `fn-types`, one commit each):
 
@@ -1364,6 +1420,47 @@ Left for later:
   `amount`.
 - **`std.int.parse` gives the same `None`** for not-a-number and too-large.
 - **F4 for functions with parameters** (`compose`): `generics`.
+
+## From const (2026-11-14)
+
+Built from `docs/plans/const.md` (written at `7700807`, before `statements` and `fn-types`) on `const`, from `main` at
+`09209c1`, after R7 of `docs/plans/records.md`. What the build observed that is not decided:
+
+- **The plan predated `statements` and `fn-types`.** Its `withShortNames`/`shortenOwnNames` are `withOwnFixes` and
+  `applyOwnFixes`. fn-types' `apply()` sent every target whose head is no local to `positionalCall`, so a function in
+  a constant's field would have been E0201; it now goes through `name_()` when any reading is a constant, and
+  `refs.ts` respells an application's target (its comment said "never a reference"), so `callers`, `remove`,
+  `rename` and the E0226 fix see a constant used only as an application's target.
+- **Calls never read a constant's fields as a method.** A call path that names a function calls it even if an own
+  constant with fields could read it too (`config.load(path: p)` beside a constant `config`); only a name without
+  `(`, and an application, can be E0249.
+- **Two of the plan's expectations were ordered differently.** E0402s of one submit come in the codebase's order,
+  sorted by name (`shop.fits` before `shop.price`), and a rename's result lists the old and the new name, both as
+  `rename` (as it always did).
+- **Rename capture through constants** (the plan's Risks): with `shop.cap` reading `max_items`, renaming
+  `shop.max_items` to `shop.count` is one E0510 for `shop.cap`; `shop.price`'s `requires` is captured too but missed,
+  since its example still names the constant and the sets compare equal. Pinned as known in `const_db_test`.
+- **The migration on a real database.** A copy of the `rank` round's `work/` (24 definitions, 141 refs, its
+  history) opened with the new code: the table was rebuilt, `PRAGMA foreign_key_check` empty, `integrity_check` ok,
+  `list` and `history` unchanged, and adding `const rank.limit` was written and exported. A second open does nothing.
+- **The `rank` round's alternative (b)**, `const rank.measures` holding lambdas in a `List<Measure>`, is accepted as
+  written and runs `measures`, `top`, `bottom` and `goal` as the reference does (probed, not a test).
+- **Node.js runs constants.** A generated module with constants, imported by `node` (26.13.0, type stripping),
+  evaluates each once and shows a record constant as `Limits(items: 100, sizes: 4)` (probed).
+- **Card budget.** 159 lines and 9,896 bytes (+113 for this phase, R7 nothing); 1 line and 344 bytes remain under
+  the test's 160 lines and 10,240 bytes. The keywords bullet lost `record`, and the `context` bullet the sentence on
+  std hits.
+
+Left for later:
+
+- **C6: rejecting a pure function without parameters** (E0405 reserved): after a round shows whether models still
+  write the idiom; about 25 test fixtures and stored programs (`tasks.usage`) use it.
+- **A constant's evaluated value in queries:** `context` shows its text; the value would need acceptance results in
+  queries.
+- **A constant named in a contract** tightens the contract when its value changes, without an interface change
+  (decisions, Open questions).
+- **Rounds:** `parcel` (`~/coding_projects/alang-rounds/prompts/parcel.md`) and the rerun of `rank`, the main
+  session's.
 
 ## Spec observations
 
