@@ -551,6 +551,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | Function | Effects | Meaning |
 | --- | --- | --- |
 | `std.console.print_line(text: String): Unit` | console | Writes a line to the console. |
+| `std.console.print(text: String): Unit` | console | Writes the text to the console without a line break, such as a prompt before `std.console.read_line`. |
 | `std.console.read_line(): Option<String>` | console | Reads the next line from the console as UTF-8, without its line break (a line feed, and a carriage return right before it); `None` at the end of the input. Bytes that are not UTF-8 become U+FFFD; a byte order mark at the start of the input stays (U+FEFF). |
 | `std.env.args(): List<String>` | env | The arguments the program was started with. |
 | `std.env.get(name: String): Option<String>` | env | The value of an environment variable; `None` if it is not set. |

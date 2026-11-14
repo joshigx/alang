@@ -709,8 +709,8 @@ for (const host of ["deno", "node"] as const) {
           .output();
       return [out.code, decode(out.stdout), decode(out.stderr)];
     };
-    assertEquals(await start([]), [1, "", "no input\n"]);
-    assertEquals(await start(["given"]), [0, "given\n", ""]);
+    assertEquals(await start([]), [1, "> ", "no input\n"]);
+    assertEquals(await start(["given"]), [0, "> given\n", ""]);
   });
 }
 

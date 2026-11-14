@@ -50,6 +50,10 @@ export const IO_PROGRAM = [
   "  body:",
   ...CALLS.map((call) => `    std.console.print_line(text: std.text.show(value: ${call}))`),
   '    std.log.print_line(text: "to the log")',
+  '    std.console.print(text: "no line break, ")',
+  '    std.console.print(text: "")',
+  '    std.console.print_line(text: "then one")',
+  '    std.console.print(text: "last ä")',
   "    return Unit",
   "end fn io.main",
   "",
@@ -91,14 +95,16 @@ export const IO_STDOUT = [
   'Some("first ä")',
   'Some("second")',
   "None",
-  "",
+  "no line break, then one",
+  "last ä",
 ].join("\n");
 export const IO_STDERR = "to the log\n";
 
 // A `main` that ends with an error: without an argument, `Err` with a
-// message for stderr and exit code 1.
+// message for stderr and exit code 1. The prompt before it is a partial
+// line, which must reach stdout before the exit.
 export const ENDING_PROGRAM = `fn ending.main
-  doc: "Prints its first argument; without one, ends with an error."
+  doc: "Prints a prompt and its first argument; without one, ends with an error."
   in: none
   out: Result<Unit, String>
   effects: env, console
@@ -106,6 +112,7 @@ export const ENDING_PROGRAM = `fn ending.main
   ensures: none
   examples: none
   body:
+    std.console.print(text: "> ")
     let first: String = std.list.get(list: std.env.args(), index: 0) else return Err("no input")
     std.console.print_line(text: first)
     return Ok(Unit)

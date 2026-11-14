@@ -365,6 +365,28 @@ export function std$console$print_line(text: string): Unit {
   return Unit;
 }
 
+type OutputHost = {
+  Deno?: { readonly stdout: { writeSync(bytes: Uint8Array): number } };
+  process?: { readonly stdout: { write(text: string): boolean } };
+};
+
+// The same stream as print_line (console.log), without the line break. Both
+// hosts write it synchronously to a pipe or a file on Linux, so it keeps its
+// place among print_line's lines and survives an exit right after it.
+export function std$console$print(text: string): Unit {
+  const host = globalThis as OutputHost;
+  if (host.Deno) {
+    let bytes = new TextEncoder().encode(text);
+    while (bytes.length > 0) bytes = bytes.subarray(host.Deno.stdout.writeSync(bytes));
+    return Unit;
+  }
+  if (host.process) {
+    host.process.stdout.write(text);
+    return Unit;
+  }
+  return trap("effect", "std.console.print", "", "This runtime has no console.");
+}
+
 // ---- std.console input, std.env ----
 // The program's input from the host: the console (stdin), its arguments and
 // the environment. None of them needs a permission but the environment.

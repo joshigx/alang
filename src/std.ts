@@ -126,6 +126,14 @@ function sig(
 export const STD: readonly Signature[] = [
   sig("std.console.print_line", "Writes a line to the console.", [], [["text", STRING]], UNIT, ["console"]),
   sig(
+    "std.console.print",
+    "Writes the text to the console without a line break, such as a prompt before `std.console.read_line`.",
+    [],
+    [["text", STRING]],
+    UNIT,
+    ["console"],
+  ),
+  sig(
     "std.console.read_line",
     "Reads the next line from the console as UTF-8, without its line break (a line feed, and a carriage return right before it); `None` at the end of the input. Bytes that are not UTF-8 become U+FFFD; a byte order mark at the start of the input stays (U+FEFF).",
     [],
