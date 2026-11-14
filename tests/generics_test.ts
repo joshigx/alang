@@ -423,11 +423,78 @@ Deno.test("generics: a case whose type nothing gives is E0210, naming the form w
   one(fn("return None == std.list.first(list: [1])", { out: "Bool" }), "E0210");
 });
 
+// ---- generic functions passed by name (G9) ----
+
+const LASTS = `fn m.lasts<T>
+  doc: "The last item of each group."
+  in:
+    groups: List<List<T>>
+  out: List<Option<T>>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    lasts(groups: [[1], [2, 3]]) == [Some(1), Some(3)]
+  body:
+    return std.list.map(list: groups, with: util.last)
+end fn m.lasts
+
+${UTIL}`;
+
+Deno.test("generics: a generic function passed by name takes its type arguments from the function type there (G9)", () => {
+  clean(fn(
+    "let xss: List<List<Int>> = [[1], [2, 3]]\nlet lasts: List<Option<Int>> = std.list.map(list: xss, with: util.last)\nreturn std.list.length(list: lasts)",
+    { extra: UTIL },
+  ));
+  clean(
+    fn("let f: (List<Int>) -> Option<Int> = util.last\nreturn std.option.with_default(option: f([1]), default: 0)", {
+      extra: UTIL,
+    }),
+  );
+  clean(fn("let g: (List<Int>) -> Int = std.list.length\nreturn g([1])"));
+  clean(LASTS);
+});
+
+Deno.test("generics: without a function type there, or with another, a generic function value is E0210 or E0204 (G9)", () => {
+  const unknown = one(fn("let h: Int = util.last\nreturn h", { extra: UTIL }), "E0210");
+  assertEquals([unknown.at, unknown.message], [
+    "util.last",
+    "The generic function `util.last` cannot be passed here: its type arguments come from the parameter types of a function type expected at this point (1.4), and none is known. Wrap it in a lambda, or bind it with `let` and a function type first.",
+  ]);
+  const other = one(fn("let k: (Int) -> Option<Int> = util.last\nreturn 0", { extra: UTIL }), "E0204");
+  assertEquals([other.message, other.expected], [
+    "Expected `(Int) -> Option<Int>`, found `util.last`, a generic function of type `(List<T>) -> Option<T>`.",
+    "(Int) -> Option<Int>",
+  ]);
+  // Instantiated at a type with function values, or at a type parameter,
+  // a function that shows its values is E0222 (G2).
+  const fns = one(
+    fn("let shown: List<String> = std.list.map(list: fs, with: std.text.show)\nreturn 0", {
+      params: ["fs: List<(Int) -> Int>"],
+    }),
+    "E0222",
+  );
+  assertEquals(fns.at, "std.text.show");
+  const letter = one(
+    fn("let shown: List<String> = std.list.map(list: xs, with: std.text.show)\nreturn 0", {
+      typeParams: "T",
+      params: ["xs: List<T>"],
+    }),
+    "E0222",
+  );
+  assert_(letter.message.includes("and `T` is a type parameter"), letter.message);
+});
+
 // ---- TypeScript and acceptance (G16) ----
 
 Deno.test("generics: TypeScript generics, with the checked type arguments at user calls (G16)", async () => {
   assertEquals(await acceptance(UTIL), []);
   assertEquals(await acceptance(FIRST_SOME), []);
+  // A function value is passed bare; TypeScript instantiates it from context.
+  assertEquals(await acceptance(LASTS), []);
+  const lasts = await load(LASTS, "lasts");
+  assertEquals(lasts.m$lasts([[1], [2, 3]]), [{ tag: "Some", value: 1 }, { tag: "Some", value: 3 }]);
+  assert_((await Deno.readTextFile(`${OUT}lasts.ts`)).includes("$rt.std$list$map(groups, util$last)"));
   const mod = await load(UTIL, "util");
   assertEquals(mod.util$last([1, 2, 3]), { tag: "Some", value: 3 });
   assertEquals(mod.util$repeat("x", 2), ["x", "x"]);

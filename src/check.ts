@@ -1005,6 +1005,13 @@ class DefChecker {
     return actual;
   }
 
+  // A name checked with a hint instead of an expected type (G9).
+  private hinted(e: Extract<Expr, { kind: "name" }>, scope: Scope, hint: Extract<Type, { k: "fn" }>): Type {
+    const t = this.name_(e, scope, null, hint);
+    this.info.types.set(e, t);
+    return t;
+  }
+
   private mismatch(e: Expr, actual: Type, expected: Type): void {
     const at = firstLine(printExpr(e, ""));
     let message = `Expected \`${this.show(expected)}\`, found \`${this.show(actual)}\`.`;
@@ -1056,7 +1063,15 @@ class DefChecker {
     }
   }
 
-  private name_(e: Extract<Expr, { kind: "name" }>, scope: Scope, expected: Type | null): Type {
+  // `hint`: for a function passed by name to a parameter whose type still
+  // holds variables, that function type with its parameter types known
+  // (G9); a generic function takes its type arguments from it.
+  private name_(
+    e: Extract<Expr, { kind: "name" }>,
+    scope: Scope,
+    expected: Type | null,
+    hint: Extract<Type, { k: "fn" }> | null = null,
+  ): Type {
     const head = e.path[0];
     const local = scope.lookup(head);
     if (local !== undefined) {
@@ -1101,12 +1116,11 @@ class DefChecker {
       if (scope.lookup(short) === undefined && scope.hiddenWhy(short) === undefined) {
         this.shortForm(e, e.path, pathText(e.path));
       }
-      if (fn.typeParams.length > 0) {
-        this.report(
-          "E0210",
-          pathText(e.path),
-          `The generic function \`${pathText(e.path)}\` cannot be passed as a value; wrap it in a lambda.`,
-        );
+      // A generic function takes its type arguments from the function type
+      // expected here, whose parameter types are known (G9).
+      const target = expected?.k === "fn" ? expected : hint;
+      if (fn.typeParams.length > 0 && target === null) {
+        this.unknownTypeArgs(pathText(e.path));
         return ERROR;
       }
       if (fn.effects.length > 0 && expected?.k === "fn" && expected.effects === "caller") {
@@ -1124,6 +1138,7 @@ class DefChecker {
         );
       }
       this.info.names.set(e, { kind: "fn", name: full });
+      if (target !== null && fn.typeParams.length > 0) return this.genericValue(e, fn, target);
       return fnType(fn.params.map((p) => p.type), fn.out);
     }
     const written = pathText(e.path);
@@ -1136,6 +1151,49 @@ class DefChecker {
       fix: suggestion ? { replace: written, with: suggestion } : undefined,
     });
     return ERROR;
+  }
+
+  // A generic function passed by name, instantiated at `target` (G9): its
+  // parameter types are unified with the target's, which are known, and its
+  // result with the target's if that holds no variable, in a substitution of
+  // its own, so that std's reuse of `T` and `U` cannot collide with the
+  // call around it. Every type parameter must be bound.
+  private genericValue(e: Extract<Expr, { kind: "name" }>, fn: FnSig, target: Extract<Type, { k: "fn" }>): Type {
+    if (containsError(target)) return ERROR;
+    const written = pathText(e.path);
+    const s: Subst = new Map();
+    const params = fn.params.map((p) => p.type);
+    const fitting = params.length === target.params.length &&
+      params.every((p, i) => unify(p, target.params[i], s)) &&
+      (freeVars(target.out).size > 0 || unify(fn.out, target.out, s));
+    if (!fitting) {
+      this.report(
+        "E0204",
+        written,
+        `Expected \`${this.show(target)}\`, found \`${written}\`, a generic function of type \`${
+          this.show(fnType(params, fn.out))
+        }\`.`,
+        { expected: this.show(target) },
+      );
+      return ERROR;
+    }
+    if (fn.typeParams.some((tp) => !s.has(tp))) {
+      this.unknownTypeArgs(written);
+      return ERROR;
+    }
+    this.withoutFunctions(fn, s, written, this.written(fn.name));
+    this.info.instances.set(e, fn.typeParams.map((tp) => s.get(tp)!));
+    return fnType(params.map((p) => substitute(p, s)), substitute(fn.out, s));
+  }
+
+  // E0210 for a generic function passed where no function type gives its
+  // type arguments (G9).
+  private unknownTypeArgs(written: string): void {
+    this.report(
+      "E0210",
+      written,
+      `The generic function \`${written}\` cannot be passed here: its type arguments come from the parameter types of a function type expected at this point (1.4), and none is known. Wrap it in a lambda, or bind it with \`let\` and a function type first.`,
+    );
   }
 
   // The readings of a dotted name whose head is no local (C2), read from the
@@ -1374,7 +1432,14 @@ class DefChecker {
         this.expr(a.value, scope, pt);
         return;
       }
-      const t = this.expr(a.value, scope, null);
+      // A function passed by name where the parameter types are known
+      // already: a generic one takes its type arguments from them (G9).
+      const hint = a.value.kind === "name" && pt.k === "fn" && pt.params.every((q) => freeVars(q).size === 0)
+        ? pt
+        : null;
+      const t = hint !== null && a.value.kind === "name"
+        ? this.hinted(a.value, scope, hint)
+        : this.expr(a.value, scope, null);
       if (!unify(pt, t, subst)) {
         this.report(
           "E0204",

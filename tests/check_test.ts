@@ -243,12 +243,15 @@ Deno.test("check: function references and lambdas", () => {
   clean(fn(
     "let xs: List<Int> = std.list.empty<Int>()\nlet s: List<Int> = std.list.sort(list: xs, by: std.int.compare)\nreturn 0",
   ));
-  one(
+  // A generic function passed by name takes its type arguments from the
+  // parameter types known there (G9): `show` at `Int` gives `List<String>`.
+  const shown = one(
     fn(
       "let xs: List<Int> = std.list.empty<Int>()\nlet s: List<Int> = std.list.map(list: xs, with: std.text.show)\nreturn 0",
     ),
-    "E0210",
+    "E0204",
   );
+  assertEquals(shown.message, "Expected `List<Int>`, found `List<String>`.");
   one(
     fn(
       "let xs: List<Int> = std.list.empty<Int>()\nlet ys: List<String> = std.list.map(list: xs, with: fn(x: Int): Int => x)\nreturn 0",
@@ -1092,9 +1095,10 @@ Deno.test("check: function types follow the rules of every type (F1, F3)", () =>
     "Expected `(Int) -> Int`, found `(Int) -> String`.",
     "(Int) -> Int",
   ]);
-  // A generic function is no value yet (F10), and a function with effects
-  // is none where a pure function type is expected (F3).
-  one(fn("let n: (List<Int>) -> Int = std.list.length\nreturn 0"), "E0210");
+  // A generic function takes its type arguments from the function type
+  // expected (G9, which resolves F10), and a function with effects is none
+  // where a pure function type is expected (F3).
+  clean(fn("let n: (List<Int>) -> Int = std.list.length\nreturn n(std.list.empty<Int>())"));
   one(fn("let say: (String) -> Unit = shout\nreturn 0", { extra: SHOUT }), "E0232");
   // Types holding a function value have no `==` and no `show` (3.9).
   one(fn("return by == by", { params: ["by: (Int, Int) -> Order"], out: "Bool" }), "E0222");
