@@ -231,7 +231,8 @@ export const TOOLS: readonly Tool[] = [
     description: "Functions, std included, whose signature matches a type pattern, sorted by name, each with its " +
       "signature on one line. The pattern lists parameter types by position, then `->` and the result type: " +
       "`String -> Result<Int, _>`, `Int, Int -> Bool`, `-> Unit` for no parameters. `_` matches any type; a " +
-      "one-segment name such as `Port` matches by its last segment, a qualified one exactly.",
+      "one-segment name such as `Port` matches by its last segment, a qualified one exactly. A function-typed " +
+      "parameter is written as a function type: `List<_>, (_) -> Bool -> List<_>`.",
     params: { pattern: { description: "A type pattern such as `String -> Result<Int, _>`." } },
     query: true,
     run: (cb, a) => cb.searchType(s(a.pattern)),

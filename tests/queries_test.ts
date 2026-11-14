@@ -210,6 +210,16 @@ Deno.test("queries: a function type shows in full in a hit, and its types are na
   const keep = parseProgram(keepIf)[0];
   assert_(keep.kind === "fn");
   assertEquals(namedTypes(treeOfRef(keep.params[1].type, ["m"])), ["m.Row"]);
+  // A pattern writes the function type as alang does (F9).
+  const names = (p: string) => cb.searchType(p).map((h) => h.name);
+  assertEquals(names("List<Row>, (Row) -> Bool -> List<Row>"), [
+    "m.keep_if",
+    "std.list.drop_while",
+    "std.list.filter",
+    "std.list.take_while",
+  ]);
+  assertEquals(names("List<Row>, (Row) -> Int -> List<Row>"), []);
+  assert_(names("List<_>, _ -> _").includes("m.keep_if"));
   await done(cb);
 });
 
@@ -410,6 +420,31 @@ Deno.test("queries: search(type) matches signatures by pattern", async () => {
   for (const bad of ["String", "String ->", "String -> Result<Int", "-> Int Int", "String, -> Int"]) {
     const e = throwsCode(() => cb.searchType(bad), "E0511");
     assertEquals(e.diagnostic.expected, "String -> Result<Int, _>");
+  }
+  // A function-typed parameter is written as a function type (F9); `map`
+  // matches too, its `U` bound to `Bool`, and so does `append`, whose `T`
+  // a function type pattern binds like any other.
+  assertEquals(names("List<_>, (_) -> Bool -> List<_>"), [
+    "std.list.append",
+    "std.list.drop_while",
+    "std.list.filter",
+    "std.list.map",
+    "std.list.take_while",
+  ]);
+  assertEquals(names("List<Int>, (Int, Int) -> Order -> List<Int>"), ["std.list.sort"]);
+  // A whole pattern in parentheses reads as the top-level form.
+  assertEquals(names("(String) -> Option<Int>"), ["std.int.parse"]);
+  assertEquals(names("() -> _"), names("-> _"));
+  // A function taking a function: the parentheses close before the last `->`.
+  assertEquals(names("(Int) -> Int -> Bool"), []);
+  for (
+    const [bad, why] of [
+      ["(String -> Int", "A parameter list is not closed with `)`."],
+      ["List<_>, () -> Bool -> _", "A function type takes at least one parameter."],
+    ]
+  ) {
+    const e = throwsCode(() => cb.searchType(bad), "E0511");
+    assert_(e.diagnostic.message.startsWith(why), e.diagnostic.message);
   }
   await done(cb);
 });

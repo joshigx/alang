@@ -6,7 +6,11 @@
 // - A name with a module matches exactly that type; a one-segment name
 //   matches a type by its last segment (`Port` matches `net.port.Port`).
 // - A type variable of a std signature matches any type, the same one at
-//   each occurrence; a function type matches only `_`.
+//   each occurrence, a function type pattern included.
+// - A function type is written as in alang, `(_) -> Bool` (F9), and matches
+//   a function type with as many parameters by the same rules; `_` matches
+//   it too. A whole pattern in parentheses, `(String) -> Option<Int>`, reads
+//   as `String -> Option<Int>`, since nothing else would parse.
 // - Parameters match by position; their names do not matter.
 
 import type { Path, TypeRef } from "./ast.ts";
@@ -20,10 +24,10 @@ export type TypeTree =
   | { readonly k: "var"; readonly name: string }
   | { readonly k: "fn"; readonly params: readonly TypeTree[]; readonly out: TypeTree };
 
-export interface TypePattern {
-  readonly name: string; // "_" matches anything
-  readonly args: readonly TypePattern[];
-}
+export type TypePattern =
+  // `name` "_" matches anything.
+  | { readonly kind: "named"; readonly name: string; readonly args: readonly TypePattern[] }
+  | { readonly kind: "fn"; readonly params: readonly TypePattern[]; readonly out: TypePattern };
 
 export interface FnPattern {
   readonly params: readonly TypePattern[];
@@ -90,10 +94,28 @@ function malformed(text: string, why: string): AlangError {
 }
 
 export function parseFnPattern(text: string): FnPattern {
-  const tokens = text.match(/->|[<>,]|[A-Za-z_][A-Za-z0-9_.]*|\S/g) ?? [];
+  const tokens = text.match(/->|[<>,()]|[A-Za-z_][A-Za-z0-9_.]*|\S/g) ?? [];
   let pos = 0;
   const peek = () => tokens[pos];
+  // Types separated by commas, at least one.
+  const types = (): TypePattern[] => {
+    const list = [type()];
+    while (peek() === ",") {
+      pos++;
+      list.push(type());
+    }
+    return list;
+  };
   const type = (): TypePattern => {
+    if (peek() === "(") {
+      // A function type, as alang writes it: `(_, Int) -> Bool`.
+      pos++;
+      if (peek() === ")") throw malformed(text, "A function type takes at least one parameter.");
+      const params = types();
+      if (tokens[pos++] !== ")") throw malformed(text, "A parameter list is not closed with `)`.");
+      if (tokens[pos++] !== "->") throw malformed(text, "A function type has `->` after its parameters.");
+      return { kind: "fn", params, out: type() };
+    }
     const name = tokens[pos++];
     if (name === undefined || !/^[A-Za-z_]/.test(name)) {
       throw malformed(text, `Expected a type, found \`${name ?? "the end"}\`.`);
@@ -101,23 +123,39 @@ export function parseFnPattern(text: string): FnPattern {
     const args: TypePattern[] = [];
     if (peek() === "<") {
       pos++;
-      args.push(type());
-      while (peek() === ",") {
-        pos++;
-        args.push(type());
-      }
+      args.push(...types());
       if (tokens[pos++] !== ">") throw malformed(text, "A type argument list is not closed with `>`.");
     }
-    return { name, args };
+    return { kind: "named", name, args };
   };
-  const params: TypePattern[] = [];
-  if (peek() !== "->") {
-    params.push(type());
-    while (peek() === ",") {
-      pos++;
-      params.push(type());
+  // A whole pattern in parentheses, `(String) -> Option<Int>` or `() -> _`,
+  // reads as the top-level form, since nothing else would parse: the
+  // parameters up to the matching `)`, then `->` and one result type that
+  // ends the text. Otherwise it is read from the start as usual.
+  const whole = (): FnPattern | null => {
+    if (tokens[0] !== "(") return null;
+    let close = -1;
+    for (let i = 0, depth = 0; i < tokens.length && close < 0; i++) {
+      if (tokens[i] === "(") depth++;
+      else if (tokens[i] === ")" && --depth === 0) close = i;
     }
-  }
+    if (close < 0 || tokens[close + 1] !== "->") return null;
+    try {
+      pos = close + 2;
+      const out = type();
+      if (pos !== tokens.length) return null;
+      pos = 1;
+      const params = close === 1 ? [] : types();
+      return pos === close ? { params, out } : null;
+    } catch (e) {
+      if (e instanceof AlangError) return null;
+      throw e;
+    }
+  };
+  const top = whole();
+  if (top) return top;
+  pos = 0;
+  const params = peek() === "->" ? [] : types();
   if (tokens[pos++] !== "->") throw malformed(text, "The pattern has no `->`.");
   const out = type();
   if (pos !== tokens.length) throw malformed(text, `Unexpected \`${tokens[pos]}\` after the result type.`);
@@ -126,9 +164,15 @@ export function parseFnPattern(text: string): FnPattern {
 
 // ---- matching ----
 
+const any = (p: TypePattern) => p.kind === "named" && p.name === "_";
+
 // Two patterns that some type matches both of: equal up to `_`.
 function compatible(a: TypePattern, b: TypePattern): boolean {
-  if (a.name === "_" || b.name === "_") return true;
+  if (any(a) || any(b)) return true;
+  if (a.kind === "fn" || b.kind === "fn") {
+    return a.kind === "fn" && b.kind === "fn" && a.params.length === b.params.length &&
+      a.params.every((x, i) => compatible(x, b.params[i])) && compatible(a.out, b.out);
+  }
   return a.name === b.name && a.args.length === b.args.length && a.args.every((x, i) => compatible(x, b.args[i]));
 }
 
@@ -136,13 +180,16 @@ function compatible(a: TypePattern, b: TypePattern): boolean {
 // must agree with it, so `List<Int>, String -> _` does not match
 // `std.list.append(list: List<T>, item: T)`.
 export function matchesType(p: TypePattern, t: TypeTree, bound = new Map<string, TypePattern>()): boolean {
-  if (p.name === "_") return true;
+  if (any(p)) return true;
   if (t.k === "var") {
     const first = bound.get(t.name);
     if (!first) bound.set(t.name, p);
     return !first || compatible(first, p);
   }
-  if (t.k === "fn") return false;
+  if (t.k === "fn" || p.kind === "fn") {
+    return t.k === "fn" && p.kind === "fn" && p.params.length === t.params.length &&
+      p.params.every((q, i) => matchesType(q, t.params[i], bound)) && matchesType(p.out, t.out, bound);
+  }
   const name = p.name.includes(".") ? t.name : t.name.slice(t.name.lastIndexOf(".") + 1);
   if (name !== p.name || p.args.length !== t.args.length) return false;
   return p.args.every((a, i) => matchesType(a, t.args[i], bound));
