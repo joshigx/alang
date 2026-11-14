@@ -296,6 +296,9 @@ class DefinitionEmitter {
   }
 
   fn(def: FnDef): string[] {
+    if (def.target !== null) {
+      this.fail("E0303", "An `extern fn` cannot be built yet.", `extern fn ${this.name}`);
+    }
     const scope = new Scope();
     const params = def.params.map((p) => `${scope.add(p.name)}: ${this.ts(p.type)}`);
     const out = this.ts(def.out);

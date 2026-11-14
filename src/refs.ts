@@ -242,6 +242,8 @@ function rebuild(
       ensures: def.ensures && expr(def.ensures),
       examples: def.examples.map(expr),
       body: stmts(def.body),
+      // A file and an export, no reference.
+      target: def.target,
     };
   }
   return {

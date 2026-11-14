@@ -38,8 +38,9 @@ export function missingExamples(defs: readonly Definition[]): Diagnostic[] {
     .filter((d): d is FnDef => d.kind === "fn" && d.effects.length === 0 && d.examples.length === 0)
     .map((def) => {
       const short = def.path[def.path.length - 1];
-      // A constant is not generic (G11), so a generic function keeps its form.
-      if (def.params.length === 0 && def.typeParams.length === 0 && asConstant(def)) {
+      // A constant is not generic (G11), so a generic function keeps its
+      // form, and has a body, which an extern lacks (E1).
+      if (def.params.length === 0 && def.typeParams.length === 0 && def.target === null && asConstant(def)) {
         // A constant written the long way (C6): it stays legal for now
         // (E0405 is reserved for rejecting it), but the fix is the constant.
         return diagnostic({

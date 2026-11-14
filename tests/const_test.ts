@@ -173,8 +173,7 @@ Deno.test("const: the form round-trips; its signature is doc and out (C1, C10)",
   );
 });
 
-Deno.test("const: a name with a module, its own end, not result or error; extern stays E0199", () => {
-  assertEquals(parseError("extern fn m.x\n").code, "E0199");
+Deno.test("const: a name with a module, its own end, not result or error", () => {
   const noModule = parseError(constant("m.x", "Int", "return 1").replace("const m.x\n", "const m\n"));
   assertEquals([noModule.code, noModule.message], ["E0101", "A definition name has a module: `module.m`."]);
   const end = parseError(SHOP.replace("end const shop.max_items", "end const shop.other"));
@@ -189,7 +188,7 @@ Deno.test("const: a name with a module, its own end, not result or error; extern
     "`error` is bound by the language and cannot name a constant.",
   ]);
   const other = parseError("let x: Int = 1\n");
-  assertEquals(other.message, "Expected a definition (`fn`, `type` or `const`), found `let`.");
+  assertEquals(other.message, "Expected a definition (`fn`, `type`, `const` or `extern fn`), found `let`.");
 });
 
 // ---- checking (1.3 to 1.7) ----

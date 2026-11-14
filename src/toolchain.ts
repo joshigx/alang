@@ -4,7 +4,7 @@
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Definition, Effect, FnDef } from "./ast.ts";
-import { EFFECTS, pathText } from "./ast.ts";
+import { EFFECTS, headerWord, pathText } from "./ast.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { type CheckInfo, checkProgram, type CheckResult } from "./check.ts";
 import { emitProgram } from "./emit.ts";
@@ -158,7 +158,7 @@ export function findMain(defs: readonly Definition[], name?: string): FnDef {
     throw new AlangError(diagnostic({
       code: "E0305",
       definition: pathText(main.path),
-      at: `fn ${pathText(main.path)}`,
+      at: `${headerWord(main)} ${pathText(main.path)}`,
       message: "`main` has `in: none`, and `out: Unit` or `out: Result<Unit, String>`.",
     }));
   }

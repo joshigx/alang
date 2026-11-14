@@ -25,7 +25,7 @@ function codeBlocks(markdown: string): Block[] {
 
 const blocks = codeBlocks(spec).filter((b) => b.lang === "");
 const firstWord = (b: Block) => b.text.trimStart().split(/\s/, 1)[0];
-const definitionBlocks = blocks.filter((b) => ["fn", "type", "const"].includes(firstWord(b)));
+const definitionBlocks = blocks.filter((b) => ["fn", "type", "const", "extern"].includes(firstWord(b)));
 const letBlocks = blocks.filter((b) => firstWord(b) === "let");
 // A `let` block that ends in an open call is the prefix example of rule 1.6.
 const prefixBlocks = letBlocks.filter((b) => b.text.trimEnd().endsWith("("));
@@ -33,8 +33,8 @@ const statementBlocks = letBlocks.filter((b) => !prefixBlocks.includes(b));
 
 Deno.test("spec: block inventory", () => {
   // Guards against blocks silently dropping out of the test set.
-  assertEquals(definitionBlocks.length, 10);
-  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 24);
+  assertEquals(definitionBlocks.length, 11);
+  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 26);
   assertEquals(statementBlocks.length, 3);
   assertEquals(prefixBlocks.length, 1);
 });

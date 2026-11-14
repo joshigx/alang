@@ -124,7 +124,8 @@ const FOREIGN_KEYWORDS: Record<string, string> = {
   switch: "There is no `switch`; distinguish variants with `match`.",
   function: "Functions are defined with `fn module.name` and its sections.",
   def: "Functions are defined with `fn module.name` and its sections.",
-  import: "There are no imports; write names from other modules fully qualified.",
+  import:
+    'There are no imports; write names from other modules fully qualified. Code from a TypeScript module is called through an `extern fn` with `target: "./module.ts#name"`.',
   self: "There are no methods; pass the value as a named parameter.",
   this: "There are no methods; pass the value as a named parameter.",
 };

@@ -9,7 +9,9 @@
 //   effects. Removing an effect is compatible, since over-declared effects
 //   are allowed. A contract counts although acceptance re-runs every example:
 //   callers with effects have no examples (5.4), so a tightened `requires`
-//   would surface only as a trap at runtime.
+//   would surface only as a trap at runtime. An `extern fn` likewise; its
+//   `target` is not interface, as `body` is not (E14), so `fn` and `extern
+//   fn` compare alike.
 // - type: its shape (record or variant), fields, cases with payloads, in
 //   order, and `where`.
 // - const: its `out`. Its body, the value, is not: acceptance re-runs every

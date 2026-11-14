@@ -146,7 +146,11 @@ export interface FnDef {
   readonly requires: Expr | null;
   readonly ensures: Expr | null;
   readonly examples: readonly Expr[];
+  // Empty for an `extern fn`, whose code is TypeScript.
   readonly body: readonly Stmt[];
+  // `extern fn` (E1, E13): the string of `target: "./text.ts#encode"` as
+  // written, in place of `body`; null for a `fn`.
+  readonly target: string | null;
 }
 
 export interface Case {
@@ -190,6 +194,12 @@ export const EFFECTS = [
 ] as const;
 
 export type Effect = typeof EFFECTS[number];
+
+// The word a definition's header starts with: `fn`, `extern fn`, `type`
+// or `const`.
+export function headerWord(def: Definition): string {
+  return def.kind === "fn" && def.target !== null ? "extern fn" : def.kind;
+}
 
 export function moduleOf(path: Path): Path {
   return path.slice(0, -1);

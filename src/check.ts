@@ -661,8 +661,9 @@ class DefChecker {
       // A contract has no place in a constant, so then the text would not
       // say the same (`asConstant` in examples.ts).
       // A constant is not generic (G11).
+      // An extern has no body to move (E1).
       const constantForm = def.params.length === 0 && def.typeParams.length === 0 && def.effects.length === 0 &&
-        sig.out.k !== "fn" && def.requires === null && def.ensures === null;
+        sig.out.k !== "fn" && def.requires === null && def.ensures === null && def.target === null;
       if (constantForm) {
         const constant = printConst({ kind: "const", path: def.path, doc: def.doc, out: def.out, body: def.body });
         this.report(
@@ -681,6 +682,7 @@ class DefChecker {
       this.outHoldsFn = true;
     }
     this.section = null;
+    if (def.target !== null) this.checkExtern(def, sig);
 
     if (def.requires) {
       this.section = "requires";
@@ -710,6 +712,11 @@ class DefChecker {
       this.expr(ex, new Scope(), BOOL);
     }
 
+    // An extern's effects are declared, not derived (2.5): it has no body.
+    if (def.target !== null) {
+      this.section = null;
+      return;
+    }
     this.section = "body";
     this.out = own(sig.out);
     this.block(def.body, params, DISCARD);
@@ -736,6 +743,28 @@ class DefChecker {
       );
     }
     this.out = null;
+    this.section = null;
+  }
+
+  // An `extern fn` (E3, E6): a target of this project, E0260, and no
+  // function value in `in`, E0261 (`out` is E0237's, as for every `fn`).
+  private checkExtern(def: FnDef, sig: FnSig): void {
+    this.section = "target";
+    const problem = targetProblem(def.target!, def.path[def.path.length - 1]);
+    if (problem !== null) {
+      const { message, ...extra } = problem;
+      this.report("E0260", `target: ${printString(def.target!)}`, message, extra);
+    }
+    this.section = "in";
+    def.params.forEach((p, i) => {
+      if (!containsFn(sig.params[i].type, (n) => this.env.recordFields(n))) return;
+      const shown = `${p.name}: ${printTypeRef(p.type)}`;
+      this.report(
+        "E0261",
+        shown,
+        `\`${shown}\` holds a function value, and an \`extern fn\` takes none: its TypeScript would call alang code with values nothing checks, and could catch its traps (2.5). Pass data, and keep the function in alang.`,
+      );
+    });
     this.section = null;
   }
 
@@ -2798,6 +2827,57 @@ function badMapKey(t: Type): Type | null {
     default:
       return null;
   }
+}
+
+// The form of an `extern fn`'s target (E3): a `.ts` module of the project,
+// by a relative path without `..` or a hidden directory, and the name it
+// exports. Shared by the checker and the toolchain, which resolves it.
+export const TARGET =
+  /^\.\/(?:[A-Za-z0-9_][A-Za-z0-9_.-]*\/)*[A-Za-z0-9_][A-Za-z0-9_.-]*\.ts#[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+// Why `target` is not of that form (E0260), the first rule it breaks
+// deciding the message; null if it is. `short` is the extern's short name,
+// the export a missing `#` most likely meant.
+export function targetProblem(target: string, short: string): { message: string; expected?: string; fix?: Fix } | null {
+  if (TARGET.test(target)) return null;
+  const hash = target.indexOf("#");
+  const path = hash < 0 ? target : target.slice(0, hash);
+  if (/^[a-z][a-z0-9+.-]*:/.test(target)) {
+    return {
+      message:
+        'A target names a TypeScript module of this project, such as `"./text.ts#slugify"`; a package or a `node:` module is imported inside that module.',
+    };
+  }
+  if (path.startsWith("/") || path.split("/").includes("..") || target.includes("\\")) {
+    return {
+      message:
+        "A target stays inside the project: its path starts with `./`, from the codebase's directory (for a file command, the file's), and has no `..`.",
+    };
+  }
+  if (hash < 0) {
+    return {
+      message: 'A target ends with `#` and the name its module exports: `"./text.ts#slugify"`.',
+      expected: `target: ${printString(`${target}#${short}`)}`,
+    };
+  }
+  if (TARGET.test(`./${target}`)) {
+    return {
+      message: "A target's path starts with `./`, as a relative import does.",
+      fix: { replace: printString(target), with: printString(`./${target}`) },
+    };
+  }
+  if (!path.endsWith(".ts")) {
+    return { message: 'A target names a `.ts` module, which Deno and Node.js both load: `"./text.ts#slugify"`.' };
+  }
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(target.slice(hash + 1))) {
+    return {
+      message: "After `#` comes the name the module exports, a JavaScript identifier such as `slugify`.",
+    };
+  }
+  return {
+    message:
+      'A target\'s path is made of letters, digits, `_`, `-` and `.`, with `/` between directories: `"./lib/text.ts#slugify"`.',
+  };
 }
 
 // Whether `toTypeRef` writes the type: built from named types and pure

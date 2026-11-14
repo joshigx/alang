@@ -17,7 +17,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Definition, Effect, FnDef, TypeDef, TypeRef } from "./ast.ts";
-import { moduleOf, pathText } from "./ast.ts";
+import { headerWord, moduleOf, pathText } from "./ast.ts";
 import { checkProgram, type CheckResult, closest } from "./check.ts";
 import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { casesOf, interfaceChange } from "./interface.ts";
@@ -271,14 +271,15 @@ function signatureTypes(def: Definition): TypeTree[] {
 
 // A stored function's signature on one line without the doc, its types in
 // full (as a caller outside its module writes them), its type parameters
-// after the name: the stored counterpart of `signatureHead` (G15).
+// after the name: the stored counterpart of `signatureHead` (G15). An
+// `extern fn` starts so, recognizable as an assumption in every hit (E13).
 function storedHead(name: string, def: FnDef): string {
   const module = def.path.slice(0, -1);
   const full = (t: TypeRef) => showTree(treeOfRef(t, module, def.typeParams));
   const params = def.params.map((q) => `${q.name}: ${full(q.type)}`).join(", ");
   const effects = def.effects.length === 0 ? "none" : def.effects.join(", ");
   const letters = def.typeParams.length === 0 ? "" : `<${def.typeParams.join(", ")}>`;
-  return `fn ${name}${letters}(${params}): ${full(def.out)}, effects: ${effects}`;
+  return `${headerWord(def)} ${name}${letters}(${params}): ${full(def.out)}, effects: ${effects}`;
 }
 
 // A type's signature on one line without the doc, std and stored alike: its
@@ -389,11 +390,12 @@ function operationText(change: Change, name: string | null): string {
 }
 
 // The name an add's text gives in its first line (`fn net.port.parse`,
-// `type net.port.Port`, `const shop.sizes`), read without the lexer, which may
-// be what failed; null if that line is not such a header.
+// `type net.port.Port`, `const shop.sizes`, `extern fn text.encode`), read
+// without the lexer, which may be what failed; null if that line is not such
+// a header.
 function headerName(text: string): string | null {
   const first = text.trimStart().split("\n", 1)[0];
-  return /^(?:fn|type|const) ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:<[^>]*>)?\s*$/.exec(first)?.[1] ?? null;
+  return /^(?:fn|type|const|extern fn) ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:<[^>]*>)?\s*$/.exec(first)?.[1] ?? null;
 }
 
 function list(names: Iterable<string>): string {
@@ -1135,7 +1137,7 @@ export class Codebase {
         at,
         message: `The text defines \`${pathText(def.path)}\`, not \`${name}\`; \`replace\` keeps the name of a ` +
           "definition.",
-        expected: `${cur.def.kind} ${name}`,
+        expected: `${headerWord(cur.def)} ${name}`,
       }));
       return null;
     }
@@ -1204,7 +1206,7 @@ export class Codebase {
         at,
         message: `The text defines \`${pathText(def.path)}\`, not \`${to}\`; the text of a \`rename\` is the ` +
           "definition under its new name.",
-        expected: `${cur.def.kind} ${to}`,
+        expected: `${headerWord(cur.def)} ${to}`,
       }));
       return null;
     }
@@ -1606,7 +1608,7 @@ export class Codebase {
         diagnostics.push(diagnostic({
           code: "E0512",
           definition: name,
-          at: `${def.kind} ${name}`,
+          at: `${headerWord(def)} ${name}`,
           message: `\`${name}\` belongs to module \`${moduleName(name)}\`, so to the file ` +
             `\`${moduleName(name)}.alang\`, not \`${file}\`.`,
         }));

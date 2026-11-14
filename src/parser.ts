@@ -161,13 +161,24 @@ class Parser {
   private definitionDef(): Definition {
     this.definition = null;
     this.section = null;
-    if (this.isKeyword("fn")) return this.fnDef();
+    if (this.isKeyword("fn")) return this.fnDef(false);
     if (this.isKeyword("type")) return this.typeDef();
     if (this.isKeyword("const")) return this.constDef();
     if (this.isKeyword("extern")) {
-      this.fail(`\`${this.peek().text}\` definitions are not supported yet.`, { code: "E0199" });
+      // `extern type`, `extern const` (P1): only a function has code.
+      if (!this.isKeyword("fn", 1)) this.fail("Only a function is written in TypeScript: `extern fn module.name`.");
+      return this.fnDef(true);
     }
-    return this.fail(`Expected a definition (\`fn\`, \`type\` or \`const\`), found ${this.describe(this.peek())}.`);
+    return this.fail(
+      `Expected a definition (\`fn\`, \`type\`, \`const\` or \`extern fn\`), found ${this.describe(this.peek())}.`,
+    );
+  }
+
+  // `target :` after the examples: the section of an `extern fn`. `target`
+  // is no keyword (E4), so the colon decides; an example starts `name(`.
+  private atTarget(): boolean {
+    const t = this.peek();
+    return t.kind === "name" && t.text === "target" && this.isSymbol(":", 1);
   }
 
   // `a.b.c` where every segment is snake_case: function and module paths.
@@ -205,11 +216,26 @@ class Parser {
     this.expectSymbol(":");
   }
 
-  private endDef(kind: Definition["kind"], path: Path): void {
+  // `kind` is the definition's header word, `extern fn` for an extern.
+  private endDef(kind: Definition["kind"] | "extern fn", path: Path): void {
     this.section = null;
     this.expectKeyword("end");
-    this.expectKeyword(kind);
-    const endPath = this.definitionPath(kind);
+    if ((kind === "fn" && this.isKeyword("extern")) || (kind === "extern fn" && this.isKeyword("fn"))) {
+      // `end fn m.f` closing `extern fn m.f`, and the reverse (P6).
+      const written = kind === "fn" ? "extern fn" : "fn";
+      if (written === "extern fn") this.next();
+      this.expectKeyword("fn");
+      const endPath = this.definitionPath("fn");
+      const fixed = `end ${kind} ${pathText(path)}`;
+      this.fail(
+        `The block end names \`${written} ${pathText(endPath)}\`, but the definition is \`${kind} ${pathText(path)}\`.`,
+        { code: "E0103", expected: fixed, fix: { replace: `end ${written} ${pathText(endPath)}`, with: fixed } },
+      );
+    }
+    if (kind === "extern fn") this.expectKeyword("extern");
+    const word = kind === "extern fn" ? "fn" : kind;
+    this.expectKeyword(word);
+    const endPath = this.definitionPath(word);
     if (this.isSymbol("<")) {
       // `end fn util.last<T>` (Rust and Java habits, 5.7): the end line
       // names the definition alone. It stands alone on its line.
@@ -288,10 +314,19 @@ class Parser {
     return { name, type: this.type() };
   }
 
-  private fnDef(): FnDef {
+  // A `fn`, or with `extern` an `extern fn` (E1): the same sections, with
+  // `target:` and its string in place of `body:` and the statements.
+  private fnDef(extern: boolean): FnDef {
+    if (extern) this.expectKeyword("extern");
     this.expectKeyword("fn");
     const path = this.definitionPath("fn");
     this.definition = pathText(path);
+    if (extern && this.isSymbol("<")) {
+      // P2 (E7): the result is checked against one concrete type.
+      this.fail(
+        "An `extern fn` takes no type parameters: its result is checked against one concrete type where it returns (2.5). Write one extern per type, or keep the generic part in alang.",
+      );
+    }
     const typeParams = this.isSymbol("<") ? this.typeParams("fn util.last<T>") : [];
     this.expectNewline();
     const doc = this.docSection();
@@ -334,15 +369,52 @@ class Parser {
     this.sectionHeader("examples");
     const examples = this.noneOrEntries(
       () => this.example(),
-      () => this.isKeyword("body") || this.peek().kind === "eof",
+      () => this.isKeyword("body") || this.atTarget() || this.peek().kind === "eof",
     );
 
+    if (extern) {
+      if (this.isKeyword("body")) {
+        // P3
+        this.section = "body";
+        this.fail(
+          'An `extern fn` has `target: "./module.ts#name"` in place of `body:`; its code is TypeScript in that module.',
+        );
+      }
+      const target = this.targetSection();
+      this.endDef("extern fn", path);
+      return { kind: "fn", path, typeParams, doc, params, out, effects, requires, ensures, examples, body: [], target };
+    }
+    if (this.atTarget()) {
+      // P4
+      this.section = "target";
+      this.fail(
+        "A `fn` has `body:`. A function whose code is TypeScript is an `extern fn`, with `target:` in place of `body:`.",
+      );
+    }
     this.sectionHeader("body");
     this.expectNewline();
     const body = this.block(["end"]);
 
     this.endDef("fn", path);
-    return { kind: "fn", path, typeParams, doc, params, out, effects, requires, ensures, examples, body };
+    return { kind: "fn", path, typeParams, doc, params, out, effects, requires, ensures, examples, body, target: null };
+  }
+
+  // `target: "./text.ts#encode"`: one string on the line (E1). Its form is
+  // the checker's (E0260), so that a malformed one can get a fix.
+  private targetSection(): string {
+    this.section = "target";
+    const t = this.peek();
+    if (!(t.kind === "name" && t.text === "target")) {
+      this.fail(`Expected \`target\`, found ${this.describe(t)}.`, { expected: "target" });
+    }
+    this.next();
+    this.expectSymbol(":");
+    const s = this.peek();
+    // P5
+    if (s.kind !== "string") this.fail('`target` holds one string: `"./module.ts#name"`.');
+    this.next();
+    this.expectNewline();
+    return s.value as string;
   }
 
   // `<T, U>` after a definition's name (G1, G3, G8): one capital letter

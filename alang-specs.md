@@ -13,7 +13,7 @@ There are four kinds of definitions. Each has a full name of the form `module.pa
 | `fn` | Function with contract, examples and body |
 | `type` | Record or variant, with an optional invariant |
 | `const` | Named, immutable value |
-| `extern fn` | Signature of a function in the target language, with `target` instead of `body` |
+| `extern fn` | Function whose code is TypeScript: the sections of a `fn`, with `target` instead of `body` |
 
 A program starts at a function named `main` with `in: none`, and `out: Unit` or `out: Result<Unit, String>`; an `Err` ends the program with its message on stderr and exit code 1. The smallest complete program:
 
@@ -89,7 +89,7 @@ end fn net.port.parse
 
 At every point in the text, everything needed for the next token already stands before it. Reason: an LLM produces token after token and cannot take anything back.
 
-- **1.1 Fixed section order.** A function consists of `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, in exactly this order, and a constant of `doc`, `out`, `body`. Every section is mandatory; an empty section is written `none`.
+- **1.1 Fixed section order.** A function consists of `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, in exactly this order; an `extern fn` has `target` in place of `body`, and a constant consists of `doc`, `out`, `body`. Every section is mandatory; an empty section is written `none`.
 - **1.2 No imports.** There is no import statement. Names from the same module are written short, all others fully qualified (`std.int.parse`). Built-in types and their variants (`Int`, `Ok`, `None`) are always written short.
 - **1.3 Type before value.** Every binding states its type before the expression: `let n: Int = …`. Parameters and the result of a lambda always carry types.
 - **1.4 Types flow forward only.** The type of an expression follows from the expected type and the text to its left. If a type argument cannot be determined this way, it is written explicitly: `std.list.empty<Int>()`, `None<Int>`.
@@ -110,7 +110,7 @@ To change a definition correctly, its own text and the signatures of the definit
 - **2.2 Closed set of effects.** Only the effects in the table below exist. `effects: none` means: equal inputs always produce the same result.
 - **2.3 Errors in the type.** There are no exceptions and no `null`. Expected errors appear as `Result<T, E>` in the result type, missing values as `Option<T>`.
 - **2.4 Pure lambdas.** Lambdas passed to functions have no effects, and neither has any other function value: a function type such as `(Int) -> Bool` is pure. Effects per element go through `for`.
-- **2.5 Trust boundary.** The effects of an `extern fn` are declared, not checked. Every `extern fn` is thereby recognizable as an unchecked assumption.
+- **2.5 Trust boundary.** The effects of an `extern fn` are declared, not checked. Every `extern fn` is thereby recognizable as an unchecked assumption. Its result is checked against its `out` where it returns, so a wrong value traps there instead of spreading.
 - **2.6 No action at a distance.** Constructs whose behaviour is determined elsewhere are not part of the language (second table).
 
 | Effect | Covers |
@@ -229,6 +229,17 @@ const_def  = "const" path
              "body:" stmt { stmt }
              "end" "const" path ;
 
+extern_def = "extern" "fn" path
+             "doc:" string
+             "in:" ( "none" | param { param } )
+             "out:" type
+             "effects:" ( "none" | effect { "," effect } )
+             "requires:" ( "none" | expr )
+             "ensures:" ( "none" | expr )
+             "examples:" ( "none" | example { example } )
+             "target:" string
+             "end" "extern" "fn" path ;
+
 param      = name ":" type ;
 case       = TypeName [ ":" type ] ;
 example    = call "==" expr ;
@@ -264,7 +275,7 @@ No construct requires counting positions or tracking mutable state across severa
 - **4.1 Named arguments.** Every argument carries its parameter name, in declaration order. This also applies to records: `Port(value: 8080)`. A function value is the one exception: a function type such as `(Int, Int) -> Order` names no parameters, so a parameter, field or binding of that type is applied by position, `by(a, b)`, just as a case's value has no name (4.2). A function defined with `fn` is always called with named arguments.
 - **4.2 Variants carry at most one value.** It is written without a name: `Err(OutOfRange(n))`. Several values belong in a record.
 - **4.3 No tuples.** Composite values are records with named fields.
-- **4.4 Named block ends.** Blocks end with `end if`, `end for`, `end match`, `end fn <name>`, `end type <name>` or `end const <name>`. There are no curly braces and no significant indentation.
+- **4.4 Named block ends.** Blocks end with `end if`, `end for`, `end match`, `end fn <name>`, `end type <name>`, `end const <name>` or `end extern fn <name>`. There are no curly braces and no significant indentation.
 - **4.5 No assignment.** Every binding is immutable. An intermediate result gets a new name.
 - **4.6 No index access.** The form `list[i]` does not exist. `std.list.get(list: xs, index: i)` returns `Option<T>`; for neighbours and positions there are `first`, `last`, `zip`, `enumerate` and `window`, and a list of known length is taken apart by name: `let [key, value]: List<String> = parts else return …` (3.2).
 - **4.7 Grouped numbers.** Integer literals with more than four digits carry `_` as a thousands separator: `65_535`, `1_000_000`.
@@ -518,7 +529,6 @@ These forms are common in other languages but do not exist in alang. Write the f
 
 | Not available | Instead |
 | --- | --- |
-| `extern fn` (not parsed yet, E0199) | Nothing yet: std is the only code that reaches TypeScript |
 | `if`, `match` or `for` inside another expression, such as an argument, or in `requires`, `ensures` or `where` (E0303) | Bind it with `let` first, or `return` it; in a condition, call a pure function that holds the `match` |
 | `where` on a variant type (E0225) | A record around it, or a check in the functions |
 | A `fn` whose result holds a function value: `out: (Int) -> Int`, also inside a `List`, a `Map`, an `Option` or a record (E0237) | A table of functions is a `const` (7.3), which needs no example. Otherwise choose the function where it is applied: `let by: (Row, Row) -> Order = ...` there, from a `match`, an `if` or a map literal; or take what decides it, such as a name, as a parameter. A lookup returns the name, and the function is applied where it is used |
@@ -539,8 +549,8 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Strings.** Double quotes, closed on the same line. The escapes are exactly `\"`, `\\`, `\n`, `\t`, and `\u{1B}` (uppercase hex) for other control characters. Every other character, non-ASCII included, is written as itself: `"é"`, never `"\u{E9}"`. An unknown escape is an error (E0005); for `\r`, `\0`, `\a`, `\b`, `\f`, `\v` and `\e` the fix is the `\u{...}` form, such as `\u{D}` for `\r` (not for `\0` before a digit, a C octal escape such as `\033`). Two texts are joined with `std.string.concat`, several with `std.string.join(parts: [a, b, c], separator: "")`; `+` is for numbers only.
 - **Numbers.** An integer with more than four digits is grouped in threes with `_` (`65_535`, `1_000_000`); `65535`, `1_000` and leading zeros are errors (4.7). A float is written `digits.digits` (`1.0`, `0.25`), never `1.`, `.5` or `1e3`. A negative number is a literal (`-3`, `-0.5`). There is no minus in front of other expressions; write `0 - x`.
 - **Other values.** `true`, `false`, and `Unit`, the one value of the type `Unit`.
-- **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them.
-- **Foreign forms.** `===`, `!==`, `&&`, `||`, `|`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7). The message for `{` and `}` names the map literal `[key: value]`, and the one for index access names `std.list.get` and `std.map.get`. A function type written as in another language, `(Int) => Int`, `(x: Int) -> Int`, `Int -> Int` or `fn(Int) -> Int`, is E0006, naming `(Int) -> Int`. In a body, `const` is E0006 with `let` as its fix, and a name like `MAX_ITEMS` is E0002 with the fix `max_items`. Bounds on a type parameter (`<T: Ord>`, `<T extends Ord>`) are E0006, naming the function parameter that replaces them. The end line names a definition without its type parameters (`end fn util.last`, E0103 with the fix), a pattern takes none (`case Leaf then`, E0101), and a constant has none (E0101).
+- **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them. `target` is not reserved: it is a section word only in an `extern fn`, and names a value anywhere.
+- **Foreign forms.** `===`, `!==`, `&&`, `||`, `|`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7). The message for `{` and `}` names the map literal `[key: value]`, and the one for index access names `std.list.get` and `std.map.get`. A function type written as in another language, `(Int) => Int`, `(x: Int) -> Int`, `Int -> Int` or `fn(Int) -> Int`, is E0006, naming `(Int) -> Int`. In a body, `const` is E0006 with `let` as its fix, and a name like `MAX_ITEMS` is E0002 with the fix `max_items`. Bounds on a type parameter (`<T: Ord>`, `<T extends Ord>`) are E0006, naming the function parameter that replaces them. The end line names a definition without its type parameters (`end fn util.last`, E0103 with the fix), a pattern takes none (`case Leaf then`, E0101), and a constant has none (E0101). `import` is E0006 too; code from a TypeScript module is called through an `extern fn`.
 - **Layout.** A line break separates statements and section entries. Inside the parentheses of a call, an application or a construction and inside the brackets of a list or a map, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
 - **Files.** In a file given to `alang check` or `alang run`, the order of definitions has no meaning (6.2). The stored text and the export sort them by name, with one empty line between them.
 
@@ -636,6 +646,52 @@ fn tree.items<T>
     end match
     return std.list.flatten(lists: parts)
 end fn tree.items
+```
+
+- **Extern functions.** `extern fn text.encode` has the sections of a `fn` with `target: "./text.ts#encode"` in place of `body:`, then `end extern fn text.encode`: the function is `encode`, exported by the TypeScript module `text.ts`, which you write in the codebase's directory. It is called like any function. One with `effects: none` has examples (5.1), which test the TypeScript. An extern takes no function values (E0261) and no type parameters (E0101).
+
+```
+extern fn text.decode
+  doc: "The text with its percent-encoding undone, as JavaScript's decodeURIComponent does it; None if it is not valid percent-encoded UTF-8."
+  in:
+    text: String
+  out: Option<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    decode(text: "caf%C3%A9") == Some("café")
+    decode(text: "100%") == None
+  target: "./text.ts#decode"
+end extern fn text.decode
+
+extern fn text.encode
+  doc: "The text percent-encoded for a URL, as JavaScript's encodeURIComponent does it."
+  in:
+    text: String
+  out: String
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    encode(text: "a b&c") == "a%20b%26c"
+    encode(text: "é") == "%C3%A9"
+  target: "./text.ts#encode"
+end extern fn text.encode
+```
+
+```ts
+export function encode(text: string): string {
+  return encodeURIComponent(text);
+}
+
+export function decode(text: string): { tag: "Some"; value: string } | { tag: "None" } {
+  try {
+    return { tag: "Some", value: decodeURIComponent(text) };
+  } catch {
+    return { tag: "None" };
+  }
+}
 ```
 
 - **Cases belong to the module.** A case's full name is `module.Case`, not `module.Type.Case`. So two types of one module cannot share a case name, and a case cannot share its name with a type of its module (E0215). Outside its module, a case is written in full: `std.fs.NotFound`, `net.port.OutOfRange`.
@@ -1026,6 +1082,7 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | E0238 | Applying a value that is no function, or with the wrong number of arguments |
 | E0247 to E0249 | Constants: called like a function, a type without a value, a name with two meanings |
 | E0250 | A type parameter that the signature does not use |
+| E0260, E0261 | `extern fn`: a target that is not `./path.ts#name`, a function value in its signature |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0404 | Missing, failing and trapping examples, and constants that trap |
 | E0501 to E0514 | Codebase operations |

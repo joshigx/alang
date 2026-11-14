@@ -26,7 +26,8 @@ function printParam(p: Param): string {
   return `${p.name}: ${printTypeRef(p.type)}`;
 }
 
-// The signature of a definition: every section except `body` (section 6).
+// The signature of a definition: every section except `body` (section 6),
+// or an `extern fn`'s `target` (E13).
 // A type has no body, so its signature is its whole text; a constant's is its
 // `doc` and `out` (C10).
 export function printSignature(def: Definition): string {
@@ -49,11 +50,17 @@ function printTypeParams(letters: readonly string[]): string {
   return letters.length === 0 ? "" : `<${letters.join(", ")}>`;
 }
 
+// An `extern fn` has `target:` in place of `body:` (E1); its signature
+// leaves both out, since either is the code.
 function printFn(def: FnDef, body = true): string {
   const name = pathText(def.path);
   const inner = STEP + STEP;
+  const head = def.target === null ? "fn" : "extern fn";
+  const code = def.target === null
+    ? [`${STEP}body:`, printStmts(def.body, inner)]
+    : [`${STEP}target: ${printString(def.target)}`];
   return [
-    `fn ${name}${printTypeParams(def.typeParams)}`,
+    `${head} ${name}${printTypeParams(def.typeParams)}`,
     ...section("doc", printString(def.doc)),
     ...section("in", def.params.map(printParam)),
     ...section("out", printTypeRef(def.out)),
@@ -61,8 +68,8 @@ function printFn(def: FnDef, body = true): string {
     ...section("requires", def.requires && printExpr(def.requires, inner)),
     ...section("ensures", def.ensures && printExpr(def.ensures, inner)),
     ...section("examples", def.examples.map((e) => printExpr(e, inner))),
-    ...(body ? [`${STEP}body:`, printStmts(def.body, inner)] : []),
-    `end fn ${name}`,
+    ...(body ? code : []),
+    `end ${head} ${name}`,
   ].join("\n");
 }
 
