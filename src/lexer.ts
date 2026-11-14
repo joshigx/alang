@@ -99,7 +99,8 @@ const FOREIGN: readonly { form: string; message: string; replacement?: string }[
   { form: "}", message: BRACES },
   {
     form: "?",
-    message: "There is no `?` operator; propagate errors with `let name: Type = expression else return ...`.",
+    message:
+      "There is no `?` operator; propagate errors with `let name: Type = expression else return ...`, or with `expression else return ...` where nothing is bound.",
   },
   { form: ";", message: "There are no semicolons; line breaks separate statements." },
   { form: "'", message: "Strings use double quotes." },
