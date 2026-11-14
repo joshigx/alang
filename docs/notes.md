@@ -156,17 +156,22 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     application and E0237 (159 lines, 9,757 bytes). Decisions in `decisions.md`, rows listed in the review list
     below. 363 tests. See "From fn-types".
 
-**Next (2026-11-14, overnight run, updated by the main session at ~04:15):** `std-net` (item 20) and `statements`
-(item 21) are built, their rounds analyzed and fixed, each re-verified by a second automated round, and
-fast-forwarded into `main` (unpushed). Next: `fn-types` from `docs/plans/fn-types.md` on branch `fn-types` (fresh Opus
-agent; re-grep everything `statements` moved), its round (`rank`, prompt in the plan, reference
-`~/coding_projects/alang-rounds/prompts/rank-reference.ts`), analysis, fixes, merge. Then `const`
-(`docs/plans/const.md`, round `parcel`), then `generics` (`docs/plans/generics.md`, round `shop`, reference
-`~/coding_projects/alang-rounds/prompts/shop-reference.ts`; split point before generic types), all planned by fresh
-Opus agents on 2026-11-14 and committed. `extern-fn` and row 9 `records` are being planned (plans in the job's
-scratch directory until committed). No Fable planners until the weekly reset (Sunday 2026-11-15 21:00 local); the
-Fable advisor is fine. The user, before going to sleep on 2026-11-14: continue with the remaining items of the to-do
-list, never push, and shut the PC down when everything is finished.
+**Next (2026-11-14, overnight run, updated by the main session at ~05:15):** `std-net` (item 20), `statements`
+(item 21) and `fn-types` (item 22) are built, their rounds analyzed and fixed, and fast-forwarded into `main`
+(unpushed); `std-net` and `statements` were each re-verified by a second automated round, `fn-types` was not (its
+fixes were wording only; `rank` is rerun in the `const` phase). Next: `const` from `docs/plans/const.md` on branch
+`const` (fresh Opus agent), with two additions: first R7 of `docs/plans/records.md` (records carry their type's name
+at runtime, so `std.text.show` prints `Port(value: 8080)` and a record with a `tag` field no longer shows as a case),
+as its own commit; and the follow-ups of the `rank` round (E0237's message and `expected` point a function without
+parameters to `const`, the card says where a table of functions goes). Its round is `parcel`
+(`~/coding_projects/alang-rounds/prompts/parcel.md`), plus a rerun of `rank`. Then `generics`
+(`docs/plans/generics.md`, round `shop`, reference `~/coding_projects/alang-rounds/prompts/shop-reference.ts`; split
+point before generic types), then `extern-fn` (`docs/plans/extern-fn.md`, round `query`, reference
+`~/coding_projects/alang-rounds/prompts/query-reference.mjs`). Row 9 `records` is not built (R1 of its plan: the
+rounds never copied a record wider than 3 fields; run its evidence round `fleet` before row 9's turn). All plans were
+written by fresh Opus agents on 2026-11-14 and are committed. No Fable planners until the weekly reset (Sunday
+2026-11-15 21:00 local); the Fable advisor is fine. The user, before going to sleep on 2026-11-14: continue with the
+remaining items of the to-do list, never push, and shut the PC down when everything is finished.
 
 **Earlier next steps (kept for reference):** `logstat-fixes` is merged into `main` (2026-11-13). The `tasks` playground round, from an empty codebase,
 was started on 2026-11-14: prompt, checks and the steps after it are in `docs/plans/tasks-round.md`. When the user
