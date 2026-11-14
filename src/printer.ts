@@ -44,11 +44,16 @@ export function printConst(def: ConstDef, body = true): string {
   ].join("\n");
 }
 
+// `<T, U>` after a definition's name; nothing without type parameters.
+function printTypeParams(letters: readonly string[]): string {
+  return letters.length === 0 ? "" : `<${letters.join(", ")}>`;
+}
+
 function printFn(def: FnDef, body = true): string {
   const name = pathText(def.path);
   const inner = STEP + STEP;
   return [
-    `fn ${name}`,
+    `fn ${name}${printTypeParams(def.typeParams)}`,
     ...section("doc", printString(def.doc)),
     ...section("in", def.params.map(printParam)),
     ...section("out", printTypeRef(def.out)),

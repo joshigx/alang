@@ -280,6 +280,7 @@ class Parser {
     this.expectKeyword("fn");
     const path = this.definitionPath("fn");
     this.definition = pathText(path);
+    const typeParams = this.isSymbol("<") ? this.typeParams() : [];
     this.expectNewline();
     const doc = this.docSection();
 
@@ -329,7 +330,38 @@ class Parser {
     const body = this.block(["end"]);
 
     this.endDef("fn", path);
-    return { kind: "fn", path, doc, params, out, effects, requires, ensures, examples, body };
+    return { kind: "fn", path, typeParams, doc, params, out, effects, requires, ensures, examples, body };
+  }
+
+  // `<T, U>` after a definition's name (G1, G3): one capital letter each,
+  // at least one, no comma before `>`. Whether a letter is written twice is
+  // the checker's (E0215).
+  private typeParams(): string[] {
+    this.expectSymbol("<");
+    if (this.isSymbol(">")) {
+      this.fail(
+        "A definition's type parameters are capital letters in `<...>`: `fn util.last<T>`; without any, write the name alone.",
+      );
+    }
+    const letters = [this.typeParam()];
+    while (this.isSymbol(",")) {
+      this.next();
+      if (this.isSymbol(">")) {
+        this.fail("A list of type parameters ends after its last letter; remove the comma before `>`.");
+      }
+      letters.push(this.typeParam());
+    }
+    this.expectSymbol(">");
+    return letters;
+  }
+
+  private typeParam(): string {
+    const t = this.peek();
+    if (t.kind !== "typename" || !/^[A-Z]$/.test(t.text)) {
+      const shown = t.kind === "newline" || t.kind === "eof" ? this.describe(t) : `\`${t.text}\``;
+      this.fail(`A type parameter is one capital letter, such as \`T\` or \`K\` (3); ${shown} is not one.`);
+    }
+    return this.next().text;
   }
 
   // `const shop.max_items` with `doc`, `out` and `body`, in this order (C1):

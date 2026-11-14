@@ -220,6 +220,7 @@ function rebuild(
     return {
       kind: "fn",
       path,
+      typeParams: def.typeParams,
       doc: def.doc,
       params: def.params.map(param),
       out: type(def.out),

@@ -94,11 +94,14 @@ export function emitProgram(defs: readonly Definition[], info: CheckInfo, option
 class DefinitionEmitter {
   private readonly module: Path;
   private readonly name: string;
+  // The definition's type parameters, written as they are (G3, G16).
+  private readonly letters: readonly string[];
   private temps = 0;
 
   constructor(def: Definition, private readonly info: CheckInfo) {
     this.module = moduleOf(def.path);
     this.name = pathText(def.path);
+    this.letters = def.kind === "fn" ? def.typeParams : [];
   }
 
   private fail(code: string, message: string, at: string): never {
@@ -187,10 +190,13 @@ class DefinitionEmitter {
           case "Result":
             return `${RT}.${t.name}<${args.join(", ")}>`;
         }
-        return this.globalRef(t.name.split("."));
+        const head = this.globalRef(t.name.split("."));
+        return args.length === 0 ? head : `${head}<${args.join(", ")}>`;
       }
       case "fn":
         return `((${t.params.map((p, i) => `p${i}: ${this.tsType(p)}`).join(", ")}) => ${this.tsType(t.out)})`;
+      case "rigid":
+        return t.name;
       default:
         throw new Error(`no TypeScript type for ${t.k} in ${this.name}`);
     }
@@ -203,6 +209,8 @@ class DefinitionEmitter {
       return `((${t.params.map((p, i) => `p${i}: ${this.ts(p)}`).join(", ")}) => ${this.ts(t.out)})`;
     }
     const args = t.args.map((a) => this.ts(a));
+    // A type parameter of the definition, before a module type of its name.
+    if (t.path.length === 1 && this.letters.includes(t.path[0])) return t.path[0];
     if (t.path.length === 1) {
       switch (t.path[0]) {
         case "Int":
@@ -227,6 +235,19 @@ class DefinitionEmitter {
     }
     const head = this.globalRef(this.resolve(t.path));
     return args.length === 0 ? head : `${head}<${args.join(", ")}>`;
+  }
+
+  // The TypeScript type arguments of a call. A user generic function gets
+  // those the checker bound, since TypeScript's inference differs from
+  // alang's left-to-right binding (G16); a std function the written ones
+  // only, since std's TypeScript signatures differ from alang's.
+  private typeArgs(e: Extract<Expr, { kind: "call" }>): string {
+    const instance = this.info.instances.get(e);
+    const std = (this.info.calls.get(e) ?? pathText(this.resolve(e.path))).startsWith("std.");
+    if (!std && instance !== undefined && instance.every(closed)) {
+      return `<${instance.map((t) => this.tsType(t)).join(", ")}>`;
+    }
+    return e.typeArgs.length === 0 ? "" : `<${e.typeArgs.map((t) => this.ts(t)).join(", ")}>`;
   }
 
   private globalRef(full: Path): string {
@@ -279,8 +300,9 @@ class DefinitionEmitter {
     const out = this.ts(def.out);
     const async = def.effects.length > 0;
     const promised = async ? `Promise<${out}>` : out;
+    const generic = def.typeParams.length === 0 ? "" : `<${def.typeParams.join(", ")}>`;
     const lines = [
-      `export ${async ? "async " : ""}function ${mangle(def.path)}(${params.join(", ")}): ${promised} {`,
+      `export ${async ? "async " : ""}function ${mangle(def.path)}${generic}(${params.join(", ")}): ${promised} {`,
     ];
     if (def.requires) lines.push(...indent(this.check("requires", def.requires, scope), 1));
     if (def.ensures) {
@@ -540,7 +562,7 @@ class DefinitionEmitter {
         return `(${this.expr(e.target, scope)}).${e.field}`;
       case "call": {
         const callee = this.globalRef(this.resolve(e.path));
-        const typeArgs = e.typeArgs.length === 0 ? "" : `<${e.typeArgs.map((t) => this.ts(t)).join(", ")}>`;
+        const typeArgs = this.typeArgs(e);
         // Arguments appear in declaration order (rule 4.1), so they map to
         // positional parameters directly.
         const call = `${callee}${typeArgs}(${e.args.map((a) => this.expr(a.value, scope)).join(", ")})`;
@@ -608,6 +630,20 @@ class DefinitionEmitter {
           printExpr(e, "").split("\n", 1)[0],
         );
     }
+  }
+}
+
+// Whether a checked type has a TypeScript form: no variable, error or never.
+function closed(t: Type): boolean {
+  switch (t.k) {
+    case "con":
+      return t.args.every(closed);
+    case "fn":
+      return t.params.every(closed) && closed(t.out);
+    case "rigid":
+      return true;
+    default:
+      return false;
   }
 }
 

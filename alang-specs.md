@@ -182,7 +182,7 @@ For every purpose the grammar permits exactly one form, and every definition has
 - **3.6 Spelling of names.** `snake_case` applies to values, functions and modules, `PascalCase` to types and variants. The lexer enforces this.
 - **3.7 Canonical text.** Line breaks separate entries and statements; indentation and other whitespace have no meaning. What is stored is the syntax tree, and its text output is always the same: one statement per line, two spaces per level.
 - **3.8 Stable library.** A published signature never changes. New behaviour gets a new name.
-- **3.9 Shared operations without traits.** Equality (`==`, `!=`) and text representation (`std.text.show`) are built in for every type without function values and follow solely from the structure of the type. Only `Int`, `Float` and `String` have a built-in order. For all other types a comparison function with the result `Order` (`Less`, `Equal`, `Greater`) is passed explicitly. Because there is no NaN, `x == x` holds for every value.
+- **3.9 Shared operations without traits.** Equality (`==`, `!=`) and text representation (`std.text.show`) are built in for every type without function values and follow solely from the structure of the type. Only `Int`, `Float` and `String` have a built-in order. For all other types a comparison function with the result `Order` (`Less`, `Equal`, `Greater`) is passed explicitly. Because there is no NaN, `x == x` holds for every value. A type parameter (7.3) may stand for any type, one with function values included. So the values of a type parameter have no built-in equality, order or text, and a generic function takes what it needs as a function parameter. A comparison with a value built only from literals and cases, such as `option == None`, meets no value of a type parameter and no function, so it works on every type.
 
 Reading files and collecting the results, with `for` as an expression per 3.4 instead of a lambda with an effect:
 
@@ -204,7 +204,7 @@ Grammar excerpt (EBNF, line breaks omitted):
 ```
 definition = fn_def | type_def | const_def | extern_def ;
 
-fn_def     = "fn" path
+fn_def     = "fn" path [ type_params ]
              "doc:" string
              "in:" ( "none" | param { param } )
              "out:" type
@@ -220,6 +220,8 @@ type_def   = "type" path
              ( "record:" param { param } | "variant:" case { case } )
              "where:" ( "none" | expr )
              "end" "type" path ;
+
+type_params = "<" Letter { "," Letter } ">" ;
 
 const_def  = "const" path
              "doc:" string
@@ -529,6 +531,8 @@ These forms are common in other languages but do not exist in alang. Write the f
 | A wildcard pattern `_` | Every value in a pattern gets a name, used or not: `case Ok(done) then`; in a shared case, a name that not every pattern binds is simply left unused |
 | A pattern over a list's items, `case [a, b] then` (E0101) | `let [a, b]: List<T> = xs else return …` for an exact length; `std.list.first` and `std.list.drop` for the first item and the rest |
 | Copying a record with one field changed | Construct it again with every field named: `Task(text: task.text, done: true)` |
+| Generic types, `type m.Pair<A, B>` (E0101) | A generic function over the parts, or a type for each use |
+| Bounds on a type parameter (`<T: Ord>`), and `==`, `<` or `std.text.show` on its values (E0222, E0211) | Take a function as a parameter: `same: (T, T) -> Bool`, `by: (T, T) -> Order`, `show: (T) -> String`; compare with a value built from literals and cases (`option == None`), or tell cases apart with `match` |
 
 ### 7.2 Text
 
@@ -572,10 +576,31 @@ fn shop.is_size
 end fn shop.is_size
 ```
 
+- **Generic functions.** A function takes type parameters after its name: `fn util.contains_by<T>`, `fn util.pair_up<A, B>`. Each is one capital letter, written once (E0215), and each occurs in a parameter type or in `out` (E0250); the end line names the function without them. Inside the definition a type parameter is a type like any other, written wherever a type is (`let item: T`, `fn(x: T): Bool => …`, `std.list.empty<T>()`), and it equals only itself. A call binds the type parameters from its arguments, as for std (7.5). Since a type parameter may stand for a type with function values, its values have no `==`, order or `std.text.show` (3.9; E0222, E0211): the function takes what it needs as a parameter, as `contains_by` takes `same`. A type, record or case of the module that has one of the letters as its name is written in full inside the definition (`m.T`), and that is not E0226; written short in a construction or a pattern, it is E0203.
+
+```
+fn util.contains_by<T>
+  doc: "Whether the list holds an item for which same holds together with item."
+  in:
+    list: List<T>
+    item: T
+    same: (T, T) -> Bool
+  out: Bool
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    contains_by(list: ["a", "b"], item: "b", same: fn(x: String, y: String): Bool => x == y) == true
+    contains_by(list: [1, 2], item: 3, same: fn(x: Int, y: Int): Bool => x == y) == false
+  body:
+    return std.list.any(list: list, with: fn(x: T): Bool => same(x, item))
+end fn util.contains_by
+```
+
 - **Cases belong to the module.** A case's full name is `module.Case`, not `module.Type.Case`. So two types of one module cannot share a case name, and a case cannot share its name with a type of its module (E0215). Outside its module, a case is written in full: `std.fs.NotFound`, `net.port.OutOfRange`.
-- **The own module is written short (1.2).** Inside `net.port`, write `parse`, `Port` and `OutOfRange`. Names from any other module are written in full, std included: `std.http.Request`, `std.http.AddressInUse`. Enclosing and nested modules count as other modules. An own-module name written in full is E0226; the codebase stores it short by itself and lists it under `fixed`. One exception: a function passed as a value, or a constant, whose short name is also the name of a local is written in full.
+- **The own module is written short (1.2).** Inside `net.port`, write `parse`, `Port` and `OutOfRange`. Names from any other module are written in full, std included: `std.http.Request`, `std.http.AddressInUse`. Enclosing and nested modules count as other modules. An own-module name written in full is E0226; the codebase stores it short by itself and lists it under `fixed`. One exception: a function passed as a value or a constant whose short name is also the name of a local, and a type, record or case named like a type parameter of the definition, are written in full.
 - **Built-ins are always short.** `Int`, `Float`, `Bool`, `String`, `Unit`, `List`, `Map`, `Option` (`Some`, `None`), `Result` (`Ok`, `Err`) and `Order` (`Less`, `Equal`, `Greater`). No type or case may take one of these names (E0215).
-- **Uniqueness.** Definition names, parameters, fields, and case names within a module are unique (E0215).
+- **Uniqueness.** Definition names, parameters, fields, the type parameters of a definition, and case names within a module are unique (E0215).
 
 ### 7.4 Bodies
 
@@ -601,10 +626,10 @@ end fn shop.is_size
 - **Calls and construction (4.1).** Every argument is named, in declaration order, with none left out and none given twice (E0205 to E0208): `std.string.concat(left: a, right: b)`, `Port(value: 8080)`. A case's value has no name: `Some(n)`, `Err(OutOfRange(n))`. Fields are read with a dot (`request.path`). There are no method calls (`x.f()`, E0220). The one exception is a function value, applied by position (below).
 - **Lists.** `[1, 2, 3]` is a `List<Int>`. A list literal has at least one item; the stored text separates the items with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The item type comes from the expected type (a `let`, a parameter, `out` at a `return`, the left side of `==`), otherwise from the first item, and every other item must have it: `[1.0, 2]` is an error (E0204), and so is `[None, Some(1)]` without an expected type (E0210). The empty list is `std.list.empty<Int>()`; `[]` is an error whose fix names the item type when the expected type gives it (E0228). A `for` gives a literal it iterates its declared type as the item type, since it stands to the left: `for x: Option<Int> in [None, Some(1)]` is fine, and in `for x: Float in [1]` the `1` is an error with the fix `1.0` (E0204). There is no index access (`xs[0]`) and no `Int[]` (E0006): use `std.list.get(list: xs, index: 0)` and `List<Int>`.
 - **Maps.** `["a": 1, "b": 2]` is a `Map<String, Int>`. Every entry is `key: value`, with no space before the colon and one after it; a map literal has at least one entry, the stored text separates the entries with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The token after the first expression decides: a `:` makes the literal a map, so every entry has one, the first one too. Keys are `Int` or `String` (E0229), wherever a `Map` type arises: written (`Map<Float, Int>`), in a literal (`[1.5: 1]`), or built by a std call (`std.map.empty<Point, Int>()`, a `std.map.from_list` whose key function returns a record); key a map by an `Int` or `String` field instead, or keep a `List` of records. The key and value types come from the expected type, otherwise from the first entry, as for a list. A key is a value, so a text key is in quotes: `["name": 1]`; a bare unknown name as a key (`[name: 1]`) is E0203 with the quoted text as its fix. Two equal literal keys are an error (E0234); two computed keys that turn out equal trap (`key`). The empty map is `std.map.empty<String, Int>()`; `[:]` is an error whose fix names the types when the expected type gives them (E0228), and so is `[]` where a map is expected. There is no index access (`m["a"]`, E0006): `std.map.get(map: m, key: "a")` gives an `Option`. A `for` iterates over a list, so over `std.map.keys` or `std.map.to_list` of a map (E0204).
-- **Explicit type arguments (1.4).** They are written exactly when a type parameter of the function occurs in no parameter type, and never otherwise (E0209): `std.list.empty<Int>()`, but `std.list.map(list: xs, with: ...)`.
+- **Explicit type arguments (1.4).** They are written exactly when a type parameter of the function occurs in no parameter type, and never otherwise (E0209): `std.list.empty<Int>()`, but `std.list.map(list: xs, with: ...)`. This holds for your own generic functions too: `fn m.none_list<T>`, with `in: none`, is called `none_list<Int>()`.
 - **Types flow from left to right (1.4).** `Ok`, `Err` and `None` take their type from what is expected at that point: the type of a `let`, a parameter, `out` at a `return`, or the left side of `==`. Without an expected type they are an error (E0210); `Some(x)` can also take its type from `x`. So the side with a known type comes first: `parse(text: "1") == Ok(...)`, not `None == x`.
 - **Arithmetic.** `+ - * / %` work on two `Int` or two `Float`; nothing is converted implicitly (`std.int.to_float`). `Int` division truncates toward zero, and `%` takes the sign of the dividend (`-7 % 2 == -1`). Division by zero and leaving the `Int` range trap. An `Int` is never negative zero: `0 * -1` and `-1 / 2` are `0`, while a `Float` keeps IEEE's `-0.0`. A `Float` result that is NaN traps (`0.0 / 0.0`); infinities are ordinary values.
-- **Comparison and logic.** `==` and `!=` work on every type without functions, by structure (3.9). `< <= > >=` work only on `Int`, `Float` and `String` (E0211); other types are ordered by a function that returns `Order`. The logical operators are `and`, `or` and `not`. `not` binds more loosely than comparison: `not a == b` means `not (a == b)`. Mixing `+ -` with `* / %`, or `and` with `or`, needs parentheses (3.5). Within `* / %`, or within `+ -`, operators group from the left without them: `12 * 5 / 4` is `(12 * 5) / 4`. Parentheses that 3.5 does not require are dropped from the stored text. `==` compares variant values too (`outcome == Err(std.fs.NotFound)`); to branch on several cases, use `match`.
+- **Comparison and logic.** `==` and `!=` work on every type without functions, by structure (3.9). On a type that holds a function or a type parameter, they work only against a value built from literals and cases, such as `None`, `Err(std.fs.NotFound)` or `std.list.empty<T>()` (E0222). `< <= > >=` work only on `Int`, `Float` and `String` (E0211); other types are ordered by a function that returns `Order`. The logical operators are `and`, `or` and `not`. `not` binds more loosely than comparison: `not a == b` means `not (a == b)`. Mixing `+ -` with `* / %`, or `and` with `or`, needs parentheses (3.5). Within `* / %`, or within `+ -`, operators group from the left without them: `12 * 5 / 4` is `(12 * 5) / 4`. Parentheses that 3.5 does not require are dropped from the stored text. `==` compares variant values too (`outcome == Err(std.fs.NotFound)`); to branch on several cases, use `match`.
 - **Lambdas (2.4).** `fn(item: Int): Int => item * factor` has typed parameters, a result type, and one expression as its body: no `let` and no `return` (E0219). It has no effects (E0232) and may read the bindings around it. A lambda used as an operand is put in parentheses. Since its body is one expression, an `Option` inside it is unwrapped with `std.option.with_default` (or changed with `std.option.map`), and the `Some` results of a function over a list are kept with `std.list.filter_map`; neither needs a helper function.
 - **Function types.** A function type lists its parameter types in parentheses, at least one, then `->` and the result type: `(Int) -> Bool`, `(Row, Row) -> Order`. It stands wherever a type does (a parameter, a field, a case's value, a `let`, a `for`, a lambda, a type argument such as `List<(Int) -> Bool>` or `std.list.empty<(Int) -> Bool>()`), and it nests: `((Int) -> Int) -> Int` takes a function, `(Int) -> (Int) -> Int` gives one. Function types are pure (2.4).
 - **Function values.** A value of a function type is a lambda, a local or field that holds one, or the name of a pure function that is not generic (`by: std.int.compare`, `with: double`; E0232 for one with effects, E0210 for a generic one, which needs a lambda). A function value is applied by position, `by(a, b)`, since its type names no parameters. With names it is E0220, a value that is no function or a wrong number of arguments is E0238, and a function defined with `fn` called by position is E0107, whose fix names the parameters. Applying is pure, so it may stand in a lambda, a condition or an example; `with effects` belongs to the `handler` of `std.http.serve` alone, which may have effects, and the caller then declares them (E0230). No `fn` returns a function value, also not inside a list, a map or a record (E0237); a table of them is a `const`. An example passes a function as a lambda or by name: `first_true(low: 0, high: 5, test: fn(n: Int): Bool => n > 9) == None`. Function values have no `==` and no `std.text.show` (E0222).
@@ -615,6 +640,7 @@ end fn shop.is_size
 - **Scopes.** `requires` sees the parameters, `ensures` the parameters and `result`, and `where` the fields. Conditions and examples call only pure functions (E0233).
 - **Examples (5.1).** Each line is `call == expected`. The call is to the function itself, by its short name (E0221), and both sides have the same type.
   - Every function with `effects: none` has at least one example (E0401); one without parameters is a constant (7.3). A function with effects has `examples: none` (5.4).
+  - An example of a generic function calls it at concrete types: `contains_by(list: [1, 2], item: 3, same: …) == false`. A type parameter cannot be written in `examples` (E0202). One example type is enough, since the body cannot look into a value of a type parameter (3.9).
   - An example holds if both sides are equal (3.9). A failing one is reported with the actual value as alang text (E0402). A trapping one is reported with the trap (E0403); this includes a stack overflow from recursion without a base case.
 - **Acceptance.** Every change evaluates every constant, then re-runs every example of the program, so a changed body or a changed constant that breaks a caller's example is rejected too. A constant whose evaluation traps is rejected with the trap (E0404), and so is one that needs its own value, directly or through the constants and functions it uses (trap `cycle`, reported once per cycle); an example that traps only because of such a constant is not reported. An example whose call breaks the function's `requires` traps (E0403).
 - **Shape of a program.** Logic goes into pure functions with examples. Functions with effects stay thin and call them; see the server in 7.9.
@@ -632,7 +658,7 @@ end fn shop.is_size
 
 ### 7.8 Standard library
 
-This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) are bound from the arguments. A type such as `(T) -> U` is a function type (7.5); pass a lambda, a function name, or a local that holds a function. `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
+This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) are bound from the arguments, as for your own generic functions (7.3). A type such as `(T) -> U` is a function type (7.5); pass a lambda, a function name, or a local that holds a function. `with effects` marks the one parameter that takes a function with effects. The codebase tools read std like the codebase itself, without a hash (7.10).
 
 | Function | Effects | Meaning |
 | --- | --- | --- |
@@ -958,6 +984,7 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | E0237 | A `fn` whose result holds a function value |
 | E0238 | Applying a value that is no function, or with the wrong number of arguments |
 | E0247 to E0249 | Constants: called like a function, a type without a value, a name with two meanings |
+| E0250 | A type parameter that the signature does not use |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0404 | Missing, failing and trapping examples, and constants that trap |
 | E0501 to E0514 | Codebase operations |

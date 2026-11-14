@@ -130,6 +130,8 @@ export type Stmt =
 export interface FnDef {
   readonly kind: "fn";
   readonly path: Path;
+  // `fn util.last<T>` (G1, G3): one capital letter each; `[]` without them.
+  readonly typeParams: readonly string[];
   readonly doc: string;
   readonly params: readonly Param[];
   readonly out: TypeRef;

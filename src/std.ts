@@ -779,9 +779,9 @@ export const STD: readonly Signature[] = [
 
 export const STD_BY_NAME: ReadonlyMap<string, Signature> = new Map(STD.map((s) => [s.name, s]));
 
-// A std function on one line, for queries (`context`, `search_type`). Not
-// alang syntax: std signatures have type parameters, which the surface
-// language cannot write yet, and `with effects` on `serve`'s handler.
+// A std function on one line, for queries (`context`, `search_type`). Its
+// header with type parameters is alang syntax, as for a stored function;
+// the line as a whole is not, nor is `with effects` on `serve`'s handler.
 export function signatureLine(s: Signature): string {
   return `${signatureHead(s)}, doc: ${printString(s.doc)}`;
 }

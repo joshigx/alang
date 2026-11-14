@@ -15,7 +15,7 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 ## Working through the tools
 
 - \`list("std")\` gives the std modules, \`list("std.string")\` a module's definitions. \`search("split")\` finds names
-  and docs containing a text. Each hit holds its signature (parameters, result, effects; fields or cases) and doc.
+  and docs containing a text. Each hit holds its signature and doc.
 - \`search_type("String, String -> List<String>")\` finds functions by signature: parameter types in order, \`_\` for
   any type; the count and the result must match.
 - \`context(name)\` gives a definition's text (examples, body) and hash, the signatures of what it uses and the text
@@ -37,6 +37,7 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   at most one value), then \`where:\` (\`none\`, or an invariant over a record's fields), then \`end type <full name>\`.
 - \`const\`: \`doc\`, \`out: Type\`, \`body:\` ending in \`return\`, then \`end const <full name>\`. A named value for a table
   or a limit: pure, no examples, used as \`limit\` (not \`limit()\`), not a pure \`fn\` with \`in: none\`.
+- Generic: \`fn util.last<T>\`, one capital letter per type parameter, \`end fn util.last\`. A \`T\` has no \`==\` (E0222).
 - Names of the own module are short (\`Problem\`, \`fahrenheit\`, \`NotANumber\` in \`temp\`). All others are in full, std
   included, and enclosing or nested modules count as others. A case's full name is \`module.Case\`
   (\`std.fs.NotFound\`), so case names are unique per module. Built-ins are always short: \`Int Float Bool String
@@ -58,8 +59,7 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   another expression or a lambda (E0303). As a value, a branch's value is its last line, an \`if\` needs \`else\`
   (E0110), and a \`for\` is the list of its body's values.
 - The last line of a body is literally a \`return\` (E0218), so an \`if\` or \`match\` whose branches all return cannot
-  end it: return early from an \`if\` without \`else\`, then \`return\` (see \`fahrenheit\` below). Keep to two nested
-  blocks; deeper code becomes a function.
+  end it: return early from an \`if\` without \`else\`, then \`return\`. Nest at most two blocks deep (4.8).
 - \`match\` covers each case once (E0213, E0214). A case without a value is bare (\`case None then\`), patterns nest
   (\`case Err(NotANumber(word)) then\`), and every value gets a name, used or not: there is no \`_\`. No catch-all: a
   name beside specific cases of its type is E0227; cases alike share an arm, which binds only what all of them bind:
@@ -88,7 +88,7 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   other control characters (\`\\r\` is \`\\u{D}\`); every other character is itself (\`"é"\`). Join with \`std.string.concat\`
   or \`std.string.join(parts: [a, b], separator: "")\`, never \`+\`. A value as text: \`std.text.show(value: v)\`.
 - Numbers: more than four digits are grouped with \`_\` (\`65_535\`; but \`1000\`, never \`1_000\`), no leading zeros;
-  floats \`1.0\`, \`0.25\`. Also \`true\`, \`false\` and \`Unit\`.
+  floats \`1.0\`, \`0.25\`.
 
 ## Effects, contracts, examples
 
@@ -104,7 +104,7 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 ## Not in alang
 
 No comments (the \`doc\` describes), \`extern fn\`, imports, \`var\`, assignment, \`null\`, exceptions, \`while\`
-(use recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, generic definitions, concurrency. Most of
+(use recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, generic types, concurrency. Most of
 these get E0006, which names the alang form.
 
 ## A complete program, accepted as it stands

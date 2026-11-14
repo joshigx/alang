@@ -33,10 +33,12 @@ import {
   containsError,
   containsFn,
   ERROR,
+  firstRigid,
   fits,
   FLOAT,
   fnType,
   freeVars,
+  generalize,
   INT,
   isBottom,
   isCon,
@@ -45,6 +47,7 @@ import {
   NEVER,
   option,
   ORDER,
+  rigid,
   showType,
   STRING,
   type Subst,
@@ -95,6 +98,10 @@ export interface CheckInfo {
   // never used, and dropping `let name: Unit = ` leaves a statement that
   // parses. The codebase applies that fix itself (refs.ts).
   readonly unitLets: WeakSet<Stmt>;
+  // The type arguments of each call of a generic function, std or user, in
+  // the order of its type parameters; the emitter writes those of user
+  // functions into the TypeScript (G16).
+  readonly instances: WeakMap<Expr, readonly Type[]>;
 }
 
 export interface CheckResult {
@@ -166,6 +173,7 @@ export function checkProgram(defs: readonly Definition[], options: CheckOptions 
     constructs: new WeakMap(),
     longForms: new WeakSet(),
     unitLets: new WeakSet(),
+    instances: new WeakMap(),
   };
   for (const s of options.std ?? STD) env.fns.set(s.name, s);
 
@@ -275,6 +283,10 @@ const value = (expected: Type | null): Mode => ({ discard: false, expected });
 class DefChecker {
   private readonly module: string;
   private readonly name: string;
+  // The definition's type parameters (G1), each once, and each as the rigid
+  // type it is inside the definition (G6).
+  private readonly letters: readonly string[];
+  private readonly rigidOf: Subst;
   private section: string | null = null;
   // Result type for `return`, null outside a body.
   private out: Type | null = null;
@@ -298,6 +310,8 @@ class DefChecker {
   ) {
     this.module = pathText(moduleOf(def.path));
     this.name = pathText(def.path);
+    this.letters = def.kind === "fn" ? [...new Set(def.typeParams)] : [];
+    this.rigidOf = new Map(this.letters.map((l) => [l, rigid(l)]));
   }
 
   report(code: string, at: string, message: string, extra: { expected?: string; fix?: Fix } = {}): void {
@@ -321,13 +335,25 @@ class DefChecker {
   }
 
   private show(t: Type): string {
-    return showType(t, this.module);
+    return showType(t, this.module, this.letters);
   }
 
-  // A full name as it is written from this module (rule 1.2).
+  // A full name as it is written from this module (rule 1.2); a name of the
+  // module that is one of the definition's type parameters stays in full (G4).
   private written(full: string): string {
     const prefix = this.module + ".";
-    return full.startsWith(prefix) && !full.slice(prefix.length).includes(".") ? full.slice(prefix.length) : full;
+    const rest = full.slice(prefix.length);
+    return full.startsWith(prefix) && !rest.includes(".") && !this.letters.includes(rest) ? rest : full;
+  }
+
+  // The definition's own short name, as messages quote it.
+  private shortName(): string {
+    return this.def.path[this.def.path.length - 1];
+  }
+
+  // The header with these type parameters: `fn m.f<T, U>`, or `fn m.f`.
+  private header(letters: readonly string[]): string {
+    return `${this.def.kind} ${this.name}${letters.length === 0 ? "" : `<${letters.join(", ")}>`}`;
   }
 
   private resolvePath(path: Path): string {
@@ -340,6 +366,9 @@ class DefChecker {
   // node is recorded, so that the codebase can apply the fix itself.
   private shortForm(node: object, path: Path, at: string): void {
     if (path.length === 1 || pathText(moduleOf(path)) !== this.module) return;
+    // A type parameter hides the module's type or case of its letter, which
+    // is then written in full (G4).
+    if (this.letters.includes(path[path.length - 1])) return;
     this.info.longForms.add(node);
     const written = pathText(path);
     const short = path[path.length - 1];
@@ -354,6 +383,11 @@ class DefChecker {
   declare(): void {
     const def = this.def;
     if (def.kind === "fn") {
+      this.typeParamsUsed(
+        def.typeParams,
+        [...def.params.map((p) => p.type), def.out],
+        "occurs in no parameter type and not in `out`",
+      );
       this.section = "in";
       const params: Param[] = [];
       for (const p of def.params) {
@@ -365,7 +399,15 @@ class DefChecker {
       this.section = "out";
       const out = this.resolveType(def.out);
       this.section = null;
-      this.env.fns.set(this.name, { name: this.name, typeParams: [], params, out, effects: def.effects });
+      // Callers, the function itself included, see its type parameters as
+      // variables, which each call binds (G6).
+      this.env.fns.set(this.name, {
+        name: this.name,
+        typeParams: this.letters,
+        params: params.map((p) => ({ name: p.name, type: generalize(p.type) })),
+        out: generalize(out),
+        effects: def.effects,
+      });
       return;
     }
     if (def.kind === "const") {
@@ -417,10 +459,52 @@ class DefChecker {
     this.section = null;
   }
 
+  // G5: each type parameter is written once (E0215) and occurs in one of
+  // `refs`, the written parameter and result types, so that a call can give
+  // it a meaning (E0250). Letters are counted as written, since a type that
+  // fails elsewhere becomes the error type and would lose them (5.6).
+  private typeParamsUsed(written: readonly string[], refs: readonly TypeRef[], where: string): void {
+    if (written.length === 0) return;
+    const at = this.header(written);
+    for (const l of new Set(written.filter((l, i) => written.indexOf(l) !== i))) {
+      this.report("E0215", at, `Type parameter \`${l}\` is declared twice.`);
+    }
+    const used = new Set<string>();
+    for (const r of refs) lettersIn(r, used);
+    for (const l of this.letters) {
+      if (used.has(l)) continue;
+      const fixed = this.header(this.letters.filter((m) => m !== l));
+      this.report(
+        "E0250",
+        at,
+        `\`${l}\` ${where}, so no call could give it a meaning; remove it from \`<...>\`.`,
+        { expected: fixed, fix: { replace: at, with: fixed } },
+      );
+    }
+  }
+
   private resolveType(ref: TypeRef): Type {
     // A function type is pure (F3); its parts are reported where they stand.
     if (ref.kind === "function") return fnType(ref.params.map((p) => this.resolveType(p)), this.resolveType(ref.out));
     const args = ref.args.map((a) => this.resolveType(a));
+    // A type parameter of the definition is a rigid type inside it (G6),
+    // before any type of the module with its letter (G4).
+    if (ref.path.length === 1 && this.letters.includes(ref.path[0])) {
+      const letter = ref.path[0];
+      if (this.section === "examples") {
+        this.report(
+          "E0202",
+          printTypeRef(ref),
+          `\`${letter}\` is a type parameter of \`${this.shortName()}\`, which an example cannot name: an example calls the function at concrete types, such as \`Int\` (5.1).`,
+        );
+        return ERROR;
+      }
+      if (args.length > 0) {
+        this.report("E0209", printTypeRef(ref), `\`${letter}\` is a type parameter and takes no type arguments.`);
+        return ERROR;
+      }
+      return rigid(letter);
+    }
     if (ref.path.length === 1 && BUILTIN_TYPES.has(ref.path[0])) {
       const arity = BUILTIN_TYPES.get(ref.path[0])!;
       if (args.length !== arity) {
@@ -440,6 +524,17 @@ class DefChecker {
       return con(ref.path[0], ...args);
     }
     const full = this.resolvePath(ref.path);
+    if (!this.env.types.has(full) && ref.path.length === 1 && /^[A-Z]$/.test(ref.path[0]) && this.def.kind === "fn") {
+      // `T` without a header that declares it: the header is the fix's place.
+      const header = this.header([...this.letters, ref.path[0]]);
+      this.report(
+        "E0202",
+        printTypeRef(ref),
+        `Unknown type \`${ref.path[0]}\`; a type parameter is declared after the definition's name: \`${header}\`.`,
+        { expected: header },
+      );
+      return ERROR;
+    }
     if (!this.env.types.has(full)) {
       const written = pathText(ref.path);
       const candidates = [
@@ -504,8 +599,10 @@ class DefChecker {
 
   private checkFn(def: FnDef): void {
     const sig = this.env.fns.get(this.name)!;
+    // Inside the definition its type parameters are rigid (G6).
+    const own = (t: Type) => substitute(t, this.rigidOf);
     const params = new Scope();
-    for (const p of sig.params) params.define(p.name, p.type);
+    for (const p of sig.params) params.define(p.name, own(p.type));
 
     // F4: no `fn` returns a function value, also not inside a list, a map, an
     // option or a record, since a pure one could never get an example: an
@@ -523,8 +620,9 @@ class DefChecker {
       }\` returns \`${out}\`, which holds a function value; a \`fn\` never does, since its result could not be compared, shown or stated in an example (3.9, 5.1).`;
       // A contract has no place in a constant, so then the text would not
       // say the same (`asConstant` in examples.ts).
-      const constantForm = def.params.length === 0 && def.effects.length === 0 && sig.out.k !== "fn" &&
-        def.requires === null && def.ensures === null;
+      // A constant is not generic (G11).
+      const constantForm = def.params.length === 0 && def.typeParams.length === 0 && def.effects.length === 0 &&
+        sig.out.k !== "fn" && def.requires === null && def.ensures === null;
       if (constantForm) {
         const constant = printConst({ kind: "const", path: def.path, doc: def.doc, out: def.out, body: def.body });
         this.report(
@@ -551,7 +649,7 @@ class DefChecker {
     if (def.ensures) {
       this.section = "ensures";
       const scope = params.child();
-      scope.define("result", sig.out);
+      scope.define("result", own(sig.out));
       this.expr(def.ensures, scope, BOOL);
     }
     this.section = "examples";
@@ -573,7 +671,7 @@ class DefChecker {
     }
 
     this.section = "body";
-    this.out = sig.out;
+    this.out = own(sig.out);
     this.block(def.body, params, DISCARD);
     const last = def.body[def.body.length - 1];
     if (last.kind !== "return") {
@@ -1289,16 +1387,12 @@ class DefChecker {
     // Arguments that matched no parameter were reported; still check them.
     for (const a of e.args) if (!byName.includes(a)) this.expr(a.value, scope, null);
 
-    // Functions that compare or show their values (3.9).
-    const withFn = (sig.withoutFunctions ?? []).find((tp) => {
-      const t = subst.get(tp);
-      return t !== undefined && containsFn(t, (n) => this.env.recordFields(n));
-    });
-    if (withFn !== undefined) {
-      this.report("E0222", at, `\`${this.written(full)}\` is defined for types without function values (3.9).`);
-    }
+    // Functions that compare or show their values (3.9), also not at a type
+    // parameter, which may stand for a type with function values (G2).
+    this.withoutFunctions(sig, subst, at, this.written(full));
     const out = substitute(sig.out, subst);
     if (freeVars(out).size !== 0) return ERROR;
+    if (sig.typeParams.length > 0) this.info.instances.set(e, sig.typeParams.map((tp) => subst.get(tp) ?? ERROR));
     // A std call builds a Map from its type arguments (`std.map.empty<Float,
     // Int>()`) or binds its key type from an argument (`from_list`); user
     // signatures were checked at their own types.
@@ -1490,8 +1584,40 @@ class DefChecker {
     return t;
   }
 
+  // E0222 for a function that compares or shows its values (`std.text.show`,
+  // `std.list.contains`) at a type with function values, or at a type
+  // parameter, which may stand for one (3.9, G2).
+  private withoutFunctions(sig: FnSig, subst: Subst, at: string, written: string): void {
+    for (const tp of sig.withoutFunctions ?? []) {
+      const t = subst.get(tp);
+      if (t === undefined) continue;
+      if (containsFn(t, (n) => this.env.recordFields(n))) {
+        this.report("E0222", at, `\`${written}\` is defined for types without function values (3.9).`);
+        return;
+      }
+      const letter = firstRigid(t);
+      if (letter !== null) {
+        this.report(
+          "E0222",
+          at,
+          `\`${written}\` is defined for types without function values (3.9), and \`${letter}\` is a type parameter, which may stand for one; take what you need of \`${letter}\` as a function parameter, such as \`show: (${letter}) -> String\` or \`same: (${letter}, ${letter}) -> Bool\`.`,
+        );
+        return;
+      }
+    }
+  }
+
   // E0229: a Map keyed by a type other than Int or String.
   private badKey(at: string, key: Type): void {
+    if (key.k === "rigid") {
+      this.report(
+        "E0229",
+        at,
+        `Map keys are \`Int\` or \`String\`, found \`${key.name}\`, a type parameter, which may stand for any type; key the map by \`Int\` or \`String\`.`,
+        { expected: "Int or String" },
+      );
+      return;
+    }
     this.report(
       "E0229",
       at,
@@ -1546,7 +1672,7 @@ class DefChecker {
     const types = sig.typeParams.map((tp) => s.get(tp));
     // A function type without parameters has no written form (H5, F5).
     if (types.some((t) => t === undefined || !writable(t))) return null;
-    return types.map((t) => toTypeRef(t!, this.module));
+    return types.map((t) => toTypeRef(t!, this.module, this.letters));
   }
 
   private construct(e: Extract<Expr, { kind: "construct" }>, scope: Scope, expected: Type | null): Type {
@@ -1562,6 +1688,12 @@ class DefChecker {
     if (e.path.length === 1 && BUILTIN_VALUES.has(last)) {
       this.info.constructs.set(e, { kind: "builtin" });
       return this.builtinConstruct(e, last, scope, expected);
+    }
+    if (e.path.length === 1 && this.letters.includes(last)) {
+      const whole = !printExpr(e, "").includes("\n");
+      this.hiddenByLetter(at, last, (path) => printExpr({ ...e, path }, ""), whole);
+      checkAnyway();
+      return ERROR;
     }
 
     const full = this.resolvePath(e.path);
@@ -1637,6 +1769,30 @@ class DefChecker {
     this.info.constructs.set(e, { kind: "case", type: c.owner });
     this.casePayload(e, c.name, c.payload, scope, at);
     return con(c.owner);
+  }
+
+  // E0203 (G4): a construction or pattern `T` where `T` is a type parameter
+  // of the definition. A type, record or case of the module with that name
+  // is written in full there; `spell` writes the node with another path.
+  private hiddenByLetter(at: string, letter: string, spell: (path: Path) => string, whole: boolean): void {
+    const full = `${this.module}.${letter}`;
+    const ut = this.env.types.get(full);
+    const what = ut?.kind === "record" ? "record" : ut ? "type" : this.env.cases.has(full) ? "case" : null;
+    if (what === null) {
+      this.report(
+        "E0203",
+        at,
+        `\`${letter}\` is a type parameter of \`${this.shortName()}\`, not a record or case; a value of it comes from a parameter.`,
+      );
+      return;
+    }
+    const fixed = spell(full.split("."));
+    this.report(
+      "E0203",
+      at,
+      `\`${letter}\` is a type parameter of \`${this.shortName()}\` here; the ${what} \`${full}\` of this module is written in full in it: \`${fixed}\`.`,
+      { expected: fixed, fix: whole ? { replace: at, with: fixed } : undefined },
+    );
   }
 
   // Checks the payload of a variant case against the case's declaration.
@@ -1795,7 +1951,12 @@ class DefChecker {
   private emptyList(at: string, item: Type | null): void {
     const empty = item !== null && writable(item)
       ? printExpr(
-        { kind: "call", path: ["std", "list", "empty"], typeArgs: [toTypeRef(item, this.module)], args: [] },
+        {
+          kind: "call",
+          path: ["std", "list", "empty"],
+          typeArgs: [toTypeRef(item, this.module, this.letters)],
+          args: [],
+        },
         "",
       )
       : null;
@@ -1811,7 +1972,7 @@ class DefChecker {
       ? printExpr({
         kind: "call",
         path: ["std", "map", "empty"],
-        typeArgs: types.map((t) => toTypeRef(t, this.module)),
+        typeArgs: types.map((t) => toTypeRef(t, this.module, this.letters)),
         args: [],
       }, "")
       : null;
@@ -1838,8 +1999,20 @@ class DefChecker {
         // An example of a function whose `out` holds a function value: E0237
         // names that cause already.
         const reported = this.outHoldsFn && this.section === "examples";
-        if (!reported && containsFn(l, (n) => this.env.recordFields(n))) {
-          this.report("E0222", at, `\`${e.op}\` is defined for types without function values (3.9).`);
+        // A side built only from literals and cases meets no function and no
+        // value of a type parameter, so it compares on every type (G2b).
+        const literal = this.builtOfLiterals(e.left) || this.builtOfLiterals(e.right);
+        if (!reported && !literal) {
+          const letter = firstRigid(l);
+          if (containsFn(l, (n) => this.env.recordFields(n))) {
+            this.report("E0222", at, `\`${e.op}\` is defined for types without function values (3.9).`);
+          } else if (letter !== null) {
+            this.report(
+              "E0222",
+              at,
+              `\`${e.op}\` compares values of \`${letter}\`, a type parameter, which may stand for a type with function values (3.9). Compare with a function taken as a parameter, such as \`same: (${letter}, ${letter}) -> Bool\`, or tell cases apart with \`match\`.`,
+            );
+          }
         }
         return BOOL;
       }
@@ -1891,6 +2064,36 @@ class DefChecker {
         this.expr(e.right, scope, l);
         return l;
       }
+    }
+  }
+
+  // Whether `e` is built only from literals and cases (G2b): a literal, a
+  // construction, list or map of such, or an empty list or map. Such a value
+  // holds no function and no value of a type parameter, which come only
+  // from names, calls and lambdas.
+  private builtOfLiterals(e: Expr): boolean {
+    switch (e.kind) {
+      case "int":
+      case "float":
+      case "string":
+      case "bool":
+        return true;
+      case "construct": {
+        const p = e.payload;
+        if (p === null) return true;
+        if (p.kind === "value") return this.builtOfLiterals(p.value);
+        return p.args.every((a) => this.builtOfLiterals(a.value));
+      }
+      case "list":
+        return e.items.every((x) => this.builtOfLiterals(x));
+      case "map":
+        return e.entries.every((x) => this.builtOfLiterals(x.key) && this.builtOfLiterals(x.value));
+      case "call": {
+        const f = this.info.calls.get(e);
+        return (f === "std.list.empty" || f === "std.map.empty") && e.args.length === 0;
+      }
+      default:
+        return false;
     }
   }
 
@@ -2105,6 +2308,11 @@ class DefChecker {
           if (q?.kind === "bind") scope.define(q.name, ERROR);
           if (q?.kind === "case") bindAll(q.sub);
         };
+        if (p.path.length === 1 && this.letters.includes(p.path[0])) {
+          this.hiddenByLetter(at, p.path[0], (path) => printPattern({ ...p, path }), true);
+          bindAll(p.sub);
+          return;
+        }
         if (containsError(t)) {
           bindAll(p.sub);
           return;
@@ -2320,20 +2528,36 @@ export function writable(t: Type): boolean {
   if (t.k === "fn") {
     return t.params.length >= 1 && t.effects === undefined && t.params.every(writable) && writable(t.out);
   }
+  if (t.k === "rigid") return true;
   return t.k === "con" && t.args.every(writable);
 }
 
-// A type as it is written in `module` (rule 1.2), if it is `writable`.
-export function toTypeRef(t: Type, module: string): TypeRef {
+// A type as it is written in `module` (rule 1.2), if it is `writable`; a
+// type parameter as its letter, and a type of the module named like one of
+// `letters` in full (G4).
+export function toTypeRef(t: Type, module: string, letters: readonly string[] = []): TypeRef {
   if (t.k === "fn") {
-    return { kind: "function", params: t.params.map((p) => toTypeRef(p, module)), out: toTypeRef(t.out, module) };
+    const ref = (p: Type) => toTypeRef(p, module, letters);
+    return { kind: "function", params: t.params.map(ref), out: ref(t.out) };
   }
+  if (t.k === "rigid") return { kind: "type", path: [t.name], args: [] };
   if (t.k !== "con") return { kind: "type", path: ["Unit"], args: [] };
   const prefix = module + ".";
-  const path = t.name.startsWith(prefix) && !t.name.slice(prefix.length).includes(".")
-    ? [t.name.slice(prefix.length)]
-    : t.name.split(".");
-  return { kind: "type", path, args: t.args.map((a) => toTypeRef(a, module)) };
+  const rest = t.name.slice(prefix.length);
+  const path = t.name.startsWith(prefix) && !rest.includes(".") && !letters.includes(rest) ? [rest] : t.name.split(".");
+  return { kind: "type", path, args: t.args.map((a) => toTypeRef(a, module, letters)) };
+}
+
+// The letters written in a type: one-segment paths, which the checker reads
+// as type parameters where the definition declares them (G5).
+function lettersIn(t: TypeRef, into: Set<string>): void {
+  if (t.kind === "function") {
+    for (const p of t.params) lettersIn(p, into);
+    lettersIn(t.out, into);
+    return;
+  }
+  if (t.path.length === 1) into.add(t.path[0]);
+  for (const a of t.args) lettersIn(a, into);
 }
 
 // Edit distance where swapping two neighbouring characters counts as one
