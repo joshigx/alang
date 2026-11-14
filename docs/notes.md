@@ -142,6 +142,19 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     tickets round"), three fixes: one E0217 instead of E0217 and E0204 for a propagation statement with a content to
     bind that ends a value block, the card's `let [...]` sentence for any known length, and the round prompt in the
     plan. 340 tests.
+22. Function types, on branch `fn-types` (plan in `docs/plans/fn-types.md`; the main session took every
+    recommendation, F1 to F11), one commit per plan step: function types `(T, U) -> V` wherever a type is written, at
+    least one parameter, nested to the right, always pure (F1, F3, F5); the forms of other languages are E0006 naming
+    `(Int) -> Int`, `() -> T` and `with effects` E0101 (F6); fixes and actual values write function types,
+    `std.list.empty<(Int) -> Int>()` (F8). A local, or a field of one, of function type is applied by position,
+    `by(a, b)`, while named arguments or `()` always call a function defined with `fn` (F2): E0238 for a value that is
+    no function or a wrong count, E0220 with the application as fix for named arguments on a function value, and E0107
+    with the named call as fix for a `fn` called by position, now from the checker (F7). No `fn` returns a function
+    value, also not inside a list, map, option or record (E0237, F4). `search_type` patterns write function types,
+    `List<_>, (_) -> Bool -> List<_>` (F9), hits show them in full, and `context` names the types inside them. The
+    spec gains `calc.first_true` (section 4), accepted with its examples; the card teaches function types,
+    application and E0237 (159 lines, 9,757 bytes). Decisions in `decisions.md`, rows listed in the review list
+    below. 363 tests. See "From fn-types".
 
 **Next (2026-11-14, overnight run, updated by the main session at ~04:15):** `std-net` (item 20) and `statements`
 (item 21) are built, their rounds analyzed and fixed, each re-verified by a second automated round, and
@@ -180,7 +193,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (340 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (363 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -365,6 +378,31 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   for an `Option`), and its `expected` of two lines, `let name: T = <expression> else return …` and `name`, with the
   `else` value left as `…` like the one-line form. A `Unit` content there keeps E0204 alone, and E0224 at a block's
   end still comes with E0204 (left for later). In `decisions.md`, Type checking (Discarded values).
+- Function types (item 22, 2026-11-14; the main session took every recommendation of `docs/plans/fn-types.md`, F1 to
+  F11, built without the user's review). Language changes first: F1 function types `(T, U) -> V` wherever a type is
+  written, at least one parameter, nested to the right, on one line, `->` a lexer symbol; F2 a local or a field of one
+  of function type is applied by position, `by(a, b)`, while named arguments or `()` always call a function defined
+  with `fn` (the first argument decides, as in `payload()`); F3 user function types are pure, `with effects` stays the
+  mark of `serve`'s handler (E0101 in user code); F4 no `fn` returns a function value, also not inside a list, map,
+  option, record or variant (E0237 at `out`), with E0222 in its examples suppressed; F5 no zero-parameter function
+  types (`() -> T` is E0101). The others: F6 the foreign forms `(Int) => Int`, `(x: Int) -> Int`, `Int -> Int`,
+  `fn(Int) -> Int` as E0006 without fixes, passed on through the type-argument backtracking except `fn`; F7 E0238
+  for a value that is no function or a wrong count, E0220 with the application as fix for named arguments on a
+  function value, E0107 for a `fn` called by position moved to the checker, with the named call as fix; F8 function
+  types written in fixes and actual values (H5 left for zero-parameter types only); F9 `search_type` patterns with
+  function types, a whole pattern in parentheses read as the top-level form; F10 a generic function stays no value
+  (E0210); F11 records and cases may hold function values (no `==`, `show`, `contains`). Mine beyond the plan: the
+  named call that E0107 checks quotes the written application (`call()` takes the `at`), so a long own-module name
+  in it is E0226 at `m.twice(1)` beside E0107; the E0107 and E0220 fixes only when the text is one line; E0238 at the
+  whole application; a named call on a function value marks the local used; `fieldPath` reports nothing, so a
+  dotted target whose chain fails is the method-call E0220; E0511 "A function type has `->` after its parameters."
+  for a pattern's function type without `->`; `std.list.append` is a hit of `List<_>, (_) -> Bool -> List<_>` (its
+  `T` bound to a function pattern, as the rules give it; the plan's hand-made list left it out); E0237 is reported
+  beside E0202 for `out: (Rowz) -> Int` (two causes); the overview row, the card's lambda bullet and its "Not in
+  alang" line change in commit 1 already, and application joins them in commit 2, so each commit's docs are true.
+  In `decisions.md`: Syntax (`a.b.c`, Function types, Applying a function value), Type checking (List literals,
+  Locals vs functions, Function values, Function results, std signatures), Effects (Function values), Examples and
+  acceptance (Actual values), Database (`search(type)`); the open question "Function types" is closed.
 
 ## Database phase: open points (2026-11-12)
 
@@ -397,7 +435,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   and stores the canonical form, so the next export rewrites the file. A check mode ("is the export canonical?") would
   suit CI.
 - **`search(type)` cannot express function types**, since alang has none (open question). A std parameter like
-  `with: (T) -> U` only matches `_`.
+  `with: (T) -> U` only matches `_`. Resolved (item 22, F9): a pattern writes function types,
+  `List<_>, (_) -> Bool -> List<_>`.
 - **`refs` rows depend on the text alone** once cases are stored by their own name, which is what makes reusing a
   version (revert, remove then add) safe without recomputing anything.
 
@@ -588,7 +627,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
 - **`net` is all or nothing.** `--allow-net` grants every host and port. A capability (recorded alternative)
   could grant exactly `127.0.0.1:8080`.
 - **The handler exception is std-only.** A user function cannot take a function with effects, since user code has
-  no function types. If function types arrive, the `with effects` mark needs a surface form.
+  no function types. If function types arrive, the `with effects` mark needs a surface form. Decided (item 22,
+  F3): user function types are pure, so `with effects` stays std's mark and is E0101 in user code.
 - **Adding an effect to a handler** is an interface change, and `main` passes the handler by name, so it is a
   caller: the change pulls `main` into the transaction (E0506), where it must declare the effect. Consistent with
   calls, not tested separately.
@@ -708,7 +748,8 @@ The plan of this phase is built; `decisions.md` (Database) records every point. 
   non-named type as `Unit`. A non-empty one falls back to `std.text.show`. Rare, since examples cannot compare
   function values (E0222); the E0228 fix avoids the same mistake by offering no fix for such item types. Resolved
   (item 17, H5): such an empty list or map prints through `std.text.show` (`[]`, `[:]`), and the E0209 guess offers
-  no type argument that holds a function type.
+  no type argument that holds a function type. Since item 22 (F8) only a function type without parameters has
+  no written form; every other is written (`std.list.empty<(Int) -> Int>()`).
 - **`std.list.range` is limited by memory, not by its trap.** The trap fires above 4_294_967_295 items, the length
   limit of a JavaScript array (checked: `new Array(2 ** 32 - 1)` works, `2 ** 32` is "Invalid array length"), but
   filling even a tenth of that exhausts memory first, with the host's own error, not a trap.
@@ -814,7 +855,8 @@ Left for later, each with its phase of the roadmap (`docs/plans/list-literals.md
 - **A non-empty list or map of function values shows as JavaScript source.** `showValue` falls back to
   `std.text.show` for a value without an alang form, and `show` of a function value is `String(fn)`, the generated
   TypeScript of the lambda. Only reachable in an actual value, since examples cannot compare function values
-  (E0222); an empty one now prints `[]` or `[:]` (H5).
+  (E0222); an empty one now prints `[]` or `[:]` (H5). Since item 22 (F4) no actual value holds a function
+  value, as no `fn` returns one; the fallback stays as a guard.
 - **The card is at 157 of its 160 lines** (9,279 bytes of 10,240) after the two edits of this phase. The next rule
   on it needs a line taken out elsewhere, or a higher guard. (158 lines and 9,372 bytes after item 18.)
 - **A duplicate map key is reported at the later entry** (`"a": 2`), which is canonical text; like E0228, a fix
@@ -1205,11 +1247,46 @@ Left for later:
 - **Test-then-unwrap with a dummy default** in `parse_file` (`if bad != None then let index: Int =
   std.option.with_default(option: bad, default: 0)`), and an identity `filter_map`: style, observe.
 - **`search_type` with a function type,** such as `(_) -> Bool`, is E0511 today, while `_` matches it; `fn-types` F9
-  addresses it. Discovery read whole modules (7 `list` calls, 23 KB).
+  addresses it. Discovery read whole modules (7 `list` calls, 23 KB). Resolved (item 22): the pattern
+  `List<_>, (_) -> Bool -> List<_>` finds `filter`, `drop_while`, `take_while`, `map` (and `append`).
 - **E0224 and E0204 from one cause** (found while fixing E0217): `std.int.abs(value: n) else return 0` as the last
   line of a match arm in `let value: Int = match o` gives E0224 ("write the statement without `else return …`") and
   E0204, though following E0224 alone gives a clean program. The same shape as the E0217 fix; left, since the brief
   kept the other paths as they were.
+
+## From fn-types (2026-11-14)
+
+Built from `docs/plans/fn-types.md` (written at `7700807`, before `statements`) on `fn-types`, from `main` at
+`47634f6`. What the build observed that is not decided:
+
+- **The plan predated `statements`.** Its hidden-name lookup `isHidden` is `Scope.hiddenWhy` here; an application
+  resolves its target through `name_()`, so a name a shared case hides is E0236 and a use is marked, as planned.
+  Its file:line references were re-grepped; nothing else had moved in a way that mattered.
+- **Two of the plan's hand-made expectations were off.** `by(None)` with `by: (Int, Int) -> Order` is E0238 and
+  E0204 (`None` is checked against `Int`), so the test uses `pick: (Option<Int>, Int) -> Int`, where it is E0238
+  alone. `List<_>, (_) -> Bool -> List<_>` also finds `std.list.append` (its `T` bound to the function pattern), by
+  the same rule that makes `List<_>, Int -> _` find it; kept, since a type variable binds any pattern.
+- **E0107 moved from the parser to the checker.** `f(1)` now parses, so `alang fmt` prints it and an export file
+  holding it imports up to the check; `xs.map(f)` is E0220 now (a better message, a changed code). In a named call,
+  a later unnamed argument keeps the parser's E0107 "Every argument carries its parameter name".
+- **`context` follows function types** (`namedTypes` recurses). No existing pin changed: a server's `main` already
+  listed `std.http.Request` and `Response` through its handler (probed).
+- **A local beside a module function of the same name.** With `count: Int` and `fn m.count(n: Int)`, `count(1)` is
+  E0238 about the local; the message does not mention that `count(n: 1)` would call the function. A hint there is
+  cheap if a round shows the confusion.
+- **Applying a call's result** (`make(n: 1)(2)`, not planned) gets the parser's generic "Expected a line break,
+  found `(`."
+- **Card budget.** 159 lines and 9,757 bytes (+84, as the plan measured); the test allows 160 lines and under
+  10,240 bytes, so 1 line and 482 bytes remain for `const` and later phases.
+- **The `rank` round** (the plan's section 7; prompt and reference saved by the main session) tests whether the
+  card teaches the forms; nothing in the earlier rounds used a user function parameter.
+
+Left for later:
+
+- **F4 revisited in `const` and `generics`:** a table of functions as a constant (no examples, so F4's reason does
+  not apply) and a `fn` returning a function (`compose`). Loosening E0237 breaks no program.
+- **Generic functions as values (F10):** E0210 stays even where an expected function type would fix the type
+  arguments (`let n: (List<Int>) -> Int = std.list.length`); instantiation belongs to `generics`.
 
 ## Spec observations
 
@@ -1218,7 +1295,8 @@ Left for later:
   spec or mark the block as an excerpt.
 - The two `let` fragments in sections 3 and 4 use free names (`paths`, `names`); they are excerpts of a body.
 - The grammar has no syntax for function types, which the std library needs (`std.list.sort(by: ...)`). The list
-  literal is in the grammar since item 15.
+  literal is in the grammar since item 15. Resolved (item 22): `type` has the form `(T, U) -> V`, and `expr` an
+  `apply`.
 - The grammar has no way to declare a generic function or a generic type. Only builtins are generic.
 - 5.5 shows a diagnostic with a `fix`; the spec does not say whether a fix may span several places.
 - The grammar excerpt has no `"(" expr ")"`, although 3.5 requires parentheses, and does not say how `* / %` group
@@ -1255,7 +1333,8 @@ Left for later:
 
 - **Function types are needed in user code.** Without syntax for them, a lambda cannot be bound with `let`, stored in
   a record, or taken as a parameter by a user function. Only std functions can be higher-order. Testing `==` on
-  function values needed a function reference (`g == g`) because nothing else can produce one.
+  function values needed a function reference (`g == g`) because nothing else can produce one. Resolved (item 22):
+  function types are written in user code and applied by position.
 - **List literals are needed for examples.** `calc.sorted` in the tests needs a 170-character example built from
   `std.list.append` chains. This hits rule 5.1 (mandatory examples) directly: list-heavy functions get unreadable
   examples. Resolved by list literals (item 15).
