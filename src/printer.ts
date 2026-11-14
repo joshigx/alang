@@ -239,8 +239,10 @@ export function printExpr(e: Expr, indent: string): string {
     }
     case "apply":
       return `${pathText(e.target.path)}(${e.args.map((a) => printExpr(a, indent)).join(", ")})`;
-    case "construct":
-      return pathText(e.path) + printPayload(e.payload, indent);
+    case "construct": {
+      const typeArgs = e.typeArgs.length === 0 ? "" : `<${e.typeArgs.map(printTypeRef).join(", ")}>`;
+      return pathText(e.path) + typeArgs + printPayload(e.payload, indent);
+    }
     case "list":
       return `[${e.items.map((x) => printExpr(x, indent)).join(", ")}]`;
     case "map":

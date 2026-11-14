@@ -202,7 +202,12 @@ function rebuild(
           : r.kind === "record"
           ? { kind: "type", full: r.type }
           : { kind: "case", full: resolve(e.path) };
-        return { kind: "construct", path: ref ? spell(e, e.path, ref) : e.path, payload: payload(e.payload) };
+        return {
+          kind: "construct",
+          path: ref ? spell(e, e.path, ref) : e.path,
+          typeArgs: e.typeArgs.map(type),
+          payload: payload(e.payload),
+        };
       }
       case "list":
         return { kind: "list", items: e.items.map(expr) };

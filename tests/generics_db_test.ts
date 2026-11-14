@@ -9,7 +9,7 @@ import type { Codebase } from "../src/codebase.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printDefinition } from "../src/printer.ts";
 import { dependencies } from "../src/refs.ts";
-import { add, codes, done, fails, fn, fresh, hashOf, ok } from "./db_helpers.ts";
+import { add, codes, done, fails, fn, fresh, hashOf, ok, withPort } from "./db_helpers.ts";
 import { UTIL } from "./generics_fixtures.ts";
 
 const [LAST, COUNT_IF, REPEAT, NONE_LIST] = parseProgram(UTIL).map(printDefinition);
@@ -111,5 +111,18 @@ Deno.test("generics db: context lists a used generic function by its signature",
   const context = cb.context("util.tail_of");
   assertEquals(context.uses.map((u) => u.name), ["util.last"]);
   assert_(context.uses[0].text.startsWith("fn util.last<T>\n"));
+  await done(cb);
+});
+
+Deno.test("generics db: a case's type arguments are references (G7)", async () => {
+  const cb = await withPort();
+  const none = fn("m.none_port", {
+    params: ["n: Int"],
+    out: "Bool",
+    examples: ["none_port(n: 1) == true"],
+    body: "return std.list.length(list: [None<net.port.Port>]) == n",
+  });
+  await ok(cb, [add(none)]);
+  assert_(cb.callers("net.port.Port").callers.includes("m.none_port"));
   await done(cb);
 });

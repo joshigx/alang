@@ -89,3 +89,24 @@ export const KEEP = `fn m.keep<T>
 end fn m.keep`;
 
 export const HIDE = `${TYPE_T}\n\n${KEEP}\n`;
+
+export const FIRST_SOME = `fn util.first_some<T>
+  doc: "The first option that holds a value, or None."
+  in:
+    first: Option<T>
+    second: Option<T>
+  out: Option<T>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    first_some(first: Some(1), second: Some(2)) == Some(1)
+    first_some(first: None<Int>, second: Some(2)) == Some(2)
+    first_some(first: None<String>, second: None) == None
+  body:
+    if first == None then
+      return second
+    end if
+    return first
+end fn util.first_some
+`;

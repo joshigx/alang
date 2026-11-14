@@ -7,11 +7,11 @@ import { assert_, assertEquals, assertThrows } from "./assert.ts";
 import type { FnDef } from "../src/ast.ts";
 import { checkProgram } from "../src/check.ts";
 import { AlangError, type Diagnostic } from "../src/diagnostic.ts";
-import { parseProgram } from "../src/parser.ts";
-import { printProgram, printSignature } from "../src/printer.ts";
+import { parseExpression, parseProgram } from "../src/parser.ts";
+import { printExpr, printProgram, printSignature } from "../src/printer.ts";
 import { applyOwnFixes } from "../src/refs.ts";
 import { accept, build } from "../src/toolchain.ts";
-import { HIDE, TYPE_T, UTIL } from "./generics_fixtures.ts";
+import { FIRST_SOME, HIDE, TYPE_T, UTIL } from "./generics_fixtures.ts";
 
 const OUT = new URL("../out/test/generics/", import.meta.url).pathname;
 
@@ -330,10 +330,104 @@ Deno.test("generics: calls bind type parameters as for std; explicit ones only w
   ));
 });
 
+// ---- case type arguments (G7) ----
+
+Deno.test("generics: a case names its type arguments after its name; `<` after a value stays a comparison", () => {
+  for (const source of ["None<Int>", "Ok<Int, String>(1)", 'Err<Int, String>("x")', "Leaf<List<Int>>"]) {
+    const tree = parseExpression(source);
+    assertEquals(printExpr(tree, ""), source);
+    assertEquals(parseExpression(printExpr(tree, "")), tree);
+  }
+  assertEquals(parseExpression("n < Limit").kind, "binary");
+  assertEquals(parseExpression("n < (limit)").kind, "binary");
+  const shape = parseExpression("None<Int> == x");
+  assertEquals(shape.kind === "binary" && shape.left.kind === "construct" && shape.left.typeArgs.length, 1);
+});
+
+const SHAPE = 'type m.Shape\n  doc: "A shape."\n  variant:\n    Circle: Int\n    Dot\n  where: none\nend type m.Shape';
+const POINT = 'type m.Point\n  doc: "A point."\n  record:\n    x: Int\n    y: Int\n  where: none\nend type m.Point';
+
+Deno.test("generics: a case names its type arguments where nothing else gives them (G7)", () => {
+  clean(FIRST_SOME);
+  clean(fn("return std.list.length(list: [None<Int>, Some(1)])"));
+  clean(fn("return None<Int> == std.list.first(list: [1])", { out: "Bool" }));
+  clean(fn("let o: Option<T> = None\nreturn util.first_some(first: None<T>, second: o)", {
+    typeParams: "T",
+    params: ["x: T"],
+    out: "Option<T>",
+    extra: FIRST_SOME,
+  }));
+});
+
+Deno.test("generics: type arguments where the expected type or the value gives them are E0209 (G7)", () => {
+  const cases: [string, string | null, { replace: string; with: string } | null][] = [
+    ["let o: Option<Int> = None<Int>\nreturn 0", "`None` takes its type from what is expected here; remove `<Int>`.", {
+      replace: "None<Int>",
+      with: "None",
+    }],
+    [
+      "let o: Option<Int> = None<Int, Int>\nreturn 0",
+      "`None` is a case of `Option<T>`, which takes 1 type argument.",
+      null,
+    ],
+    [
+      "let o: Option<Int> = Some<Int>(1)\nreturn 0",
+      "`Some` takes its type from what is expected here; remove `<Int>`.",
+      {
+        replace: "Some<Int>(1)",
+        with: "Some(1)",
+      },
+    ],
+    ["return std.list.length(list: [Some<Int>(1)])", "`Some` takes its type from its value; remove `<Int>`.", {
+      replace: "Some<Int>(1)",
+      with: "Some(1)",
+    }],
+    ["let o: Order = Less<Int>\nreturn 0", "`Less` is a case of `Order`, which takes no type arguments.", {
+      replace: "Less<Int>",
+      with: "Less",
+    }],
+  ];
+  for (const [body, message, fix] of cases) {
+    const source = fn(body);
+    const d = one(source, "E0209");
+    assertEquals([d.message, d.fix], [message, fix]);
+    if (fix) assertEquals(check(fixed(source, d)), []);
+  }
+  // Before generic types, no type of a module takes type arguments.
+  const dot = fn("return Dot<Int>", { out: "Shape", extra: SHAPE });
+  const d = one(dot, "E0209");
+  assertEquals([d.message, d.fix], [
+    "`Dot` is a case of `Shape`, which takes no type arguments.",
+    { replace: "Dot<Int>", with: "Dot" },
+  ]);
+  assertEquals(check(fixed(dot, d)), []);
+  const point = fn("return Point<Int>(x: 1, y: 2)", { out: "Point", extra: POINT });
+  const p = one(point, "E0209");
+  assertEquals([p.message, p.fix], [
+    "A record takes its type arguments from its fields; remove `<Int>`.",
+    { replace: "Point<Int>(x: 1, y: 2)", with: "Point(x: 1, y: 2)" },
+  ]);
+  assertEquals(check(fixed(point, p)), []);
+});
+
+Deno.test("generics: a case whose type nothing gives is E0210, naming the form with type arguments (G7)", () => {
+  const none = one(fn("return std.option.with_default(option: None, default: 0)"), "E0210");
+  assertEquals([none.at, none.expected], ["None", "None<T>"]);
+  assertEquals(
+    none.message,
+    "The type of `None` cannot be determined here; types flow from left to right (1.4). Write its type arguments, `None<T>` with a type for `T`, or put the side with a known type first.",
+  );
+  const ok = one(fn("return std.list.length(list: [Ok(1)])"), "E0210");
+  assertEquals(ok.expected, "Ok<T, E>(1)");
+  assert_(ok.message.includes("`Ok<T, E>` with types for `T` and `E`"), ok.message);
+  one(fn("return None == std.list.first(list: [1])", { out: "Bool" }), "E0210");
+});
+
 // ---- TypeScript and acceptance (G16) ----
 
 Deno.test("generics: TypeScript generics, with the checked type arguments at user calls (G16)", async () => {
   assertEquals(await acceptance(UTIL), []);
+  assertEquals(await acceptance(FIRST_SOME), []);
   const mod = await load(UTIL, "util");
   assertEquals(mod.util$last([1, 2, 3]), { tag: "Some", value: 3 });
   assertEquals(mod.util$repeat("x", 2), ["x", "x"]);

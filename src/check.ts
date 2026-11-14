@@ -1701,6 +1701,13 @@ class DefChecker {
     if (ut || this.env.cases.has(full)) this.shortForm(e, e.path, at);
     if (ut?.kind === "record") {
       this.info.constructs.set(e, { kind: "record", type: full });
+      if (e.typeArgs.length > 0) {
+        this.extraTypeArgs(
+          e,
+          at,
+          `A record takes its type arguments from its fields; remove \`<${e.typeArgs.map(printTypeRef).join(", ")}>\`.`,
+        );
+      }
       if (p?.kind !== "args") {
         this.report(
           "E0223",
@@ -1767,6 +1774,13 @@ class DefChecker {
       return ERROR;
     }
     this.info.constructs.set(e, { kind: "case", type: c.owner });
+    if (e.typeArgs.length > 0) {
+      this.extraTypeArgs(
+        e,
+        at,
+        `\`${pathText(e.path)}\` is a case of \`${this.show(con(c.owner))}\`, which takes no type arguments.`,
+      );
+    }
     this.casePayload(e, c.name, c.payload, scope, at);
     return con(c.owner);
   }
@@ -1830,33 +1844,59 @@ class DefChecker {
     expected: Type | null,
   ): Type {
     const at = firstLine(printExpr(e, ""));
+    const written = `<${e.typeArgs.map(printTypeRef).join(", ")}>`;
     switch (name) {
       case "Unit":
+        if (e.typeArgs.length > 0) this.extraTypeArgs(e, at, "`Unit` takes no type arguments.");
         this.casePayload(e, name, null, scope, at);
         return UNIT;
       case "Less":
       case "Equal":
       case "Greater":
+        if (e.typeArgs.length > 0) {
+          this.extraTypeArgs(e, at, `\`${name}\` is a case of \`Order\`, which takes no type arguments.`);
+        }
         this.casePayload(e, name, null, scope, at);
         return ORDER;
     }
     const owner = name === "Some" || name === "None" ? "Option" : "Result";
+    const letters = owner === "Option" ? ["T"] : ["T", "E"];
+    // A case names its type arguments exactly where neither the expected
+    // type nor its value gives them (G7); otherwise they are E0209, and the
+    // case is checked as if they were absent (5.6).
+    let given: Type[] | null = null;
+    if (e.typeArgs.length > 0) {
+      if (e.typeArgs.length !== letters.length) {
+        this.report(
+          "E0209",
+          at,
+          `\`${name}\` is a case of \`${owner}<${letters.join(", ")}>\`, which takes ${letters.length} type argument${
+            letters.length === 1 ? "" : "s"
+          }.`,
+        );
+      } else if (expected !== null && isCon(expected, owner)) {
+        this.extraTypeArgs(e, at, `\`${name}\` takes its type from what is expected here; remove \`${written}\`.`);
+      } else if (name === "Some" && e.payload?.kind === "value") {
+        this.extraTypeArgs(e, at, `\`Some\` takes its type from its value; remove \`${written}\`.`);
+      } else {
+        given = e.typeArgs.map((t) => this.resolveType(t));
+      }
+    }
     if (expected !== null && isCon(expected, owner)) {
       const payload = name === "None" ? null : name === "Err" ? expected.args[1] : expected.args[0];
       this.casePayload(e, name, payload, scope, at);
       return expected;
     }
     if (expected === null || isBottom(expected) || containsError(expected)) {
+      if (given !== null) {
+        const payload = name === "None" ? null : name === "Err" ? given[1] : given[0];
+        this.casePayload(e, name, payload, scope, at);
+        return con(owner, ...given);
+      }
       if (name === "Some" && e.payload?.kind === "value") {
         return option(this.expr(e.payload.value, scope, null));
       }
-      if (expected === null) {
-        this.report(
-          "E0210",
-          at,
-          `The type of \`${name}\` cannot be determined here; types flow from left to right (1.4). Bind it with \`let name: ${owner}<...> = ${at}\` first, or put the side with a known type first.`,
-        );
-      }
+      if (expected === null) this.undeterminedCase(e, at, name, letters);
       if (e.payload?.kind === "value") this.expr(e.payload.value, scope, null);
       return ERROR;
     }
@@ -1865,6 +1905,36 @@ class DefChecker {
     });
     if (e.payload?.kind === "value") this.expr(e.payload.value, scope, null);
     return ERROR;
+  }
+
+  // E0209 for type arguments a construction does not take there (G7), with
+  // the construction without them as fix.
+  private extraTypeArgs(e: Extract<Expr, { kind: "construct" }>, at: string, message: string): void {
+    const without = printExpr({ ...e, typeArgs: [] }, "");
+    const whole = !printExpr(e, "").includes("\n");
+    this.report("E0209", at, message, {
+      expected: firstLine(without),
+      fix: whole ? { replace: at, with: without } : undefined,
+    });
+  }
+
+  // E0210 for a case whose type neither the expected type, nor its value,
+  // nor written type arguments give (G7); `letters` are its type's
+  // parameters, which `expected` writes in place of the types.
+  private undeterminedCase(e: Extract<Expr, { kind: "construct" }>, at: string, name: string, letters: string[]): void {
+    const typeArgs = letters.map((l): TypeRef => ({ kind: "type", path: [l], args: [] }));
+    const quoted = letters.map((l) => `\`${l}\``);
+    const each = letters.length === 1
+      ? `a type for ${quoted[0]}`
+      : `types for ${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
+    this.report(
+      "E0210",
+      at,
+      `The type of \`${name}\` cannot be determined here; types flow from left to right (1.4). Write its type arguments, \`${name}<${
+        letters.join(", ")
+      }>\` with ${each}, or put the side with a known type first.`,
+      { expected: firstLine(printExpr({ ...e, typeArgs }, "")) },
+    );
   }
 
   // `[a, b]`: the item type comes from the expected type, otherwise from the

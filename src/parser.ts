@@ -827,7 +827,7 @@ class Parser {
       const t = this.next();
       segments.push(t.text);
       if (t.kind === "typename") {
-        return { kind: "construct", path: segments, payload: this.payload() };
+        return { kind: "construct", path: segments, typeArgs: this.caseTypeArgs(), payload: this.payload() };
       }
       if (!(this.isSymbol(".") && (this.peek(1).kind === "name" || this.peek(1).kind === "typename"))) break;
       this.next();
@@ -880,6 +880,33 @@ class Parser {
     return this.expr();
   }
 
+  // `<T, U>` after a case or record name (G7), or `[]` without consuming
+  // anything. Unlike after a function's name, no `(` needs to follow: a
+  // construction has no order, so a comparison never follows it there.
+  private caseTypeArgs(): TypeRef[] {
+    if (!this.isSymbol("<")) return [];
+    const start = this.pos;
+    try {
+      return this.typeList();
+    } catch (e) {
+      if (!(e instanceof AlangError) || TYPE_FORM_ERRORS.has(e)) throw e;
+    }
+    this.pos = start;
+    return [];
+  }
+
+  // `<T, U>`, at least one type.
+  private typeList(): TypeRef[] {
+    this.expectSymbol("<");
+    const args = [this.type()];
+    while (this.isSymbol(",")) {
+      this.next();
+      args.push(this.type());
+    }
+    this.expectSymbol(">");
+    return args;
+  }
+
   // `<T, U>` directly followed by `(`, or null without consuming anything.
   // Distinguishes `std.list.empty<Int>()` from the comparison `n < limit`.
   // An error about the form of a function type is passed on (`typeForm`).
@@ -887,13 +914,7 @@ class Parser {
     if (!this.isSymbol("<")) return null;
     const start = this.pos;
     try {
-      this.next();
-      const args = [this.type()];
-      while (this.isSymbol(",")) {
-        this.next();
-        args.push(this.type());
-      }
-      this.expectSymbol(">");
+      const args = this.typeList();
       if (this.isSymbol("(")) return args;
     } catch (e) {
       if (!(e instanceof AlangError) || TYPE_FORM_ERRORS.has(e)) throw e;

@@ -167,6 +167,7 @@ export function showValue(value: unknown, t: Type, shapes: ReadonlyMap<string, T
 const construct = (path: Path, value: Expr | null = null): Expr => ({
   kind: "construct",
   path,
+  typeArgs: [],
   payload: value ? { kind: "value", value } : null,
 });
 
@@ -244,7 +245,7 @@ export function valueExpr(
       if (!v) return null;
       args.push({ name: f.name, value: v });
     }
-    return { kind: "construct", path: written(t.name, module), payload: { kind: "args", args } };
+    return { kind: "construct", path: written(t.name, module), typeArgs: [], payload: { kind: "args", args } };
   }
   const c = shape.cases.find((c) => c.name === tagged.tag);
   if (!c) return null;

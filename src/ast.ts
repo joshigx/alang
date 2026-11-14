@@ -48,7 +48,14 @@ export type Expr =
     readonly target: { readonly kind: "name"; readonly path: Path };
     readonly args: readonly Expr[];
   }
-  | { readonly kind: "construct"; readonly path: Path; readonly payload: Payload }
+  // `typeArgs` are written where neither the expected type nor the value
+  // gives the case's type (G7): `None<Int>`, `Leaf<Int>`; `[]` otherwise.
+  | {
+    readonly kind: "construct";
+    readonly path: Path;
+    readonly typeArgs: readonly TypeRef[];
+    readonly payload: Payload;
+  }
   // `[a, b, c]`: at least one item in valid text; `[]` parses so that the
   // checker can name the empty list's one spelling (E0228).
   | { readonly kind: "list"; readonly items: readonly Expr[] }

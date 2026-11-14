@@ -71,8 +71,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   records too: \`Item(name: "x", count: 1)\`. A case's value is unnamed: \`Some(n)\`, \`Err(NotANumber(t))\`. Fields:
   \`item.name\`. No method calls (\`x.f()\`, E0220).
 - Type arguments only where no argument fixes them (E0209): \`std.list.empty<Int>()\`.
-- \`Ok\`, \`Err\` and \`None\` take their type from what is expected there (a \`let\`, a parameter, \`out\` at \`return\`, the
-  left side of \`==\`), so the known side comes first: \`f(x: 1) == None\`, not \`None == f(x: 1)\` (E0210).
+- \`Ok\`, \`Err\` and \`None\` take their type from what is expected (a \`let\`, a parameter, \`out\`, the left side of
+  \`==\`): \`f(x: 1) == None\`. Where a generic parameter leaves it open, they name it: \`None<Int>\` (E0210).
 - Lists: \`[a, b, c]\`; the empty list is \`std.list.empty<T>()\`, never \`[]\` (E0228). No \`xs[0]\` and no \`Int[]\`:
   \`std.list.get\` gives an \`Option\`, the type is \`List<Int>\`.
 - Maps: \`["a": 1, "b": 2]\` is a \`Map<String, Int>\`; keys are \`Int\` or \`String\` (E0229), each written once (E0234);
