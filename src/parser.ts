@@ -23,7 +23,8 @@ import type {
 } from "./ast.ts";
 import { type Effect, EFFECTS, pathText } from "./ast.ts";
 import { AlangError, diagnostic, type Fix } from "./diagnostic.ts";
-import { lex, type Token } from "./lexer.ts";
+import { lex, type Token, toSnakeCase } from "./lexer.ts";
+import { printConst } from "./printer.ts";
 
 const COMPARE_OPS: readonly string[] = ["==", "!=", "<", "<=", ">", ">="];
 const ADDITIVE: readonly string[] = ["+", "-"];
@@ -336,6 +337,19 @@ class Parser {
   // statements ending in `return`, as a function's is.
   private constDef(): ConstDef {
     this.expectKeyword("const");
+    // `const shop.MaxItems`: a constant named like a type (C12).
+    let k = 0;
+    while (this.peek(k).kind === "name" && this.isSymbol(".", k + 1)) k += 2;
+    const named = this.peek(k);
+    if (k > 0 && named.kind === "typename") {
+      const fixed = toSnakeCase(named.text);
+      this.fail(`A constant is a value, so its name is snake_case: \`${fixed}\` (3.6).`, {
+        code: "E0002",
+        at: named.text,
+        expected: fixed,
+        fix: { replace: named.text, with: fixed },
+      });
+    }
     const path = this.definitionPath("const");
     // In `ensures` and after `let ... else` the language's own binding
     // would hide the constant (C3).
@@ -344,12 +358,21 @@ class Parser {
       this.fail(`\`${last}\` is bound by the language and cannot name a constant.`, { code: "E0109", at: last });
     }
     this.definition = pathText(path);
+    if (this.isSymbol(":")) this.oneLineConst(path);
     this.expectNewline();
     const doc = this.docSection();
+    if (this.isKeyword("in")) {
+      this.fail("A `const` has the sections `doc`, `out` and `body`; a value that takes parameters is a `fn`.");
+    }
 
     this.sectionHeader("out");
     const out = this.type();
     this.expectNewline();
+    if (["effects", "requires", "ensures", "examples"].some((word) => this.isKeyword(word))) {
+      this.fail(
+        "A `const` has the sections `doc`, `out` and `body` only: it is pure and needs no examples, since every acceptance evaluates it.",
+      );
+    }
 
     this.sectionHeader("body");
     this.expectNewline();
@@ -357,6 +380,29 @@ class Parser {
 
     this.endDef("const", path);
     return { kind: "const", path, doc, out, body };
+  }
+
+  // `const shop.max_items: Int = 100` (TypeScript, Rust, Go; C12): the form
+  // with sections as `expected`, read from `: type = value` when that parses.
+  // No fix, since the doc is missing.
+  private oneLineConst(path: Path): never {
+    const message =
+      `A constant is a definition with sections, like a function: \`doc\`, \`out\` and \`body\`, then \`end const ${
+        pathText(path)
+      }\`.`;
+    const start = this.pos;
+    let expected: string | undefined;
+    try {
+      this.next();
+      const out = this.type();
+      this.expectSymbol("=");
+      const value = this.expr();
+      expected = printConst({ kind: "const", path, doc: "...", out, body: [{ kind: "return", value }] });
+    } catch (e) {
+      if (!(e instanceof AlangError)) throw e;
+    }
+    this.pos = start;
+    return this.fail(message, { expected });
   }
 
   private effect(): Effect {
@@ -574,6 +620,13 @@ class Parser {
   }
 
   private stmt(thenLine: number | null = null): Stmt {
+    if (this.isKeyword("const")) {
+      // JavaScript, Swift and Rust bind a local with `const` (5.7, C12).
+      this.fail(
+        "Inside a body, a value is bound with `let`; `const` defines a constant of the module, with `doc`, `out` and `body`.",
+        { code: "E0006", expected: "let", fix: { replace: "const", with: "let" } },
+      );
+    }
     if (this.isKeyword("let")) {
       this.next();
       if (this.isSymbol("[")) return this.destructure();

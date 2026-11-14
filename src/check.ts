@@ -24,6 +24,7 @@ import type {
 import { type Effect, EFFECTS, moduleOf, pathText } from "./ast.ts";
 import { type Diagnostic, diagnostic, type Fix } from "./diagnostic.ts";
 import { printConst, printExpr, printStmts, printString, printTypeRef } from "./printer.ts";
+import { toSnakeCase } from "./lexer.ts";
 import { type Signature, STD, STD_TYPES } from "./std.ts";
 import {
   BOOL,
@@ -979,6 +980,17 @@ class DefChecker {
     if (reading?.kind === "const") return this.constant(e, reading, scope);
     const full = this.resolvePath(e.path);
     const fn = reading && this.env.fns.get(reading.name);
+    if (fn && fn.params.length === 0 && expected !== null && expected.k !== "fn" && !containsError(expected)) {
+      // A function without parameters where a value is expected (`n < limit`):
+      // no function type has zero parameters (F5), so it is meant as a call
+      // (C12). One diagnostic: no E0232 and no mismatch follow (5.6).
+      const written = pathText(e.path);
+      this.report("E0204", written, `\`${written}\` is a function; call it: \`${written}()\`.`, {
+        expected: `${written}()`,
+        fix: { replace: written, with: `${written}()` },
+      });
+      return ERROR;
+    }
     if (fn) {
       // A local with the short name would take it (`by: compare` with a
       // parameter `compare`), and a hidden name of a shared case would be
@@ -1589,6 +1601,21 @@ class DefChecker {
       return con(full);
     }
     const c = this.env.cases.get(full);
+    if (!c && p === null) {
+      // `MaxItems` for the constant `max_items` (C12): values are snake_case.
+      const snake = toSnakeCase(last);
+      const constant = [...e.path.slice(0, -1), snake];
+      if (this.env.consts.has(this.resolvePath(constant))) {
+        const written = pathText(constant);
+        this.report(
+          "E0203",
+          at,
+          `\`${pathText(e.path)}\` is not a type or case; the constant is \`${written}\`, in snake_case (3.6).`,
+          { expected: written, fix: { replace: pathText(e.path), with: written } },
+        );
+        return ERROR;
+      }
+    }
     if (!c) {
       const written = pathText(e.path);
       const candidates = [

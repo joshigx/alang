@@ -12,7 +12,7 @@ import { moduleOf, pathText } from "./ast.ts";
 import type { CheckInfo, TypeShape } from "./check.ts";
 import { toTypeRef, writable } from "./check.ts";
 import { type Diagnostic, diagnostic } from "./diagnostic.ts";
-import { printExpr, printTypeRef } from "./printer.ts";
+import { printConst, printExpr, printTypeRef } from "./printer.ts";
 import {
   type ConstantResult,
   type ExampleResult,
@@ -30,6 +30,19 @@ export function missingExamples(defs: readonly Definition[]): Diagnostic[] {
     .filter((d): d is FnDef => d.kind === "fn" && d.effects.length === 0 && d.examples.length === 0)
     .map((def) => {
       const short = def.path[def.path.length - 1];
+      if (def.params.length === 0) {
+        // A constant written the long way (C6): it stays legal for now
+        // (E0405 is reserved for rejecting it), but the fix is the constant.
+        return diagnostic({
+          code: "E0401",
+          definition: pathText(def.path),
+          section: "examples",
+          at: "examples: none",
+          message: `\`${short}\` has no parameters and no effects, so it always gives the same value: write it as a ` +
+            `constant, \`const ${pathText(def.path)}\`, which needs no example.`,
+          expected: printConst({ kind: "const", path: def.path, doc: def.doc, out: def.out, body: def.body }),
+        });
+      }
       const params = def.params.map((p) => `${p.name}: ${printTypeRef(p.type)}`).join(", ");
       return diagnostic({
         code: "E0401",

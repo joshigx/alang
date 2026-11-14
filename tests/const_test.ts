@@ -6,7 +6,8 @@ import { assert_, assertEquals, assertThrows } from "./assert.ts";
 import { pathText } from "../src/ast.ts";
 import { checkProgram } from "../src/check.ts";
 import { AlangError, type Diagnostic } from "../src/diagnostic.ts";
-import { parseProgram } from "../src/parser.ts";
+import { parseProgram, parseStatements } from "../src/parser.ts";
+import { lex } from "../src/lexer.ts";
 import { printProgram, printSignature } from "../src/printer.ts";
 import { applyOwnFixes, dependencies, mapReferences, references } from "../src/refs.ts";
 import * as rt from "../src/runtime.ts";
@@ -447,6 +448,107 @@ Deno.test("const: a trap is reported at its constant; the other examples still r
     "Evaluating the constant ends in a trap (`overflow`). Int overflow (at `9007199254740991 + 1`).",
   );
   assertEquals(ds[1].message, "The example does not hold: `f(x: 1)` is `1`.");
+});
+
+// ---- habits around constants (C12, 3.1 to 3.6) ----
+
+Deno.test("const habits: `const` in a body is E0006 with `let` as its fix", () => {
+  const d = assertThrows(() => parseStatements("const m: Int = 5"), AlangError).diagnostic;
+  assertEquals([d.code, d.at, d.fix], ["E0006", "const m: Int = 5", { replace: "const", with: "let" }]);
+  parseStatements(d.at.replace(d.fix!.replace, d.fix!.with));
+});
+
+Deno.test("const habits: MAX_ITEMS is E0002 with the snake_case fix; Max_Items keeps PascalCase", () => {
+  const lexed = (word: string) => assertThrows(() => lex(`${word}\n`), AlangError).diagnostic;
+  const max = lexed("MAX_ITEMS");
+  assertEquals([max.code, max.message, max.fix], [
+    "E0002",
+    "Constants and other values are written in snake_case: `max_items` (3.6).",
+    { replace: "MAX_ITEMS", with: "max_items" },
+  ]);
+  assertEquals(lexed("HTTP_OK").fix, { replace: "HTTP_OK", with: "http_ok" });
+  assertEquals(lexed("Max_Items").fix, { replace: "Max_Items", with: "MaxItems" });
+});
+
+Deno.test("const habits: a PascalCase name, the one-line form and a fn's sections name the form", () => {
+  const pascal = parseError(constant("shop.MaxItems", "Int", "return 100"));
+  assertEquals([pascal.code, pascal.at, pascal.message, pascal.fix], [
+    "E0002",
+    "MaxItems",
+    "A constant is a value, so its name is snake_case: `max_items` (3.6).",
+    { replace: "MaxItems", with: "max_items" },
+  ]);
+  const line = parseError("const shop.max_items: Int = 100\n");
+  assertEquals([line.code, line.at, line.message, line.expected], [
+    "E0101",
+    "const shop.max_items: Int = 100",
+    "A constant is a definition with sections, like a function: `doc`, `out` and `body`, then `end const shop.max_items`.",
+    'const shop.max_items\n  doc: "..."\n  out: Int\n  body:\n    return 100\nend const shop.max_items',
+  ]);
+  const withIn = parseError(constant("m.x", "Int", "return 1").replace("  out: Int", "  in: none\n  out: Int"));
+  assertEquals(
+    [withIn.code, withIn.message],
+    ["E0101", "A `const` has the sections `doc`, `out` and `body`; a value that takes parameters is a `fn`."],
+  );
+  const withExamples = parseError(
+    constant("m.x", "Int", "return 1").replace("  out: Int", "  out: Int\n  examples: none"),
+  );
+  assertEquals([withExamples.code, withExamples.message], [
+    "E0101",
+    "A `const` has the sections `doc`, `out` and `body` only: it is pure and needs no examples, since every acceptance evaluates it.",
+  ]);
+});
+
+const LIMIT_FN = fn("m.limit", "", "Int", "limit() == 100", "return 100");
+
+Deno.test("const habits: a function without parameters as a value is E0204 with `()` as its fix", () => {
+  const now = [
+    "fn m.now",
+    '  doc: "Test."',
+    "  in: none",
+    "  out: Int",
+    "  effects: time",
+    "  requires: none",
+    "  ensures: none",
+    "  examples: none",
+    "  body:",
+    "    let t: Int = std.time.now_milliseconds",
+    "    return t",
+    "end fn m.now",
+  ].join("\n");
+  const d = one(now, "E0204");
+  assertEquals([d.at, d.message, d.fix], [
+    "std.time.now_milliseconds",
+    "`std.time.now_milliseconds` is a function; call it: `std.time.now_milliseconds()`.",
+    { replace: "std.time.now_milliseconds", with: "std.time.now_milliseconds()" },
+  ]);
+  clean(fixed(now, d));
+  const below = LIMIT_FN + "\n\n" + fn("m.f", "n: Int", "Bool", "f(n: 1) == true", "return n < limit");
+  const e = one(below, "E0204");
+  assertEquals(e.fix, { replace: "limit", with: "limit()" });
+});
+
+Deno.test("const habits: MaxItems where the constant max_items exists is E0203 with its name", () => {
+  const d = one(SHOP + "\n" + fn("shop.h", "n: Int", "Int", "h(n: 1) == 101", "return MaxItems + n"), "E0203");
+  assertEquals([d.message, d.fix], [
+    "`MaxItems` is not a type or case; the constant is `max_items`, in snake_case (3.6).",
+    { replace: "MaxItems", with: "max_items" },
+  ]);
+});
+
+Deno.test("const habits: E0401 for a pure function without parameters gives the constant (C6)", async () => {
+  const b = LIMIT_FN.replace("m.limit", "m.b").replace("m.limit", "m.b").replace(
+    "  examples:\n    limit() == 100",
+    "  examples: none",
+  )
+    .replace("return 100", "return 2").replace('"Test."', '"b."');
+  const ds = await acceptance(b);
+  assertEquals(ds.map((d) => [d.code, d.message]), [[
+    "E0401",
+    "`b` has no parameters and no effects, so it always gives the same value: write it as a constant, `const m.b`, which needs no example.",
+  ]]);
+  assertEquals(ds[0].expected, 'const m.b\n  doc: "b."\n  out: Int\n  body:\n    return 2\nend const m.b');
+  assertEquals(await acceptance(ds[0].expected!), []);
 });
 
 // ---- references (1.12) ----

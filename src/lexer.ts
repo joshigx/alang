@@ -131,6 +131,8 @@ const FOREIGN_KEYWORDS: Record<string, string> = {
 
 const SNAKE = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
 const PASCAL = /^[A-Z][A-Za-z0-9]*$/;
+// Capitals, digits and at least one underscore: `MAX_ITEMS`, `HTTP_OK`.
+const SCREAMING = /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/;
 
 export function toSnakeCase(word: string): string {
   return word
@@ -247,6 +249,14 @@ export function lex(source: string): Token[] {
         push("name", word);
       } else if (PASCAL.test(word)) {
         push("typename", word);
+      } else if (SCREAMING.test(word)) {
+        // `MAX_ITEMS`: a constant as C, JavaScript, Python, Rust and Java
+        // write it (5.7); alang writes values in snake_case.
+        const fixed = word.toLowerCase();
+        fail("E0002", `Constants and other values are written in snake_case: \`${fixed}\` (3.6).`, word, {
+          expected: fixed,
+          fix: { replace: word, with: fixed },
+        });
       } else {
         const isType = /^[A-Z]/.test(word);
         const fixed = isType ? toPascalCase(word) : toSnakeCase(word);
