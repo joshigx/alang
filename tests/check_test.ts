@@ -8,7 +8,7 @@ import type { Diagnostic } from "../src/diagnostic.ts";
 import { pathText } from "../src/ast.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
-import { shortenOwnNames } from "../src/refs.ts";
+import { applyOwnFixes } from "../src/refs.ts";
 import { STD, STD_TYPES } from "../src/std.ts";
 import { build } from "../src/toolchain.ts";
 import * as runtime from "../src/runtime.ts";
@@ -59,7 +59,7 @@ function fn(
 function shortened(source: string): string {
   const defs = parseProgram(source);
   const { info } = checkProgram(defs);
-  return printProgram(defs.map((d) => shortenOwnNames(d, info)));
+  return printProgram(defs.map((d) => applyOwnFixes(d, info)));
 }
 
 // Exactly one diagnostic, with the given code; returns it. A fix always

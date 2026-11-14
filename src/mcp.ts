@@ -107,7 +107,8 @@ program is run (each pure function needs at least one); it is written, in canoni
 Names of the definition's own module are written short (\`parse\` inside \`net.port\`), all others in full \
 (\`std.int.parse\`).
 4. Results: \`ok: true\` lists each written name with its new hash, which the next change can use without another \
-query; \`fixed\`, if present, lists own-module names you wrote in full, which were stored short. \`ok: false\` \
+query; \`fixed\`, if present, lists own-module names you wrote in full, stored short, and \`let x: Unit = \` \
+dropped. \`ok: false\` \
 means nothing was written; it lists \`diagnostics\` (code, definition, section, at: the quoted location, message, \
 expected, fix) and \`current\` versions. E0501 (stale hash): redo the change on the version in \
 \`current\`. E0506 (interface changed): send the change together with the callers it names, adapted, in one \`submit\`.

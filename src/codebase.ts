@@ -23,7 +23,7 @@ import { AlangError, type Diagnostic, diagnostic } from "./diagnostic.ts";
 import { casesOf, interfaceChange } from "./interface.ts";
 import { parseProgram } from "./parser.ts";
 import { printDefinition, printExpr, printSignature, printString } from "./printer.ts";
-import { dependencies, mapReferences, type Ref, shortenOwnNames } from "./refs.ts";
+import { applyOwnFixes, dependencies, mapReferences, type Ref } from "./refs.ts";
 import { matchesFn, namedTypes, parseFnPattern, showTree, treeOfRef, treeOfType, type TypeTree } from "./search.ts";
 import { signatureHead, signatureLine, STD, STD_BY_NAME, STD_TYPES } from "./std.ts";
 import { acceptDefinitions, type Accepted, findMain, run as runBuilt, type RunOptions } from "./toolchain.ts";
@@ -94,8 +94,8 @@ export type SubmitResult =
     readonly written: readonly Written[];
     // Replaced by the very same text: accepted, nothing written.
     readonly unchanged: readonly string[];
-    // Diagnostics whose fix the codebase applied itself (E0226, see
-    // `withShortNames`); only present if there are any. Where they point, the
+    // Diagnostics whose fix the codebase applied itself (E0226 and E0235,
+    // see `withOwnFixes`); only present if there are any. Where they point, the
     // stored text differs from the text sent.
     readonly fixed?: readonly Diagnostic[];
   }
@@ -846,12 +846,13 @@ export class Codebase {
       else next.delete(p.name);
     }
 
-    // 2b. Own-module names the texts wrote in full are shortened, before the
-    // rules below compare contracts as printed. Each submitted definition is
-    // the one in the program under its name, so it is swapped for its
-    // shortened form; the check info of acceptance is keyed by node.
+    // 2b. Own-module names the texts wrote in full are shortened, and
+    // `let name: Unit = ` is dropped, before the rules below compare
+    // contracts as printed. Each submitted definition is the one in the
+    // program under its name, so it is swapped for its fixed form; the check
+    // info of acceptance is keyed by node.
     const sent = new Set(planned.flatMap((p) => (p.def ? [pathText(p.def.path)] : [])));
-    const short = withShortNames([...next.keys()].sort().map((name) => next.get(name)!), sent);
+    const short = withOwnFixes([...next.keys()].sort().map((name) => next.get(name)!), sent);
     const { defs, fixed } = short;
     if (fixed.length > 0) {
       const byName = new Map(defs.map((d) => [pathText(d.path), d]));
@@ -1544,9 +1545,9 @@ export class Codebase {
     if (diagnostics.length > 0) return rejected(diagnostics);
 
     defs.sort((a, b) => (pathText(a.path) < pathText(b.path) ? -1 : 1));
-    // A file written by hand may name its own module in full; it is stored
-    // short, and the sync then rewrites the file.
-    const { defs: program, checked, fixed } = withShortNames(defs, new Set(defs.map((d) => pathText(d.path))));
+    // A file written by hand may name its own module in full, or bind
+    // `Unit`; it is stored fixed, and the sync then rewrites the file.
+    const { defs: program, checked, fixed } = withOwnFixes(defs, new Set(defs.map((d) => pathText(d.path))));
     let accepted: Accepted;
     try {
       accepted = await this.acceptHere(program, checked);
@@ -1608,25 +1609,29 @@ export class Codebase {
   }
 }
 
-// Names of a definition's own module written in full (E0226) are the one
-// complaint the codebase fixes itself instead of rejecting: the short form
-// means the same and is the only one stored (1.2, 3.7), so text and hash are
-// those of the short form either way. Applied only when every diagnostic of
-// the program's check is such a name in one of `sent` (the definitions whose
-// text came with this change), since any other diagnostic quotes the text as
-// sent (5.5); and only if the shortened program checks. Returns the program to
-// accept, its check, and the E0226 diagnostics applied (none if the program
-// is returned as it was).
-function withShortNames(
+// Two complaints the codebase fixes itself instead of rejecting, since each
+// is pure spelling with one stored form (3.7), so text and hash are those of
+// the fixed form either way: a name of a definition's own module written in
+// full (E0226), whose short form means the same (1.2), and a `let` that binds
+// `Unit` to an unused name (E0235 with a fix), which means the same as its
+// statement without `let name: Unit = ` (3.2). Applied only when every
+// diagnostic of the program's check is one of them in one of `sent` (the
+// definitions whose text came with this change), since any other diagnostic
+// quotes the text as sent (5.5); and only if the fixed program checks.
+// Returns the program to accept, its check, and the diagnostics applied (none
+// if the program is returned as it was).
+function withOwnFixes(
   defs: Definition[],
   sent: ReadonlySet<string>,
 ): { defs: Definition[]; checked: CheckResult; fixed: Diagnostic[] } {
   const checked = checkProgram(defs);
   const { diagnostics, info } = checked;
-  const own = (d: Diagnostic) => d.code === "E0226" && d.definition !== null && sent.has(d.definition);
+  const own = (d: Diagnostic) =>
+    (d.code === "E0226" || (d.code === "E0235" && d.fix !== null)) && d.definition !== null &&
+    sent.has(d.definition);
   if (diagnostics.length === 0 || !diagnostics.every(own)) return { defs, checked, fixed: [] };
   const names = new Set(diagnostics.map((d) => d.definition));
-  const shortened = defs.map((def) => (names.has(pathText(def.path)) ? shortenOwnNames(def, info) : def));
+  const shortened = defs.map((def) => (names.has(pathText(def.path)) ? applyOwnFixes(def, info) : def));
   const again = checkProgram(shortened);
   if (again.diagnostics.length > 0) return { defs, checked, fixed: [] };
   return { defs: shortened, checked: again, fixed: diagnostics };

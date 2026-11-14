@@ -223,6 +223,50 @@ Deno.test("codebase: own-module names written in full are stored short (1.2)", a
   await done(cb);
 });
 
+Deno.test("codebase: a let that binds Unit is stored as its statement (T5)", async () => {
+  const cb = await fresh();
+  const write = 'std.fs.write_text(path: "a", text: "b") else return Err(std.fs.describe(error: error))';
+  const save = (body: string) => fn("m.save", { out: "Result<Unit, String>", effects: "fs.write", body });
+  // An unused name: accepted, the statement stored, E0235 under `fixed`.
+  const r = await ok(cb, [add(save(`let written: Unit = ${write}\nreturn Ok(Unit)`))]);
+  assertEquals(codes(r.fixed!), ["E0235"]);
+  assertEquals(r.fixed![0].fix, { replace: `let written: Unit = ${write}`, with: write });
+  assertEquals(cb.definition("m.save").text, save(`${write}\nreturn Ok(Unit)`));
+  const before = dump(cb);
+  // A used name has no fix, so the change is rejected as sent.
+  const used = await fails(cb, [{
+    op: "replace",
+    name: "m.save",
+    hash: hashOf(cb, "m.save"),
+    text: save(`let written: Unit = ${write}\nreturn Ok(written)`),
+  }]);
+  assertEquals([codes(used.diagnostics), used.diagnostics[0].fix], [["E0235"], null]);
+  // Nor is a block value with `else` rewritten: without the let it would not parse.
+  const block = await fails(cb, [add(fn("m.pick", {
+    params: ["o: Option<String>"],
+    out: "Int",
+    examples: ['pick(o: Some("a")) == 1'],
+    body:
+      "let x: Unit = match o\n  case Some(v) then\n    Some(Unit)\n  case None then\n    None\nend match else return 0\nreturn 1",
+  }))]);
+  assertEquals([codes(block.diagnostics), block.diagnostics[0].fix], [["E0235"], null]);
+  assertEquals(dump(cb), before);
+  // Both fixes in one definition are applied together.
+  const both = fn("m.say", {
+    out: "Unit",
+    effects: "console",
+    body: "let shown: Unit = std.console.print_line(text: m.word())\nreturn Unit",
+  });
+  const word = fn("m.word", { out: "String", examples: ['word() == "hi"'], body: 'return "hi"' });
+  const s = await ok(cb, [add(word), add(both)]);
+  assertEquals(codes(s.fixed!).sort(), ["E0226", "E0235"]);
+  assertEquals(
+    cb.definition("m.say").text,
+    fn("m.say", { out: "Unit", effects: "console", body: "std.console.print_line(text: word())\nreturn Unit" }),
+  );
+  await done(cb);
+});
+
 Deno.test("codebase: a full own-module name that a local would capture is stored as written", async () => {
   // `by: backwards` would be the parameter, so `m.backwards` is the only
   // spelling of the function there; it is neither reported nor shortened.

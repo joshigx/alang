@@ -670,7 +670,9 @@ class DefChecker {
       content = this.expr(s.value, scope, declared);
     }
     this.bind(scope, s.name, declared, at);
-    return typeEquals(declared, UNIT) && typeEquals(content, UNIT) && this.diagnostics.length === before;
+    // A long own-module name (E0226) is resolved as usual: another cause.
+    const others = this.diagnostics.slice(before).filter((d) => d.code !== "E0226");
+    return typeEquals(declared, UNIT) && typeEquals(content, UNIT) && others.length === 0;
   }
 
   private ret(valueExpr: Expr, scope: Scope): void {

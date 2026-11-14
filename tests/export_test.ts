@@ -220,6 +220,22 @@ Deno.test("import: a broken export is rejected and changes nothing", async () =>
   await done(cb);
 });
 
+Deno.test("import: an export with a let that binds Unit imports in the statement form (T5)", async () => {
+  const cb = await fresh();
+  const write = 'std.fs.write_text(path: "a", text: "b") else return Err(std.fs.describe(error: error))';
+  const save = (body: string) => fn("app.save", { out: "Result<Unit, String>", effects: "fs.write", body });
+  const word = fn("app.word", { out: "String", examples: ['word() == "a"'], body: 'return "a"' });
+  // Written by hand: a Unit binding, and an own-module name in full.
+  const old = save(`let written: Unit = ${write.replace('path: "a"', "path: app.word()")}\nreturn Ok(Unit)`);
+  await Deno.mkdir(join(cb.dir, "export"), { recursive: true });
+  await Deno.writeTextFile(join(cb.dir, "export", "app.alang"), `${old}\n\n${word}\n`);
+  const r = await imported(cb);
+  assertEquals(codes(r.fixed!).sort(), ["E0226", "E0235"]);
+  const stored = save(`${write.replace('path: "a"', "path: word()")}\nreturn Ok(Unit)`);
+  assertEquals(cb.definition("app.save").text, stored);
+  await done(cb);
+});
+
 Deno.test("import: an empty or missing export gives an empty codebase", async () => {
   const cb = await fresh();
   assertEquals((await imported(cb)).written, []);

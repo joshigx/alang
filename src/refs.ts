@@ -68,22 +68,36 @@ export function mapReferences(
   });
 }
 
-// `def` with each name of its own module that is written in full shortened
-// (1.2): exactly the nodes the checker reported as E0226 (`info.longForms`),
-// so a full name that a local would capture keeps its spelling.
-export function shortenOwnNames(def: Definition, info: CheckInfo): Definition {
-  return rebuild(def, info, def.path, (node, written, ref) => {
-    return info.longForms.has(node) ? writtenFrom(ref.full, moduleOf(def.path)) : written;
-  });
+// `def` with the two fixes the codebase applies itself: each name of its
+// own module that is written in full shortened (1.2), exactly the nodes the
+// checker reported as E0226 (`info.longForms`), so a full name that a local
+// would capture keeps its spelling; and each `let name: Unit = ` the checker
+// reported as E0235 with a fix (`info.unitLets`) dropped (3.2).
+export function applyOwnFixes(def: Definition, info: CheckInfo): Definition {
+  return rebuild(
+    def,
+    info,
+    def.path,
+    (node, written, ref) => (info.longForms.has(node) ? writtenFrom(ref.full, moduleOf(def.path)) : written),
+    (s) => {
+      if (s.kind !== "let" || !info.unitLets.has(s)) return s;
+      return s.elseReturn === null
+        ? { kind: "expr", expr: s.value }
+        : { kind: "propagate", value: s.value, elseReturn: s.elseReturn };
+    },
+  );
 }
 
 // Rebuilds `def` under the name `path`, with the path of every reference
 // given by `spell`: the node, its path as written, and what it refers to.
+// `statement` may replace a statement before it is rebuilt; it receives the
+// checked node and returns checked parts, so the side tables still apply.
 function rebuild(
   def: Definition,
   info: CheckInfo,
   path: Path,
   spell: (node: object, written: Path, ref: Ref) => Path,
+  statement: (s: Stmt) => Stmt = (s) => s,
 ): Definition {
   const oldModule = moduleOf(def.path);
   const resolve = (p: Path) => (p.length === 1 ? [...oldModule, p[0]].join(".") : pathText(p));
@@ -108,7 +122,7 @@ function rebuild(
     return { kind: "args", args: p.args.map((a) => ({ name: a.name, value: expr(a.value) })) };
   };
 
-  const stmts = (ss: readonly Stmt[]): Stmt[] => ss.map(stmt);
+  const stmts = (ss: readonly Stmt[]): Stmt[] => ss.map((s) => stmt(statement(s)));
   const stmt = (s: Stmt): Stmt => {
     switch (s.kind) {
       case "let":
