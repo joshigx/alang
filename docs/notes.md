@@ -143,16 +143,17 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     bind that ends a value block, the card's `let [...]` sentence for any known length, and the round prompt in the
     plan. 340 tests.
 
-**Next (2026-11-14, overnight run, updated by the main session at ~03:10):** `std-net` (item 20) is built, its
-round analyzed and fixed, re-verified by a second automated round, and fast-forwarded into `main` (unpushed). Next:
-`statements` from `docs/plans/statements.md` on branch `statements` (fresh Opus agent; mind the addendum at the end and
-re-grep everything `std-net` moved), its round with `~/coding_projects/alang-rounds/prompts/tickets.md` (the plan's
-section 7 prompt, saved), analysis, fixes, merge. Then `fn-types` (`docs/plans/fn-types.md`) and `const`
-(`docs/plans/const.md`), both planned by fresh Opus agents on 2026-11-14 and committed; their round prompts are in the
-plans (`rank`, with `~/coding_projects/alang-rounds/prompts/rank-reference.ts`, and `parcel`). `generics` is being
-planned; `extern-fn` and row 9 `records` are not planned yet. No Fable planners until the weekly reset (Sunday
-2026-11-15 21:00 local); the Fable advisor is fine. The user, before going to sleep on 2026-11-14: continue with the
-remaining items of the to-do list, never push, and shut the PC down when everything is finished.
+**Next (2026-11-14, overnight run, updated by the main session at ~04:15):** `std-net` (item 20) and `statements`
+(item 21) are built, their rounds analyzed and fixed, each re-verified by a second automated round, and
+fast-forwarded into `main` (unpushed). Next: `fn-types` from `docs/plans/fn-types.md` on branch `fn-types` (fresh Opus
+agent; re-grep everything `statements` moved), its round (`rank`, prompt in the plan, reference
+`~/coding_projects/alang-rounds/prompts/rank-reference.ts`), analysis, fixes, merge. Then `const`
+(`docs/plans/const.md`, round `parcel`), then `generics` (`docs/plans/generics.md`, round `shop`, reference
+`~/coding_projects/alang-rounds/prompts/shop-reference.ts`; split point before generic types), all planned by fresh
+Opus agents on 2026-11-14 and committed. `extern-fn` and row 9 `records` are being planned (plans in the job's
+scratch directory until committed). No Fable planners until the weekly reset (Sunday 2026-11-15 21:00 local); the
+Fable advisor is fine. The user, before going to sleep on 2026-11-14: continue with the remaining items of the to-do
+list, never push, and shut the PC down when everything is finished.
 
 **Earlier next steps (kept for reference):** `logstat-fixes` is merged into `main` (2026-11-13). The `tasks` playground round, from an empty codebase,
 was started on 2026-11-14: prompt, checks and the steps after it are in `docs/plans/tasks-round.md`. When the user
@@ -1184,6 +1185,15 @@ What the fixes after it changed (on `statements`, one commit each):
   as many items as names, where it said "a list of exactly two items" (158 lines, 9,673 bytes; 566 bytes remain).
 - `1471396`: the plan's section 7 quotes the changed round prompt, in which a refused move is an error (stderr,
   exit 1), and says why.
+
+**Confirmation rerun** against `f0d9ecb` (the fixes above, and the saved prompt with the refused move made an error;
+folder `~/coding_projects/alang-rounds/2026-11-14-tickets-2/`, checked by the main session from the result, the
+transcript and the export, no analysis agent): the whole sequence right, `finish 2` on stderr with exit 1, the
+malformed line refused with the file unchanged. One submit, accepted without a diagnostic; 15 tool calls (`card` 1,
+`list` 7, `search` 1, `submit` 1, Bash 3, Read 1, Write 1); 166 s, $0.76. The forms: 13 propagate statements, no
+`let x: Unit`; `let [state_text, owner, title]` parses a line (the card's new wording; the first round used a length
+check and three `get`s); one shared case (`case Open or Started then`); `std.list.set` and `find_index` as before.
+One run per condition, so variance may explain part of the difference.
 
 Left for later:
 
