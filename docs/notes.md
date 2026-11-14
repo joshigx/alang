@@ -138,7 +138,10 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     card teaches all three forms (158 lines, 9,630 bytes). On the way, a latent emitter bug: a `let` whose block value
     binds its own name inside (`let n: Int = match o` with `case Some(n)`) crashed its example; it is now assigned
     through a temporary. Record update moved to a new roadmap row 9, `records` (T14). Decisions in `decisions.md`, rows
-    listed in the review list below. 339 tests. See "From statements".
+    listed in the review list below. 339 tests. See "From statements". After its playground round (see "From the
+    tickets round"), three fixes: one E0217 instead of E0217 and E0204 for a propagation statement with a content to
+    bind that ends a value block, the card's `let [...]` sentence for any known length, and the round prompt in the
+    plan. 340 tests.
 
 **Next (2026-11-14, overnight run, updated by the main session at ~03:10):** `std-net` (item 20) is built, its
 round analyzed and fixed, re-verified by a second automated round, and fast-forwarded into `main` (unpushed). Next:
@@ -176,7 +179,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (339 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (340 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -354,6 +357,13 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   apart, Shared cases), Semantics and runtime (Representation in TS), Type checking (Discarded values, `Unit`
   bindings, Taking a list apart, Blocks, `match`), Database (`Unit` bindings fixed), MCP server (Instructions), Text,
   numbers and lists in std (`set`, `find_index`, Stopping).
+- Fixes after the tickets round (2026-11-14; the brief was the main session's, the details mine): a propagation
+  statement whose content is not `Unit`, as the last line of a block that needs a value, is one E0217 instead of
+  E0217 and E0204, and the block's value is the error type; its message "The `T` inside `Ok` is discarded, and
+  `… else return` has no value: bind it, `let name: T = … else return …`, and end the block with `name`." (`Some`
+  for an `Option`), and its `expected` of two lines, `let name: T = <expression> else return …` and `name`, with the
+  `else` value left as `…` like the one-line form. A `Unit` content there keeps E0204 alone, and E0224 at a block's
+  end still comes with E0204 (left for later). In `decisions.md`, Type checking (Discarded values).
 
 ## Database phase: open points (2026-11-12)
 
@@ -1123,7 +1133,8 @@ Built from `docs/plans/statements.md` at `9ba84a8` (after `std-net`). What the b
   so 2 lines and 609 bytes remain, and the next two phases plan about 190 bytes. The program's heading and sentence
   were merged into `## A complete program, accepted as it stands` to fit.
 - **Output size of shared cases** (T10): each pattern copies the body. Nothing measured yet; the `tickets` round's
-  `out/` will show it.
+  `out/` will show it. Closed: shared and separate arms compile to identical TypeScript (see "From the tickets
+  round").
 
 Left for later:
 
@@ -1133,7 +1144,62 @@ Left for later:
   paragraph above are left as they are.
 - **The `tickets` round** (the plan's section 7; its prompt is saved at
   `~/coding_projects/alang-rounds/prompts/tickets.md`) tests whether the card teaches the three forms and
-  `std.list.set` is found.
+  `std.list.set` is found. Run; see "From the tickets round".
+
+## From the tickets round (2026-11-14)
+
+The playground round of item 21: automated with `scripts/playground-round.sh` (headless Opus 5.5, no advisor,
+`--restricted`, an empty codebase), against `9624226` on `statements`; folder
+`~/coding_projects/alang-rounds/2026-11-14-tickets/`. The task: `tickets`, a command-line tracker for work tickets in
+a text file, with moves between five states (the plan's section 7). A fresh Opus agent analyzed it; its report, the
+call table, a Python reference, the runner and the probes are in `analysis/` there.
+
+- **Correct.** All 68 cases the prompt fixes and its 11-run sequence (file bytes included) agree with the reference;
+  no trap in 92 cases, and the file is unchanged after all 57 exit-1 runs. `finish 2` printed its refusal on stdout
+  with exit 0: a prompt ambiguity (the prompt said a refused move "prints" its text, like a successful one, and left
+  it out of the error list), disclosed by the model; the saved prompt is changed, and the plan quotes it (below).
+  No regression.
+- **The propagation statement taken up fully:** 2 sites, as the plan predicted, and 0 dummy `Unit` bindings, where
+  earlier rounds had 2.
+- **`let [...]` and shared cases not used.** `parse_line` checks a length of 3, then calls `std.list.get` three times
+  (a rewrite with `let [first, owner, title]` is accepted in scratch). States are compared as strings with
+  `std.list.contains` at 4 sites, which loses exhaustiveness. `std.list.set` and `find_index` are used once each,
+  found by `list("std.list")`.
+- **Effort.** 17 tool calls (`card` 1, `list` 7, `search` 2, `submit` 2, Bash 3, Read 1, Edit 1); 0 `context`; the
+  first `search` calls in six rounds, two exact-name lookups; `search_type` unused. 26 definitions, 73 examples;
+  211 s, 28.2k output tokens, $1.01.
+- **The first submit was rejected** with E0217 and E0204 from one cause: a match arm of `let outcome: Outcome = match
+  command` ended with `move_ticket(...) else return Err(error)`, and E0217's `expected`, applied, gave E0204 again.
+  Resending all 26 definitions cost 36.7% of the output tokens (17.8k without it) and 64 s.
+- **Shared cases cost no extra TypeScript:** shared and separate arms compile to byte-identical TypeScript (2,013
+  bytes each, `analysis/probes/shared.alang` and `separate.alang`), which closes the note on the output size of
+  shared cases under "From statements".
+
+What the fixes after it changed (on `statements`, one commit each):
+
+- `3beb41c`: a propagation statement whose content is not `Unit`, as the last line of a block that needs a value, is
+  one E0217 (no E0204 beside it), whose `expected` has two lines, the `let` and the bound name; applied, the
+  program is clean (Decisions: Type checking, Discarded values).
+- `16e76da`: the card says that a list of known length is taken apart by name with `let [...]` when it has exactly
+  as many items as names, where it said "a list of exactly two items" (158 lines, 9,673 bytes; 566 bytes remain).
+- `1471396`: the plan's section 7 quotes the changed round prompt, in which a refused move is an error (stderr,
+  exit 1), and says why.
+
+Left for later:
+
+- **Shared cases on the card.** Its only shared-case example sits in the E0227 sentence, met only when reaching for
+  a catch-all. If the next round again uses none, move a shared case into the card's example program (a decision on
+  the card's budget). A `match` cannot sit inside a lambda, so the active count would have needed a helper.
+- **A rejected transaction is resent whole:** 36.7% of the output here, 18% in the manual `tasks` round. No phase
+  covers it (database and MCP).
+- **Test-then-unwrap with a dummy default** in `parse_file` (`if bad != None then let index: Int =
+  std.option.with_default(option: bad, default: 0)`), and an identity `filter_map`: style, observe.
+- **`search_type` with a function type,** such as `(_) -> Bool`, is E0511 today, while `_` matches it; `fn-types` F9
+  addresses it. Discovery read whole modules (7 `list` calls, 23 KB).
+- **E0224 and E0204 from one cause** (found while fixing E0217): `std.int.abs(value: n) else return 0` as the last
+  line of a match arm in `let value: Int = match o` gives E0224 ("write the statement without `else return …`") and
+  E0204, though following E0224 alone gives a clean program. The same shape as the E0217 fix; left, since the brief
+  kept the other paths as they were.
 
 ## Spec observations
 
