@@ -204,6 +204,22 @@ export async function testExamples(built: Built, options: AcceptOptions = {}): P
 // refused, a package comes only from Deno's cache).
 const ISOLATED_FLAGS = ["--no-prompt", "--no-config", "--no-lock", "--no-remote", "--cached-only", "--quiet"];
 
+// The separate processes running now. Their time limit is a timer of this
+// process, so one that ends early (the MCP server on a signal) stops them
+// first; otherwise a module that never returns would outlive it.
+const running = new Set<Deno.ChildProcess>();
+
+export function stopIsolated(): void {
+  for (const child of running) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // It has ended meanwhile.
+    }
+  }
+  running.clear();
+}
+
 // Runs the constants and examples of `built` in a Deno process without
 // permissions, which reports over stdout through `run_isolated` (runtime.ts).
 // The process is stopped after `limitMs`. Every acceptance loads the
@@ -261,11 +277,13 @@ async function runIsolated(built: Built, limitMs: number): Promise<Results> {
         // It has ended meanwhile.
       }
     }, limitMs);
+    running.add(child);
     let output: Deno.CommandOutput;
     try {
       output = await child.output();
     } finally {
       clearTimeout(timer);
+      running.delete(child);
     }
     // The report comes from a process that ran foreign code, which may have
     // changed the built-ins the report is made with: whatever cannot be read

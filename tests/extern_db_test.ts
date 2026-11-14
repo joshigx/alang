@@ -118,6 +118,17 @@ Deno.test("extern db: a module edit is caught by the next acceptance of anything
   await done(cb);
 });
 
+Deno.test("extern db: `alang db run` runs a program with an extern from the codebase's directory", async () => {
+  const cb = await withText();
+  const [, , , MAIN] = parseProgram(TEXT).map(printDefinition);
+  await ok(cb, [add(MAIN)]);
+  const out = await cb.run("text.main", { args: ["café au lait"], stdio: "piped", cwd: cb.dir });
+  const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  assertEquals([out.code, decode(out.stdout), decode(out.stderr)], [0, "q=caf%C3%A9%20au%20lait\n", ""]);
+  noLeftovers(cb);
+  await done(cb);
+});
+
 // ---- the server (E11) ----
 
 const CLI = new URL("../src/cli.ts", import.meta.url).pathname;
@@ -162,6 +173,38 @@ Deno.test("extern db: a server without --allow-run refuses an extern (E0408); wi
   assert_(!load.message.includes("\x1b["), load.message);
   const left = [...Deno.readDirSync(join(cb.dir, "out"))].filter((e) => e.name.startsWith("accept-"));
   assertEquals(left.map((e) => e.name), []);
+  await Deno.remove(cb.dir, { recursive: true });
+});
+
+Deno.test("extern db: a server ended by a signal stops the separate process it started", async () => {
+  const cb = await fresh();
+  cb.close(); // The server process opens it.
+  // A module that never finishes loading.
+  await Deno.writeTextFile(join(cb.dir, "text.ts"), "while (true) {}\n" + TEXT_TS);
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "--allow-read", "--allow-write", "--allow-run", CLI, "mcp", "--dir", cb.dir],
+    stdin: "piped",
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  const writer = child.stdin.getWriter();
+  const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "add", arguments: { text: ENCODE } } };
+  await writer.write(new TextEncoder().encode(JSON.stringify(call) + "\n"));
+  // The separate processes of this codebase, by their entry's path.
+  const isolated = async () => {
+    const ps = await new Deno.Command("ps", { args: ["-eo", "args"], stdout: "piped" }).output();
+    return new TextDecoder().decode(ps.stdout).split("\n").filter((l) => l.includes(join(cb.dir, "out", "accept-")));
+  };
+  const until = async (test: () => Promise<boolean>) => {
+    for (let i = 0; i < 100 && !(await test()); i++) await new Promise((r) => setTimeout(r, 50));
+  };
+  await until(async () => (await isolated()).length > 0);
+  assertEquals((await isolated()).length, 1);
+  child.kill("SIGTERM");
+  assertEquals((await child.status).code, 0);
+  await until(async () => (await isolated()).length === 0);
+  assertEquals(await isolated(), []);
+  await writer.close().catch(() => {});
   await Deno.remove(cb.dir, { recursive: true });
 });
 

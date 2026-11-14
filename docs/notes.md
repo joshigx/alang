@@ -211,7 +211,7 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     every acceptance (E15). The MCP instructions name the module as the one file the model writes; the card teaches
     the form (158 lines, 9,910 bytes, 10 fewer). The spec gains `text.decode` and `text.encode` with their TypeScript
     (7.3), accepted with their examples, and section 7.12. Decisions in `decisions.md`, rows listed in the review list
-    below. 477 tests. See "From extern-fn".
+    below. 479 tests. See "From extern-fn".
 
 **Next (2026-11-14, overnight run, updated by the main session at ~07:20):** `std-net` (item 20), `statements`
 (item 21), `fn-types` (item 22), `const` (item 23, with R7 of `docs/plans/records.md`) and `generics` (item 24, generic
@@ -248,7 +248,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` were unparsed
 and needed their form decided (`const` built, item 23; `extern fn` built, item 25).
 
-**Checks before every commit:** `deno task test` (477 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (479 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -569,7 +569,8 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   process gave a report this tool cannot read …" (a module that patched `Array.prototype.map` crashed the tool before;
   the marker separates the report from other output, it does not make it true); the entry ends with `Deno.exit(0)`
   and a report counts even if the process is killed after it (a module's pending timer); the marker is found anywhere
-  in a line; `Built` carries `base`, and `build` and `testExamples` take the options; E0401 and E0237 give an extern
+  in a line; the MCP server stops a running separate process when a signal ends it (the limit is its timer);
+  `Built` carries `base`, and `build` and `testExamples` take the options; E0401 and E0237 give an extern
   the example form, never the constant's text; E0305's and E0512's `at` and E0505's `expected` print `extern fn`;
   the 7.3 bullet stands after the generic types block, which the plan did not know; 7.12 says that a `jsr:` import is
   refused and an `npm:` package loads only from Deno's cache (observed); the tests in three new files
@@ -1739,7 +1740,9 @@ Built from `docs/plans/extern-fn.md` (written at `f0d9ecb`, before `fn-types`, `
 - **Risks left as they are:** the parent buffers the child's stdout and stderr for up to 30 s, so a module that
   prints without end grows the tool's memory (no cap on the captured output, nor on the child's heap); a module's
   static imports at fixed paths are read as it loads (O15 of the plan), so a module could report a readable file's
-  content through a failing example; at run time an extern has all of `main`'s permissions; `deno compile` would have
+  content through a failing example; at run time an extern has all of `main`'s permissions; the time limit is a
+  timer of the tool, so the MCP server stops a running separate process when a signal ends it (tested), but a file
+  command (`alang check`) ended by a SIGTERM of its own leaves a hanging one running; `deno compile` would have
   no `deno` at `Deno.execPath()` to start the separate process; Windows paths and `SIGKILL` are untested.
 - **The round `query`** (prompt and reference saved by the main session) is not run by this phase.
 

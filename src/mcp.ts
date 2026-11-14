@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { CARD } from "./card.ts";
 import { Codebase, parseChanges, type SubmitResult } from "./codebase.ts";
 import { AlangError } from "./diagnostic.ts";
+import { stopIsolated } from "./toolchain.ts";
 
 // ---- protocol ----
 
@@ -589,8 +590,10 @@ export async function mcpMain(args: string[]): Promise<number> {
   const cb = await Codebase.open(dir);
   // Clients may end the server with a signal instead of closing its stdin.
   // The acceptance file exists only during an acceptance; one in progress is
-  // abandoned (nothing is written before it ends), and the process ends.
+  // abandoned (nothing is written before it ends), its separate process
+  // stopped (E10), and the process ends.
   const stop = () => {
+    stopIsolated();
     cb.close();
     Deno.exit(0);
   };
