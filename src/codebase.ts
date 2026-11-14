@@ -753,7 +753,12 @@ export class Codebase {
       throw new AlangError(diagnostic({
         code: "E0502",
         at: `list(${module})`,
-        message: `There is no module \`${module}\`.` + (near ? ` Did you mean \`${near}\`?` : ""),
+        message: `There is no module \`${module}\`.` +
+          (near
+            ? ` Did you mean \`${near}\`?`
+            : module.startsWith("std.")
+            ? ' `list("std")` gives the std modules.'
+            : ""),
         fix: near ? { replace: module, with: near } : null,
       }));
     }

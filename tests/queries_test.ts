@@ -192,6 +192,9 @@ Deno.test("queries: list gives a module's definitions and submodules", async () 
   assertEquals(cb.list("").submodules, ["config", "net"]);
   const e = throwsCode(() => cb.list("nett"), "E0502");
   assertEquals(e.diagnostic.fix, { replace: "nett", with: "net" });
+  // An unknown std module with no near name points to the std listing.
+  const std = throwsCode(() => cb.list("std.result"), "E0502").diagnostic;
+  assertEquals([std.message, std.fix], ['There is no module `std.result`. `list("std")` gives the std modules.', null]);
   await done(cb);
 });
 
