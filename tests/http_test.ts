@@ -7,11 +7,14 @@ import { pathText } from "../src/ast.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import { printExpr } from "../src/printer.ts";
 import {
+  BAD_PORTS,
   Err,
   Ok,
   type std$http$Request,
   std$http$Response,
   type std$http$Response as Response_,
+  std$http$send,
+  type std$http$SendError,
   std$http$serve,
   Trap,
   trap,
@@ -347,4 +350,374 @@ Deno.test("http: examples test a pure handler at acceptance", async () => {
   const e = await rejection(accept(PURE("welcome"), `${OUT}pure_failing.ts`));
   assert_(e instanceof AlangError);
   assertEquals(e.diagnostics.map((d) => [d.code, d.definition]), [["E0402", "web.route"]]);
+});
+
+// ---- std.http.send ----
+
+// The headers HTTP sets itself, which a program may not send.
+const MANAGED = [
+  "connection",
+  "content-length",
+  "expect",
+  "host",
+  "keep-alive",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+];
+
+const header = (name: string, value: string) => ({ name, value });
+const failed = (r: { tag: string; value?: unknown }): string =>
+  r.tag === "Err" && (r.value as std$http$SendError).tag === "Failed" ? "Failed" : JSON.stringify(r);
+
+interface RawRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly head: string;
+  readonly content: Uint8Array;
+}
+// What a raw server sends: these bytes, then it closes the connection; null
+// closes it without an answer; "hold" keeps it open until the server closes.
+type RawAnswer = Uint8Array | string | null | "hold";
+
+const encode = (text: string) => new TextEncoder().encode(text);
+
+function joined(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
+  const all = new Uint8Array(a.length + b.length);
+  all.set(a);
+  all.set(b, a.length);
+  return all;
+}
+
+// The head of a response, with these headers, then the content.
+function raw(status: string, headers: [string, string][], content: Uint8Array | string = ""): Uint8Array {
+  const head = [`HTTP/1.1 ${status}`, ...headers.map(([n, v]) => `${n}: ${v}`), "", ""].join("\r\n");
+  return joined(encode(head), typeof content === "string" ? encode(content) : content);
+}
+
+async function readRequest(conn: Deno.Conn): Promise<RawRequest | null> {
+  let bytes = new Uint8Array(0);
+  const chunk = new Uint8Array(16_384);
+  const more = async () => {
+    const n = await conn.read(chunk);
+    if (n === null) return false;
+    bytes = joined(bytes, chunk.subarray(0, n));
+    return true;
+  };
+  let end = -1;
+  while ((end = new TextDecoder().decode(bytes).indexOf("\r\n\r\n")) < 0) if (!(await more())) return null;
+  const head = new TextDecoder().decode(bytes).slice(0, end);
+  const start = encode(head).length + 4;
+  const length = Number(/^content-length: *(\d+)/im.exec(head)?.[1] ?? 0);
+  while (bytes.length < start + length) if (!(await more())) return null;
+  const [method, path] = head.split("\r\n")[0].split(" ");
+  return { method, path, head, content: bytes.subarray(start, start + length) };
+}
+
+// An HTTP/1.1 server written by hand, for answers std.http.serve never gives.
+function rawServer(answer: (request: RawRequest) => RawAnswer | Promise<RawAnswer>) {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const conns = new Set<Deno.Conn>();
+  const handled: Promise<void>[] = [];
+  let release = () => {};
+  const closing = new Promise<void>((resolve) => (release = resolve));
+  const requests: RawRequest[] = [];
+  const handle = async (conn: Deno.Conn) => {
+    try {
+      const request = await readRequest(conn);
+      if (request === null) return;
+      requests.push(request);
+      const reply = await answer(request);
+      if (reply === "hold") await closing;
+      else if (reply !== null) {
+        const bytes = typeof reply === "string" ? encode(reply) : reply;
+        for (let at = 0; at < bytes.length;) at += await conn.write(bytes.subarray(at));
+      }
+    } catch {
+      // The client went away.
+    } finally {
+      conns.delete(conn);
+      try {
+        conn.close();
+      } catch {
+        // Closed already.
+      }
+    }
+  };
+  const accepting = (async () => {
+    try {
+      for await (const conn of listener) {
+        conns.add(conn);
+        handled.push(handle(conn));
+      }
+    } catch {
+      // The listener closed.
+    }
+  })();
+  return {
+    url: `http://127.0.0.1:${(listener.addr as Deno.NetAddr).port}`,
+    requests,
+    close: async () => {
+      release();
+      listener.close();
+      await accepting;
+      await Promise.all(handled);
+    },
+  };
+}
+
+Deno.test("send: a request reaches std.http.serve, its response comes back", async () => {
+  const seen: std$http$Request[] = [];
+  const server = serving((request) => {
+    seen.push(request);
+    return response(201, "done", [["x-reply", "yes"]]);
+  });
+  try {
+    const sent = await std$http$send("POST", `${server.url}/a/b?x=1`, [header("X-Test", "1")], "hello, wörld", 5000);
+    assert_(sent.tag === "Ok", JSON.stringify(sent));
+    const { status, headers, content } = sent.value;
+    // Deno's server adds date and vary.
+    assertEquals([status, headers.filter((h) => h.name !== "date" && h.name !== "vary"), content], [201, [
+      header("content-length", "4"),
+      header("content-type", "text/plain; charset=utf-8"),
+      header("x-reply", "yes"),
+    ], "done"]);
+  } finally {
+    assertEquals(await server.stop(), Ok(Unit));
+  }
+  const [post] = seen;
+  assertEquals([post.method, post.path, post.query, post.content], ["POST", "/a/b", "x=1", "hello, wörld"]);
+  // Content without a content-type is text in UTF-8, as the server sends it.
+  for (const h of [header("x-test", "1"), header("content-type", "text/plain; charset=utf-8")]) {
+    assert_(post.headers.some((p) => p.name === h.name && p.value === h.value), JSON.stringify(post.headers));
+  }
+});
+
+Deno.test("send: response headers sorted and joined as fetch gives them; compressed content arrives decoded", async () => {
+  const gzip = new Uint8Array(
+    await new Response(new Blob([encode("compressed ä")]).stream().pipeThrough(new CompressionStream("gzip")))
+      .arrayBuffer(),
+  );
+  const server = rawServer((request) =>
+    request.path === "/gzip"
+      ? raw(
+        "200 OK",
+        [["Content-Encoding", "gzip"], ["Content-Length", String(gzip.length)], ["Connection", "close"]],
+        gzip,
+      )
+      : raw("200 OK", [
+        ["Set-Cookie", "a=1"],
+        ["X-B", "1"],
+        ["x-a", "2"],
+        ["Set-Cookie", "b=2"],
+        ["x-a", "3"],
+        ["Connection", "close"],
+        ["Content-Length", "5"],
+      ], "hello")
+  );
+  try {
+    assertEquals(
+      await std$http$send("GET", `${server.url}/headers`, [], "", 5000),
+      Ok({
+        status: 200,
+        headers: [
+          header("connection", "close"),
+          header("content-length", "5"),
+          header("set-cookie", "a=1"),
+          header("set-cookie", "b=2"),
+          header("x-a", "2, 3"),
+          header("x-b", "1"),
+        ],
+        content: "hello",
+      }),
+    );
+    assertEquals(
+      await std$http$send("GET", `${server.url}/gzip`, [], "", 5000),
+      Ok({ status: 200, headers: [header("connection", "close")], content: "compressed ä" }),
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("send: no response is an error value: TimedOut, Unreachable, InvalidUrl", async () => {
+  let calls = 0;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const server = serving(async () => {
+    calls++;
+    await gate;
+    return response(200, "late");
+  });
+  try {
+    const start = performance.now();
+    assertEquals(
+      await std$http$send("GET", `${server.url}/held`, [], "", 100),
+      Err<std$http$SendError>({ tag: "TimedOut" }),
+    );
+    const took = performance.now() - start;
+    assert_(took < 2000, `${took} ms`);
+    assertEquals(calls, 1);
+    assertEquals(
+      await std$http$send("GET", `http://127.0.0.1:${freePort()}/`, [], "", 5000),
+      Err<std$http$SendError>({ tag: "Unreachable" }),
+    );
+    const port = new URL(server.url).port;
+    for (
+      const url of [
+        "not a url",
+        "/relative",
+        "ftp://127.0.0.1/",
+        "file:///etc/hostname",
+        `http://u:p@127.0.0.1:${port}/`,
+        "http://127.0.0.1:25/",
+        "http://127.0.0.1:0/",
+      ]
+    ) assertEquals(await std$http$send("GET", url, [], "", 5000), Err<std$http$SendError>({ tag: "InvalidUrl" }), url);
+    // None of them was sent.
+    assertEquals(calls, 1);
+  } finally {
+    release();
+    assertEquals(await server.stop(), Ok(Unit));
+  }
+});
+
+Deno.test("send: redirects are followed as fetch follows them", async () => {
+  const server = rawServer((request) => {
+    const moved = (status: string, to: string) =>
+      raw(status, [["Location", to], ["Content-Length", "0"], ["Connection", "close"]]);
+    if (request.path === "/from") return moved("302 Found", "/target");
+    if (request.path === "/see-other") return moved("303 See Other", "/echo");
+    if (request.path === "/to-file") return moved("302 Found", "file:///etc/hostname");
+    if (request.path === "/loop") return moved("302 Found", "/loop");
+    const content = `${request.method} ${request.path} ${new TextDecoder().decode(request.content)}`;
+    return raw("200 OK", [["Content-Length", String(encode(content).length)], ["Connection", "close"]], content);
+  });
+  try {
+    const target = await std$http$send("GET", `${server.url}/from`, [], "", 5000);
+    assertEquals(target.tag === "Ok" && [target.value.status, target.value.content], [200, "GET /target "]);
+    // A 303 continues as GET, without the content.
+    const seen = await std$http$send("POST", `${server.url}/see-other`, [], "posted", 5000);
+    assertEquals(seen.tag === "Ok" && seen.value.content, "GET /echo ");
+    // A redirect to anything but http or https is no response: nothing of the file.
+    const file = await std$http$send("GET", `${server.url}/to-file`, [], "", 5000);
+    assertEquals(failed(file), "Failed");
+    assertEquals(failed(await std$http$send("GET", `${server.url}/loop`, [], "", 5000)), "Failed");
+    assertEquals(server.requests.filter((r) => r.path === "/loop").length, 21);
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("send: the program's mistakes trap before anything is sent", async () => {
+  let calls = 0;
+  const server = serving(() => {
+    calls++;
+    return response(200, "");
+  });
+  const trapOf = async (method: string, headers: [string, string][], content: string, timeout = 5000) => {
+    const e = await rejection(
+      std$http$send(method, `${server.url}/`, headers.map(([n, v]) => header(n, v)), content, timeout),
+    );
+    assert_(e instanceof Trap, String(e));
+    return [e.kind, e.definition, e.at];
+  };
+  try {
+    for (const method of ["get", "CONNECT", "GE T", "TRACE", "TRACK", ""]) {
+      assertEquals(await trapOf(method, [], ""), ["http", "std.http.send", method]);
+    }
+    assertEquals(await trapOf("GET", [], "x"), ["http", "std.http.send", "GET"]);
+    assertEquals(await trapOf("HEAD", [], "x"), ["http", "std.http.send", "HEAD"]);
+    for (const [name, value] of [["bad name", "v"], ["x-a", "a\nb"], ["x-a", "😀"]]) {
+      assertEquals(await trapOf("GET", [[name, value]], ""), ["http", "std.http.send", `${name}: ${value}`]);
+    }
+    for (const name of [...MANAGED, "Host", "CONTENT-LENGTH"]) {
+      assertEquals(await trapOf("POST", [[name, "1"]], "x"), ["http", "std.http.send", `${name}: 1`]);
+    }
+    for (const timeout of [0, -1]) {
+      assertEquals(await trapOf("GET", [], "", timeout), ["requires", "std.http.send", "timeout_milliseconds >= 1"]);
+    }
+    assertEquals(calls, 0);
+    // A character up to U+00FF is a header value.
+    const latin = await std$http$send("GET", `${server.url}/`, [header("x-a", "é")], "", 5000);
+    assertEquals(latin.tag === "Ok" && latin.value.status, 200);
+    assertEquals(calls, 1);
+  } finally {
+    assertEquals(await server.stop(), Ok(Unit));
+  }
+});
+
+Deno.test("send: odd answers of a server are Failed; content is read as UTF-8", async () => {
+  const server = rawServer((request) => {
+    if (request.path === "/600") return raw("600 Odd", [["Content-Length", "0"], ["Connection", "close"]]);
+    if (request.path === "/closed") return null;
+    if (request.path === "/short") return raw("200 OK", [["Content-Length", "10"], ["Connection", "close"]], "abc");
+    return raw(
+      "200 OK",
+      [["Content-Length", "5"], ["Connection", "close"]],
+      new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xff]),
+    );
+  });
+  try {
+    for (const path of ["/600", "/closed", "/short"]) {
+      assertEquals(failed(await std$http$send("GET", `${server.url}${path}`, [], "", 5000)), "Failed", path);
+    }
+    // A leading byte order mark goes, an invalid byte becomes U+FFFD.
+    const latin = await std$http$send("GET", `${server.url}/bytes`, [], "", 5000);
+    assertEquals(latin.tag === "Ok" && latin.value.content, "a�");
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("send: the bad ports are those Node.js's fetch refuses, and 0", async () => {
+  if (!(await hasNode())) return;
+  const closed = freePort();
+  // Node.js tries port 0 and is refused; the runtime decides it before sending.
+  const bad = [...BAD_PORTS].filter((port) => port !== 0);
+  assertEquals(bad.length, BAD_PORTS.size - 1);
+  const script = `
+    const ports = ${JSON.stringify([...bad, 0, closed])};
+    const out = [];
+    for (const port of ports) {
+      try {
+        await fetch("http://127.0.0.1:" + port + "/");
+        out.push("ok");
+      } catch (e) {
+        out.push(e.cause?.code ?? e.cause?.message);
+      }
+    }
+    console.log(JSON.stringify(out));`;
+  const node = await new Deno.Command("node", { args: ["-e", script], stdout: "piped", stderr: "piped" }).output();
+  assertEquals(node.code, 0, decode(node.stderr));
+  const answers: string[] = JSON.parse(decode(node.stdout));
+  assertEquals(answers, [...bad.map(() => "bad port"), "ECONNREFUSED", "ECONNREFUSED"]);
+});
+
+Deno.test("send: sending without the net permission traps", async () => {
+  const source = `
+fn client.main
+  doc: "Sends a request to the URL it is given."
+  in: none
+  out: Unit
+  effects: net, env, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let url: String = std.list.get(list: std.env.args(), index: 0) else return Unit
+    let sent: Result<std.http.Response, std.http.SendError> = std.http.send(method: "GET", url: url, headers: std.list.empty<std.http.Header>(), content: "", timeout_milliseconds: 5000)
+    std.console.print_line(text: std.text.show(value: sent))
+    return Unit
+end fn client.main
+`;
+  const built = (await accept(source, `${OUT}client_no_net.ts`)).built;
+  const out = await run(built, {
+    stdio: "piped",
+    effects: ["env", "console"],
+    args: [`http://127.0.0.1:${freePort()}/`],
+  });
+  const trap = JSON.parse(decode(out.stderr));
+  assertEquals([out.code, trap.trap, trap.definition], [70, "effect", "std.http.send"]);
 });

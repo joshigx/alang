@@ -878,7 +878,7 @@ Deno.test("effects: a caller declares the effects of its callees (2.1)", () => {
 });
 
 // Every std function with an effect but std.http.serve (tested below), as a
-// statement that binds its result.
+// statement that binds its result, in the order of STD.
 const EFFECTFUL: [string, string][] = [
   ['std.console.print_line(text: "x")', "console"],
   ['std.console.print(text: "x")', "console"],
@@ -893,6 +893,11 @@ const EFFECTFUL: [string, string][] = [
   ['let r: Result<std.fs.Kind, std.fs.Error> = std.fs.kind(path: "x")', "fs.read"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.create_directory(path: "x")', "fs.write"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.remove(path: "x")', "fs.write"],
+  [
+    'let r: Result<std.http.Response, std.http.SendError> = std.http.send(method: "GET", url: "http://localhost/", ' +
+    'headers: std.list.empty<std.http.Header>(), content: "", timeout_milliseconds: 1000)',
+    "net",
+  ],
   ['std.log.print_line(text: "x")', "log"],
   ["let r: Int = std.random.int(low: 1, high: 6)", "random"],
   ["let r: Int = std.time.now_milliseconds()", "time"],

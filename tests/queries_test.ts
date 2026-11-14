@@ -241,7 +241,9 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
     ["std.http.Header", "type", null],
     ["std.http.Request", "type", null],
     ["std.http.Response", "type", null],
+    ["std.http.SendError", "type", null],
     ["std.http.ServeError", "type", null],
+    ["std.http.send", "fn", null],
     ["std.http.serve", "fn", null],
   ]);
   // Every std function's hit shows its signature: the line of context and
@@ -298,6 +300,7 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
     "net.port.ParseError",
     "net.port.Port",
     "net.port.parse",
+    "std.http.SendError",
   ]);
   assertEquals(cb.searchText("file").map((h) => [h.name, h.hash === null]), [
     ["config.load_port", false],

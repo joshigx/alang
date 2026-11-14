@@ -830,27 +830,37 @@ interface Answering {
 
 type Listen = (host: string, port: number, a: Answering) => Promise<Listener | std$http$ServeError>;
 
-// Headers as the host sends them. Both hosts reject names that are not HTTP
-// tokens and values with line breaks or characters above U+00FF; checking
-// here gives one trap on every host instead of two different exceptions. A
-// response without content-type gets the same one on every host.
-function hostHeaders(response: std$http$Response): [string, string][] {
-  const headers: [string, string][] = [];
-  for (const { name, value } of response.headers) {
-    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) || !/^[\t\x20-\x7e\x80-\xff]*$/.test(value)) {
-      trap(
-        "http",
-        "std.http.serve",
-        `${name}: ${value}`,
-        "A response header has a name that is not an HTTP token, or a value with a line break or a character above U+00FF.",
-      );
-    }
-    headers.push([name, value]);
+// Both hosts reject header names that are not HTTP tokens and values with
+// line breaks or characters above U+00FF; checking here gives one trap on
+// every host instead of two different exceptions.
+function checkHeader(definition: string, which: "request" | "response", name: string, value: string): void {
+  if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) || !/^[\t\x20-\x7e\x80-\xff]*$/.test(value)) {
+    trap(
+      "http",
+      definition,
+      `${name}: ${value}`,
+      `A ${which} header has a name that is not an HTTP token, or a value with a line break or a character above U+00FF.`,
+    );
   }
-  if (!headers.some(([name]) => name.toLowerCase() === "content-type") && response.content !== "") {
+}
+
+// Content without a content-type header is text in UTF-8, in both
+// directions and on every host.
+function withContentType(headers: [string, string][], content: string): [string, string][] {
+  if (content !== "" && !headers.some(([name]) => name.toLowerCase() === "content-type")) {
     headers.push(["content-type", "text/plain; charset=utf-8"]);
   }
   return headers;
+}
+
+// Headers as the host sends them.
+function hostHeaders(response: std$http$Response): [string, string][] {
+  const headers: [string, string][] = [];
+  for (const { name, value } of response.headers) {
+    checkHeader("std.http.serve", "response", name, value);
+    headers.push([name, value]);
+  }
+  return withContentType(headers, response.content);
 }
 
 function serveError(e: unknown): std$http$ServeError {
@@ -1113,6 +1123,243 @@ export async function std$http$serve(
   }
   if (failure !== null) throw (failure as { error: unknown }).error;
   return Ok(Unit);
+}
+
+// ---- std.http.send ----
+
+export type std$http$SendError =
+  | { readonly tag: "InvalidUrl" }
+  | { readonly tag: "Unreachable" }
+  | { readonly tag: "TimedOut" }
+  | { readonly tag: "Failed"; readonly value: string };
+
+// The Fetch standard's bad ports (fetch.spec.whatwg.org/#port-blocking):
+// Node.js's fetch refuses them, Deno's does not, so the runtime refuses them
+// on both. A test compares the list with Node.js's. Port 0, which no server
+// listens on, is refused too (Node.js tries it and is refused).
+export const BAD_PORTS: ReadonlySet<number> = new Set([
+  0,
+  1,
+  7,
+  9,
+  11,
+  13,
+  15,
+  17,
+  19,
+  20,
+  21,
+  22,
+  23,
+  25,
+  37,
+  42,
+  43,
+  53,
+  69,
+  77,
+  79,
+  87,
+  95,
+  101,
+  102,
+  103,
+  104,
+  109,
+  110,
+  111,
+  113,
+  115,
+  117,
+  119,
+  123,
+  135,
+  137,
+  139,
+  143,
+  161,
+  179,
+  389,
+  427,
+  465,
+  512,
+  513,
+  514,
+  515,
+  526,
+  530,
+  531,
+  532,
+  540,
+  548,
+  554,
+  556,
+  563,
+  587,
+  601,
+  636,
+  989,
+  990,
+  993,
+  995,
+  1719,
+  1720,
+  1723,
+  2049,
+  3659,
+  4045,
+  4190,
+  5060,
+  5061,
+  6000,
+  6566,
+  6665,
+  6666,
+  6667,
+  6668,
+  6669,
+  6679,
+  6697,
+  10080,
+]);
+
+// Headers HTTP sets itself; the hosts disagree on what a program may set
+// (Node.js refuses some, Deno sends them), so none is the program's.
+const MANAGED = new Set([
+  "connection",
+  "content-length",
+  "expect",
+  "host",
+  "keep-alive",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+// No connection was made: Node.js's codes, under the error's cause.
+const UNREACHABLE_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+// The URL as sent, or null if it is not one alang sends: decided here, before
+// sending, alike on every host.
+function sendTarget(url: string): URL | null {
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return null;
+  }
+  if (target.protocol !== "http:" && target.protocol !== "https:") return null;
+  if (target.username !== "" || target.password !== "") return null;
+  const port = target.port === "" ? (target.protocol === "https:" ? 443 : 80) : Number(target.port);
+  return BAD_PORTS.has(port) ? null : target;
+}
+
+// One request, and the whole response. The program's mistakes trap before
+// anything is sent; then the URL is checked, then the network is asked. The
+// timeout covers redirects and content too. Redirects are followed as fetch
+// follows them (at most 20); nothing else of the program runs meanwhile.
+export async function std$http$send(
+  method: string,
+  url: string,
+  headers: readonly std$http$Header[],
+  content: string,
+  timeout_milliseconds: number,
+): Promise<Result<std$http$Response, std$http$SendError>> {
+  const condition = "timeout_milliseconds >= 1";
+  if (timeout_milliseconds < 1) {
+    trap("requires", "std.http.send", condition, `Precondition of std.http.send violated: ${condition}`);
+  }
+  if (!/^[A-Z]+$/.test(method) || method === "CONNECT" || method === "TRACE" || method === "TRACK") {
+    trap(
+      "http",
+      "std.http.send",
+      method,
+      `The method \`${method}\` cannot be sent: write it in capital letters, such as GET or POST; CONNECT, TRACE and TRACK are refused.`,
+    );
+  }
+  if ((method === "GET" || method === "HEAD") && content !== "") {
+    trap("http", "std.http.send", method, 'A GET or HEAD request carries no content; send "", or use POST.');
+  }
+  const sent: [string, string][] = [];
+  for (const { name, value } of headers) {
+    checkHeader("std.http.send", "request", name, value);
+    if (MANAGED.has(name.toLowerCase())) {
+      trap(
+        "http",
+        "std.http.send",
+        `${name}: ${value}`,
+        `The header \`${name}\` is set by HTTP itself, not by the program.`,
+      );
+    }
+    sent.push([name, value]);
+  }
+  withContentType(sent, content);
+  const target = sendTarget(url);
+  if (target === null) return Err<std$http$SendError>({ tag: "InvalidUrl" });
+  if (typeof globalThis.fetch !== "function") {
+    return trap("effect", "std.http.send", url, "This runtime has no network.");
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const cancel = after(timeout_milliseconds, () => {
+    timedOut = true;
+    controller.abort();
+  });
+  try {
+    const r = await fetch(target.href, {
+      method,
+      headers: sent,
+      body: content === "" ? undefined : content,
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    // UTF-8, invalid bytes as U+FFFD, a leading byte order mark dropped.
+    const text = await r.text();
+    if (r.status < 200 || r.status > 599) {
+      return Err<std$http$SendError>({
+        tag: "Failed",
+        value: `The server answered with status ${r.status}, outside 200 to 599.`,
+      });
+    }
+    // Sorted, repeated names joined except set-cookie (fetch's order). Deno
+    // drops the two headers that described compressed content, Node.js keeps
+    // them: dropped here for both.
+    let received = [...r.headers].map(([name, value]) => ({ name, value }))
+      .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+    if (received.some((h) => h.name === "content-encoding")) {
+      received = received.filter((h) => h.name !== "content-encoding" && h.name !== "content-length");
+    }
+    // The record's `where`: no content with 204, 205 and 304.
+    return Ok({ status: r.status, headers: received, content: noContent(r.status) ? "" : text });
+  } catch (e) {
+    if (timedOut) return Err<std$http$SendError>({ tag: "TimedOut" });
+    const err = e as { name?: string; code?: string; message?: string; cause?: { code?: string; message?: string } };
+    // Refused for lack of the permission: more than `main` declares (2.5).
+    if (err.name === "NotCapable" || err.code === "ERR_ACCESS_DENIED" || err.cause?.code === "ERR_ACCESS_DENIED") {
+      return trap("effect", "std.http.send", url, "Sending needs the effect `net` on `main`.");
+    }
+    // No connection: Node.js gives a code, Deno only its message, matched
+    // as onFiles matches "all access".
+    if (UNREACHABLE_CODES.has(err.cause?.code ?? "") || /\b(dns error|tcp connect error)\b/.test(String(err.message))) {
+      return Err<std$http$SendError>({ tag: "Unreachable" });
+    }
+    const message = String(err.message ?? e);
+    return Err<std$http$SendError>({
+      tag: "Failed",
+      value: err.cause?.message ? `${message}: ${err.cause.message}` : message,
+    });
+  } finally {
+    cancel();
+  }
 }
 
 // ---- std.log, std.random, std.time ----

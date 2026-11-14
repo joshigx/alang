@@ -565,6 +565,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | `std.fs.remove(path: String): Result<Unit, std.fs.Error>` | fs.write | Removes a file or an empty directory. |
 | `std.fs.describe(error: std.fs.Error): String` | none | The error as a short text for a message, starting in lower case and without a final period: `no such file or directory`, `permission denied`, `is a directory`, `already exists`, or the host's message that `Other` carries. |
 | `std.http.serve(host: String, port: Int, handler: (std.http.Request) -> std.http.Response with effects): Result<Unit, std.http.ServeError>` | net | Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them. |
+| `std.http.send(method: String, url: String, headers: List<std.http.Header>, content: String, timeout_milliseconds: Int): Result<std.http.Response, std.http.SendError>` | net | Sends an HTTP request, like fetch, and waits for the whole response, following up to 20 redirects; `timeout_milliseconds` covers all of it. The response's header names are lowercase and sorted, repeated ones joined with `, ` except `set-cookie`; compressed content arrives decompressed, without its `content-encoding` and `content-length` headers. Content is sent and read as UTF-8 text; without a `content-type` header, content is sent as text/plain. Traps: a method not in capital letters, or CONNECT, TRACE or TRACK; content with GET or HEAD; a header HTTP manages itself (`connection`, `content-length`, `expect`, `host`, `keep-alive`, `te`, `trailer`, `transfer-encoding`, `upgrade`); a timeout below 1. |
 | `std.log.print_line(text: String): Unit` | log | Writes a line to the log, which is the standard error stream. |
 | `std.random.int(low: Int, high: Int): Int` | random | A random integer from `low` to `high`, both included; traps if `low > high`. Not for secrets. |
 | `std.time.now_milliseconds(): Int` | time | The clock's time in milliseconds since 1970-01-01T00:00:00Z. |
@@ -677,7 +678,7 @@ type std.fs.Kind
 end type std.fs.Kind
 
 type std.http.Header
-  doc: "One header of a request or response."
+  doc: "One header of a request or response. A name that is not an HTTP token, or a value with a line break or a character above U+00FF, traps when it is sent."
   record:
     name: String
     value: String
@@ -696,7 +697,7 @@ type std.http.Request
 end type std.http.Request
 
 type std.http.Response
-  doc: "The answer to a request. Statuses 204, 205 and 304 carry no content. Without a content-type header, content is sent as text/plain in UTF-8."
+  doc: "The answer to a request: what a handler of std.http.serve returns and what std.http.send receives. Statuses 204, 205 and 304 carry no content. Without a content-type header, content is sent as text/plain in UTF-8."
   record:
     status: Int
     headers: List<Header>
@@ -712,6 +713,16 @@ type std.http.ServeError
     Other: String
   where: none
 end type std.http.ServeError
+
+type std.http.SendError
+  doc: "Why std.http.send got no response. InvalidUrl: not an absolute http or https URL, one with a user name or password, or one with port 0 or a port the Fetch standard blocks (such as 25), found before sending. Unreachable: the host name does not resolve, or the server refuses the connection. TimedOut: no whole response within the timeout. Failed: anything else, with the host's message, which differs between runtimes: show it, do not compare it."
+  variant:
+    InvalidUrl
+    Unreachable
+    TimedOut
+    Failed: String
+  where: none
+end type std.http.SendError
 
 type std.string.Cut
   doc: "A text cut at a separator: the part before it and the part after it."
