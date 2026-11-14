@@ -119,6 +119,8 @@ function rebuild(
           value: expr(s.value),
           elseReturn: s.elseReturn && expr(s.elseReturn),
         };
+      case "propagate":
+        return { kind: "propagate", value: expr(s.value), elseReturn: expr(s.elseReturn) };
       case "return":
         return { kind: "return", value: expr(s.value) };
       case "expr":

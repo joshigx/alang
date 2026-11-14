@@ -82,3 +82,48 @@ Deno.test("refs: moving a definition rewrites its references from the new module
   const caller = printDefinition(mapReferences(byName("config.load_port"), info, target));
   assertEquals(caller.includes("net.read(text: trimmed)"), true);
 });
+
+// A function called only in a propagation statement (T1).
+const PROPAGATING = `fn checks.positive
+  doc: "Whether a number is positive."
+  in:
+    n: Int
+  out: Result<Unit, String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    positive(n: 1) == Ok(Unit)
+  body:
+    if n < 1 then
+      return Err("not positive")
+    end if
+    return Ok(Unit)
+end fn checks.positive
+
+fn sizes.area
+  doc: "The area of a rectangle of positive sides."
+  in:
+    width: Int
+    height: Int
+  out: Result<Int, String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    area(width: 2, height: 3) == Ok(6)
+  body:
+    checks.positive(n: width) else return Err(error)
+    return Ok(width * height)
+end fn sizes.area`;
+
+Deno.test("refs: a call in a propagation statement is a reference and is rewritten", () => {
+  const program = parseProgram(PROPAGATING);
+  const checked = checkProgram(program);
+  assertEquals(checked.diagnostics, []);
+  const area = program.find((d) => pathText(d.path) === "sizes.area")!;
+  assertEquals(dependencies(area, checked.info), ["sizes.area", "checks.positive"]);
+  const target = (r: { full: string }) => (r.full === "checks.positive" ? "checks.above_zero" : r.full);
+  const renamed = printDefinition(mapReferences(area, checked.info, target));
+  assertEquals(renamed.includes("    checks.above_zero(n: width) else return Err(error)\n"), true);
+});

@@ -554,3 +554,26 @@ Deno.test("rename: a definition replaced alongside a renamed type is compared wi
   assertEquals(cb.definition("config.load_port").text, LOAD_PORT.replaceAll("net.port.Port", "net.port.Number"));
   await done(cb);
 });
+
+Deno.test("rename: a caller that propagates the renamed function's error follows it (T1)", async () => {
+  const cb = await fresh();
+  await ok(cb, [
+    add(fn("checks.positive", {
+      params: ["n: Int"],
+      out: "Result<Unit, String>",
+      examples: ["positive(n: 1) == Ok(Unit)"],
+      body: 'if n < 1 then\n  return Err("not positive")\nend if\nreturn Ok(Unit)',
+    })),
+    add(fn("sizes.area", {
+      params: ["width: Int", "height: Int"],
+      out: "Result<Int, String>",
+      examples: ["area(width: 2, height: 3) == Ok(6)"],
+      body: "checks.positive(n: width) else return Err(error)\nreturn Ok(width * height)",
+    })),
+  ]);
+  assertEquals(cb.callers("checks.positive").callers, ["sizes.area"]);
+  await ok(cb, [rename(cb, "checks.positive", "checks.above_zero")]);
+  assertEquals(cb.callers("checks.above_zero").callers, ["sizes.area"]);
+  assert_(cb.definition("sizes.area").text.includes("    checks.above_zero(n: width) else return Err(error)\n"));
+  await done(cb);
+});

@@ -412,8 +412,9 @@ class Parser {
   // ---- statements ----
 
   // Statements up to (not including) one of the given keywords. With no
-  // keywords, up to end of text.
-  block(terminators: readonly string[]): Stmt[] {
+  // keywords, up to end of text. `thenLine` is the line of the `then` that
+  // opens this block, if it is the `then` branch of an `if`.
+  block(terminators: readonly string[], thenLine: number | null = null): Stmt[] {
     const atEnd = () => {
       const t = this.peek();
       return t.kind === "eof" || (t.kind === "keyword" && terminators.includes(t.text));
@@ -421,14 +422,24 @@ class Parser {
     this.skipNewlines();
     const stmts: Stmt[] = [];
     while (!atEnd()) {
-      stmts.push(this.stmt());
+      stmts.push(this.stmt(thenLine));
       if (!atEnd()) this.expectNewline();
     }
     if (stmts.length === 0) this.fail("A block holds at least one statement.");
     return stmts;
   }
 
-  private stmt(): Stmt {
+  // `expression else return value` (3.2), unless the expression is an `if`,
+  // `match` or `for`, or the `else` stands on the line of the `then` that
+  // opened the enclosing `then` branch: there it belongs to that `if`, so
+  // `if c then f(x: 1) else return v end if` keeps its meaning.
+  private propagates(e: Expr, thenLine: number | null): boolean {
+    if (!this.isKeyword("else") || !this.isKeyword("return", 1)) return false;
+    if (e.kind === "if" || e.kind === "match" || e.kind === "for") return false;
+    return this.peek().line !== thenLine;
+  }
+
+  private stmt(thenLine: number | null = null): Stmt {
     if (this.isKeyword("let")) {
       this.next();
       const name = this.bindingName();
@@ -449,7 +460,13 @@ class Parser {
       return { kind: "return", value: this.expr() };
     }
     if (this.isKeyword("if")) return { kind: "expr", expr: this.ifExpr(true) };
-    return { kind: "expr", expr: this.expr() };
+    const e = this.expr();
+    if (this.propagates(e, thenLine)) {
+      this.next();
+      this.next();
+      return { kind: "propagate", value: e, elseReturn: this.expr() };
+    }
+    return { kind: "expr", expr: e };
   }
 
   // ---- expressions ----
@@ -726,8 +743,9 @@ class Parser {
   private ifExpr(statement: boolean): Expr {
     this.expectKeyword("if");
     const cond = this.expr();
+    const thenLine = this.peek().line;
     this.expectKeyword("then");
-    const then = this.block(["else", "end"]);
+    const then = this.block(["else", "end"], thenLine);
     let elseBlock: Stmt[] | null = null;
     if (this.isKeyword("else")) {
       this.next();

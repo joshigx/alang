@@ -288,3 +288,54 @@ Deno.test("maps: every entry is key: value, without a trailing comma; no braces"
     assertEquals([d.code, d.message], ["E0006", braces], source);
   }
 });
+
+// ---- statements (phase statements) ----
+
+// The canonical text of a statement block, checked to round-trip.
+function canonicalStmts(source: string): string {
+  const tree = parseStatements(source);
+  const printed = printStmts(tree, "");
+  assertEquals(parseStatements(printed), tree, `round trip of ${source}`);
+  return printed;
+}
+
+Deno.test("propagate: `expression else return value` is a statement (T1)", () => {
+  const line = "std.fs.write_text(path: p, text: t) else return Err(error)";
+  assertEquals(canonicalStmts(line), line);
+  assertEquals(parseStatements(line)[0].kind, "propagate");
+  const inIf = `if ready then\n  ${line}\n  check(width: 3) else return Unit\nend if`;
+  assertEquals(canonicalStmts(inIf), inIf);
+});
+
+Deno.test("propagate: an else on the line of an if's then belongs to the if (T2)", () => {
+  // A one-line if keeps its meaning: an if with an else branch.
+  assertEquals(
+    canonicalStmts("if c then f(x: 1) else return Unit end if"),
+    "if c then\n  f(x: 1)\nelse\n  return Unit\nend if",
+  );
+  assertEquals(
+    canonicalStmts("if c then f(x: 1) else g(x: 1) end if"),
+    "if c then\n  f(x: 1)\nelse\n  g(x: 1)\nend if",
+  );
+  // A let takes the else greedily, as before.
+  assertEquals(
+    canonicalStmts("if c then let a: Int = f(x: 1) else return 0 end if"),
+    "if c then\n  let a: Int = f(x: 1) else return 0\nend if",
+  );
+  // Not canonical: the else ends a then-branch line, so it is a propagate
+  // (which the checker rejects as E0224 for a Unit call).
+  const [stmt] = parseStatements("if c then\nf(x: 1) else return Unit\nend if");
+  assertEquals(stmt.kind === "expr" && stmt.expr.kind === "if" && stmt.expr.then[0].kind, "propagate");
+});
+
+Deno.test("propagate: no else after a block or before anything but return (T2)", () => {
+  const message = (source: string) => {
+    const d = assertThrows(() => parseStatements(source), AlangError).diagnostic;
+    return [d.code, d.message];
+  };
+  const lineBreak = ["E0101", "Expected a line break, found `else`."];
+  assertEquals(message("match x\ncase A then\n1\nend match else return 0"), lineBreak);
+  assertEquals(message("for x: Int in xs do\nf(x: x)\nend for else return 0"), lineBreak);
+  assertEquals(message("f(x: 1) else g(x: 1)"), lineBreak);
+  assertEquals(code(() => parseStatements("if c then\nf(x: 1)\nend if else return Unit")), "E0101");
+});

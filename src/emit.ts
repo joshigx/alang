@@ -320,11 +320,30 @@ class DefinitionEmitter {
     stmts.forEach((s, i) => {
       const last = i === stmts.length - 1;
       lines.push(...this.stmt(s, scope, last ? sink : DISCARD));
-      if (last && s.kind === "let" && (sink.kind === "assign" || sink.kind === "push")) {
+      // A statement without a value that ends a block delivers `Unit`, so a
+      // `return match` in a `Unit` function returns in every branch.
+      if (last && (s.kind === "let" || s.kind === "propagate") && sink.kind !== "discard") {
         lines.push(this.applySink(sink, `${RT}.Unit`));
       }
     });
     return lines;
+  }
+
+  // Unpacks a `Result` or an `Option` into a fresh constant, returning the
+  // `else` value if it is `Err` or `None`. Returns the lines and the constant.
+  private unpack(value: Expr, elseReturn: Expr, scope: Scope): [string[], string] {
+    const tmp = this.temp("r");
+    const elseScope = scope.child();
+    const err = elseScope.add("error");
+    // `error` is the Err value of a Result, and Unit for an Option.
+    const isResult = isCon(this.typeOf(value), "Result");
+    return [[
+      `const ${tmp} = ${this.expr(value, scope)};`,
+      `if (!${RT}.isPresent(${tmp})) {`,
+      `  const ${err} = ${isResult ? `${tmp}.value` : `${RT}.Unit`};`,
+      `  return ${this.expr(elseReturn, elseScope)};`,
+      "}",
+    ], tmp];
   }
 
   private stmt(s: Stmt, scope: Scope, sink: Sink): string[] {
@@ -332,18 +351,7 @@ class DefinitionEmitter {
       case "let": {
         const type = this.ts(s.type);
         if (s.elseReturn) {
-          const tmp = this.temp("r");
-          const elseScope = scope.child();
-          const err = elseScope.add("error");
-          // `error` is the Err value of a Result, and Unit for an Option.
-          const isResult = isCon(this.typeOf(s.value), "Result");
-          const lines = [
-            `const ${tmp} = ${this.expr(s.value, scope)};`,
-            `if (!${RT}.isPresent(${tmp})) {`,
-            `  const ${err} = ${isResult ? `${tmp}.value` : `${RT}.Unit`};`,
-            `  return ${this.expr(s.elseReturn, elseScope)};`,
-            "}",
-          ];
+          const [lines, tmp] = this.unpack(s.value, s.elseReturn, scope);
           lines.push(`const ${scope.add(s.name)}: ${type} = ${tmp}.value;`);
           return lines;
         }
@@ -359,6 +367,8 @@ class DefinitionEmitter {
         const value = this.expr(s.value, scope);
         return [`const ${scope.add(s.name)}: ${type} = ${value};`];
       }
+      case "propagate":
+        return this.unpack(s.value, s.elseReturn, scope)[0];
       case "return":
         if (isBlock(s.value)) return this.blockExpr(s.value, scope, { kind: "return" });
         return [`return ${this.expr(s.value, scope)};`];

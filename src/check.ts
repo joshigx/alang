@@ -67,6 +67,10 @@ export interface CheckInfo {
   // definition of their own module in full (E0226), where the short form
   // means the same.
   readonly longForms: WeakSet<object>;
+  // `let` statements of type `Unit` whose E0235 carries a fix: the name is
+  // never used, and dropping `let name: Unit = ` leaves a statement that
+  // parses. The codebase applies that fix itself (refs.ts).
+  readonly unitLets: WeakSet<Stmt>;
 }
 
 export interface CheckResult {
@@ -135,6 +139,7 @@ export function checkProgram(defs: readonly Definition[], options: CheckOptions 
     effectful: new WeakSet(),
     constructs: new WeakMap(),
     longForms: new WeakSet(),
+    unitLets: new WeakSet(),
   };
   for (const s of options.std ?? STD) env.fns.set(s.name, s);
 
@@ -187,6 +192,8 @@ export function checkProgram(defs: readonly Definition[], options: CheckOptions 
 
 class Scope {
   private readonly vars = new Map<string, Type>();
+  // Names of this scope that a name expression has read.
+  private readonly used = new Set<string>();
   constructor(private readonly parent: Scope | null = null) {}
 
   child(): Scope {
@@ -199,6 +206,16 @@ class Scope {
 
   define(name: string, type: Type): void {
     this.vars.set(name, type);
+  }
+
+  // Marks a read of `name` in the scope that defines it.
+  use(name: string): void {
+    if (this.vars.has(name)) this.used.add(name);
+    else this.parent?.use(name);
+  }
+
+  isUsed(name: string): boolean {
+    return this.used.has(name);
   }
 
   visibleNames(): string[] {
@@ -494,6 +511,9 @@ class DefChecker {
   private block(stmts: readonly Stmt[], outer: Scope, mode: Mode): Type {
     const scope = outer.child();
     let result: Type = UNIT;
+    // `let` statements of type `Unit`, reported once the block is checked,
+    // when it is known whether their names are used (E0235).
+    const unitLets: Extract<Stmt, { kind: "let" }>[] = [];
     for (let i = 0; i < stmts.length; i++) {
       const s = stmts[i];
       const last = i === stmts.length - 1;
@@ -503,18 +523,12 @@ class DefChecker {
       }
       switch (s.kind) {
         case "let":
-          this.let(s, scope);
-          result = UNIT;
-          if (last && !mode.discard && mode.expected && !fits(UNIT, mode.expected)) {
-            this.report(
-              "E0204",
-              firstLine(printStmts([s], "")),
-              `This block ends with \`let\` and has no value; end it with an expression of type \`${
-                this.show(mode.expected)
-              }\`.`,
-            );
-            result = ERROR;
-          }
+          if (this.let(s, scope)) unitLets.push(s);
+          result = this.noValue(s, last, mode, "`let`");
+          break;
+        case "propagate":
+          this.propagate(s, scope);
+          result = this.noValue(s, last, mode, "`… else return`");
           break;
         case "return":
           this.ret(s.value, scope);
@@ -526,12 +540,101 @@ class DefChecker {
           break;
       }
     }
+    for (const s of unitLets) this.unitLet(s, scope);
     return result;
   }
 
-  private let(s: Extract<Stmt, { kind: "let" }>, scope: Scope): void {
+  // The value of a statement that has none: `Unit`, or E0204 if it ends a
+  // block whose value is expected to be something else.
+  private noValue(s: Stmt, last: boolean, mode: Mode, what: string): Type {
+    if (last && !mode.discard && mode.expected && !fits(UNIT, mode.expected)) {
+      this.report(
+        "E0204",
+        firstLine(printStmts([s], "")),
+        `This block ends with ${what} and has no value; end it with an expression of type \`${
+          this.show(mode.expected)
+        }\`.`,
+      );
+      return ERROR;
+    }
+    return UNIT;
+  }
+
+  // E0235 (T3): a `let` binds no `Unit`, which carries nothing (3); the
+  // statement is written without `let name: Unit = `. The fix drops it only
+  // if nothing uses the name and what remains parses: `… end match else
+  // return v` does not (the parser's E0101), so a block value with `else`
+  // gets the form to write instead.
+  private unitLet(s: Extract<Stmt, { kind: "let" }>, scope: Scope): void {
+    const at = firstLine(printStmts([s], ""));
+    const lead = "A `let` binds no `Unit`, which carries nothing (3): ";
+    const kind = s.value.kind;
+    if (s.elseReturn !== null && (kind === "if" || kind === "match" || kind === "for")) {
+      this.report(
+        "E0235",
+        at,
+        `${lead}bind the \`${kind}\` to a \`Result\` or an \`Option\` with \`let\` first, then propagate that name.`,
+      );
+      return;
+    }
+    const rest: Stmt = s.elseReturn === null
+      ? { kind: "expr", expr: s.value }
+      : { kind: "propagate", value: s.value, elseReturn: s.elseReturn };
+    const expected = firstLine(printStmts([rest], ""));
+    const used = scope.isUsed(s.name);
+    const message = `${lead}write the statement without \`let ${s.name}: Unit = \`${
+      used ? `, and \`Unit\` where \`${s.name}\` is used` : ""
+    }.`;
+    if (used) {
+      this.report("E0235", at, message, { expected });
+      return;
+    }
+    this.info.unitLets.add(s);
+    this.report("E0235", at, message, { expected, fix: { replace: at, with: expected } });
+  }
+
+  // `expression else return value` (T1): a `Result` or an `Option` whose
+  // content is `Unit`, propagated as by `let ... else` but with nothing to
+  // bind. `error` is the `Err` value, or `Unit` for `None`.
+  private propagate(s: Extract<Stmt, { kind: "propagate" }>, scope: Scope): void {
+    const v = this.expr(s.value, scope, null);
+    let error: Type = ERROR;
+    if (isCon(v, "Option") || isCon(v, "Result")) {
+      const option = isCon(v, "Option");
+      error = option ? UNIT : v.args[1];
+      const content = v.args[0];
+      if (!isBottom(content) && !containsError(content) && !typeEquals(content, UNIT)) {
+        const shown = this.show(content);
+        this.report(
+          "E0217",
+          firstLine(printStmts([s], "")),
+          `The \`${shown}\` inside \`${
+            option ? "Some" : "Ok"
+          }\` is discarded; bind it: \`let name: ${shown} = … else return …\`.`,
+          { expected: `let name: ${shown} = ${firstLine(printExpr(s.value, ""))} else return …` },
+        );
+      }
+    } else if (!isBottom(v) && !containsError(v)) {
+      this.report(
+        "E0224",
+        firstLine(printExpr(s.value, "")),
+        `\`else return\` takes the content of a \`Result\` or an \`Option\`, found \`${
+          this.show(v)
+        }\`; write the statement without \`else return …\`, and put the \`else\` of an \`if\` on a line of its own.`,
+      );
+    }
+    const elseScope = scope.child();
+    elseScope.define("error", error);
+    this.ret(s.elseReturn, elseScope);
+  }
+
+  // Checks a `let`. Returns whether it binds `Unit` and raised nothing else,
+  // so that one cause gives one diagnostic (5.6).
+  private let(s: Extract<Stmt, { kind: "let" }>, scope: Scope): boolean {
+    const before = this.diagnostics.length;
     const declared = this.resolveType(s.type);
     const at = firstLine(printStmts([s], ""));
+    let content: Type;
     if (s.elseReturn) {
       const v = this.expr(s.value, scope, null);
       let inner: Type = ERROR;
@@ -562,10 +665,12 @@ class DefChecker {
       const elseScope = scope.child();
       elseScope.define("error", error);
       this.ret(s.elseReturn, elseScope);
+      content = inner;
     } else {
-      this.expr(s.value, scope, declared);
+      content = this.expr(s.value, scope, declared);
     }
     this.bind(scope, s.name, declared, at);
+    return typeEquals(declared, UNIT) && typeEquals(content, UNIT) && this.diagnostics.length === before;
   }
 
   private ret(valueExpr: Expr, scope: Scope): void {
@@ -592,13 +697,24 @@ class DefChecker {
     }
     const t = this.expr(e, scope, null);
     if (!isBottom(t) && !containsError(t) && !typeEquals(t, UNIT)) {
-      this.report(
-        "E0217",
-        firstLine(printExpr(e, "")),
-        `The value of type \`${
-          this.show(t)
-        }\` is discarded. Bind it with \`let\`, or propagate an error with \`let ... else return\`.`,
-      );
+      const at = firstLine(printExpr(e, ""));
+      // A `Result<Unit, E>` or `Option<Unit>` has nothing to bind (T4).
+      if ((isCon(t, "Result") || isCon(t, "Option")) && typeEquals(t.args[0], UNIT)) {
+        this.report(
+          "E0217",
+          at,
+          `The value of type \`${this.show(t)}\` is discarded; propagate its error: \`… else return …\`.`,
+          { expected: `${at} else return …` },
+        );
+      } else {
+        this.report(
+          "E0217",
+          at,
+          `The value of type \`${
+            this.show(t)
+          }\` is discarded. Bind it with \`let\`, or propagate an error with \`let ... else return\`.`,
+        );
+      }
     }
     return t.k === "never" ? NEVER : UNIT;
   }
@@ -668,6 +784,7 @@ class DefChecker {
     const head = e.path[0];
     const local = scope.lookup(head);
     if (local !== undefined) {
+      scope.use(head);
       this.info.names.set(e, { kind: "local" });
       let t = local;
       for (const seg of e.path.slice(1)) t = this.field(t, seg, e);

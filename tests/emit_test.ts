@@ -428,6 +428,81 @@ fn halt.main
 end fn halt.main
 `;
 
+// The propagation statement (T1) in a pure helper's caller and around
+// writes, and a statement without a value ending a `return match` arm.
+const PROPAGATE = `
+fn propagate.check_width
+  doc: "Whether a width is positive."
+  in:
+    width: Int
+  out: Result<Unit, String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    check_width(width: 1) == Ok(Unit)
+    check_width(width: 0) == Err("too narrow")
+  body:
+    if width < 1 then
+      return Err("too narrow")
+    end if
+    return Ok(Unit)
+end fn propagate.check_width
+
+fn propagate.area
+  doc: "The area of a rectangle of positive sides."
+  in:
+    width: Int
+    height: Int
+  out: Result<Int, String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    area(width: 2, height: 3) == Ok(6)
+    area(width: 2, height: 0) == Err("too narrow")
+  body:
+    check_width(width: width) else return Err(error)
+    check_width(width: height) else return Err(error)
+    return Ok(width * height)
+end fn propagate.area
+
+fn propagate.save
+  doc: "Writes two files into the directory; the second one into a directory that does not exist."
+  in:
+    directory: String
+  out: Result<Unit, String>
+  effects: fs.write
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    std.fs.write_text(path: std.string.concat(left: directory, right: "/first.txt"), text: "1") else return Err(std.fs.describe(error: error))
+    std.fs.write_text(path: std.string.concat(left: directory, right: "/missing/second.txt"), text: "2") else return Err(std.fs.describe(error: error))
+    return Ok(Unit)
+end fn propagate.save
+
+fn propagate.settle
+  doc: "Checks a width if there is one."
+  in:
+    width: Option<Int>
+  out: Unit
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    settle(width: Some(2)) == Unit
+    settle(width: None) == Unit
+  body:
+    return match width
+      case Some(w) then
+        let doubled: Int = w * 2
+      case None then
+        check_width(width: 1) else return Unit
+    end match
+end fn propagate.settle
+`;
+
 // The std types of std.fs named in a program: a variant type missing from
 // runtime.ts is caught only by `deno check` of such a program.
 const KINDS = `
@@ -666,6 +741,7 @@ const PROGRAMS: Record<string, string> = {
   port_plus: PORT_PLUS,
   app: APP,
   steps: STEPS,
+  propagate: PROPAGATE,
   kinds: KINDS,
   lists: LISTS,
   maps: MAPS,
@@ -708,7 +784,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
   assert_(!bad.success, "deno check accepted an ill-typed file");
 });
 
-for (const name of ["hello", "port", "clamp", "calc", "port_plus"]) {
+for (const name of ["hello", "port", "clamp", "calc", "port_plus", "propagate"]) {
   Deno.test(`emit: spec examples of ${name} pass`, async () => {
     const results = await testExamples(built[name]);
     assertEquals(results.filter((r) => !r.passed), []);
@@ -769,6 +845,7 @@ Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(CALC)), CALC.trimStart());
   assertEquals(printProgram(parseProgram(BLOCKS)), BLOCKS.trimStart());
   assertEquals(printProgram(parseProgram(STEPS)), STEPS.trimStart());
+  assertEquals(printProgram(parseProgram(PROPAGATE)), PROPAGATE.trimStart());
   assertEquals(printProgram(parseProgram(KINDS)), KINDS.trimStart());
   assertEquals(printProgram(parseProgram(LISTS)), LISTS.trimStart());
   assertEquals(printProgram(parseProgram(MAPS)), MAPS.trimStart());
@@ -883,6 +960,25 @@ Deno.test("emit: a match over the std.fs types runs", async () => {
   assertEquals(await mod.kinds$describe(OUT), "a directory");
   assertEquals(await mod.kinds$describe(new URL("../deno.json", import.meta.url).pathname), "a file");
   assertEquals(await mod.kinds$describe("/does/not/exist"), "NotFound");
+});
+
+Deno.test("emit: a propagation statement returns the else value, or goes on (T1)", async () => {
+  const mod = await load("propagate");
+  assertEquals(mod.propagate$area(2, 3), { tag: "Ok", value: 6 });
+  assertEquals(mod.propagate$area(0, 3), { tag: "Err", value: "too narrow" });
+  const dir = await Deno.makeTempDir({ prefix: "alang-propagate-" });
+  try {
+    assertEquals(await mod.propagate$save(dir), { tag: "Err", value: "no such file or directory" });
+    assertEquals(await Deno.readTextFile(`${dir}/first.txt`), "1");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("emit: a block ending without a value delivers Unit to a return (sink fix)", async () => {
+  const mod = await load("propagate");
+  assertEquals(mod.propagate$settle({ tag: "Some", value: 2 }), null);
+  assertEquals(mod.propagate$settle({ tag: "None" }), null);
 });
 
 // ---- effects at runtime ----

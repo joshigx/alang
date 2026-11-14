@@ -47,11 +47,11 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 
 ## Bodies
 
-- One statement per line: \`let\`, \`return\`, or an expression of type \`Unit\`. Every other value is used (E0217);
-  propagate a \`Result<Unit, E>\` with \`let written: Unit = ... else return Err(error)\`.
-- \`let n: Int = expression\`, always with the type. Bindings are immutable and reuse no visible name (E0216).
+- One statement per line: \`let\`, \`return\`, or an expression of type \`Unit\`. Every other value is used (E0217).
+- \`let n: Int = expression\`, always with the type, never \`Unit\` (E0235); immutable, reusing no visible name (E0216).
 - \`let n: Int = std.int.parse(text: t) else return Err(NotANumber(t))\`: the content of \`Some\` or \`Ok\` is bound;
-  otherwise the function returns the \`else\` value, in which \`error\` is the \`Err\` value.
+  otherwise the function returns the \`else\` value, in which \`error\` is the \`Err\` value. A \`Result<Unit, E>\` needs
+  no \`let\`: \`std.fs.write_text(path: p, text: t) else return Err(error)\`.
 - \`if c then ... else ... end if\`, \`match x\` with \`case Pattern then ...\` lines and \`end match\`, and
   \`for x: T in list do ... end for\` stand as a statement, as the value of a \`let\`, or after \`return\`; never inside
   another expression or a lambda (E0303). As a value, a branch's value is its last line, an \`if\` needs \`else\`

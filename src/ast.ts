@@ -103,6 +103,9 @@ export type Stmt =
     readonly value: Expr;
     readonly elseReturn: Expr | null;
   }
+  // `expression else return value`: a `Result<Unit, E>` or `Option<Unit>`
+  // propagated without a binding, since its content carries nothing (3.2).
+  | { readonly kind: "propagate"; readonly value: Expr; readonly elseReturn: Expr }
   | { readonly kind: "return"; readonly value: Expr }
   | { readonly kind: "expr"; readonly expr: Expr };
 

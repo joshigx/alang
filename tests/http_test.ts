@@ -387,7 +387,7 @@ fn web.main
   ensures: none
   examples: none
   body:
-    let served: Unit = std.http.serve(host: "127.0.0.1", port: 8080, handler: route) else return Unit
+    std.http.serve(host: "127.0.0.1", port: 8080, handler: route) else return Unit
     return Unit
 end fn web.main
 `;

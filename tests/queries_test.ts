@@ -134,8 +134,7 @@ Deno.test("queries: context of a server shows std.http as text, serve's handler 
     add(fn("web.main", {
       out: "Unit",
       effects: "net, console",
-      body:
-        'let served: Unit = std.http.serve(host: "localhost", port: 8080, handler: handle) else return Unit\nreturn Unit',
+      body: 'std.http.serve(host: "localhost", port: 8080, handler: handle) else return Unit\nreturn Unit',
     })),
   ]);
   const handle = new Map(cb.context("web.handle").uses.map((u) => [u.name, u.text]));

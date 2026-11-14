@@ -520,6 +520,145 @@ Deno.test("check: let ... else", () => {
   clean(fn("let x: Int = std.int.parse(text: t) else return 0\nreturn x", { params: ["t: String"] }));
 });
 
+// A pure validation helper, as the propagation statement serves it.
+const CHECK_WIDTH = [
+  "fn m.check_width",
+  '  doc: "Whether a width is positive."',
+  "  in:",
+  "    width: Int",
+  "  out: Result<Unit, String>",
+  "  effects: none",
+  "  requires: none",
+  "  ensures: none",
+  "  examples:",
+  "    check_width(width: 1) == Ok(Unit)",
+  "  body:",
+  "    if width < 1 then",
+  '      return Err("too narrow")',
+  "    end if",
+  "    return Ok(Unit)",
+  "end fn m.check_width",
+].join("\n");
+
+// A program with the fix of its one diagnostic applied, in the body.
+const fixed = (source: string, d: Diagnostic): string => source.replace(d.fix!.replace, d.fix!.with);
+
+Deno.test("check: a Result<Unit, E> or Option<Unit> is propagated by a statement (T1)", () => {
+  const pure = { params: ["w: Int"], out: "Result<Int, String>", extra: CHECK_WIDTH };
+  clean(fn("check_width(width: w) else return Err(error)\nreturn Ok(w)", pure));
+  clean(fn(
+    'std.fs.write_text(path: "a", text: "b") else return Err(std.fs.describe(error: error))\nreturn Ok(Unit)',
+    { out: "Result<Unit, String>", effects: "fs.write" },
+  ));
+  clean(fn("opt else return 0\nreturn 1", { params: ["opt: Option<Unit>"] }));
+  clean(fn(
+    "for w: Int in ws do\n  check_width(width: w) else return Err(error)\nend for\nreturn Ok(0)",
+    { params: ["ws: List<Int>"], out: "Result<Int, String>", extra: CHECK_WIDTH },
+  ));
+  clean(fn("check_width(width: w) else return Err(error)\nreturn Ok(w)", { ...pure, ensures: "result != Ok(0)" }));
+});
+
+Deno.test("check: a propagation statement takes a Result or Option whose content is Unit (T1)", () => {
+  const pure = { params: ["w: Int"], out: "Result<Int, String>", extra: CHECK_WIDTH };
+  const unit = one(
+    fn('std.console.print_line(text: "a") else return Unit\nreturn Unit', {
+      out: "Unit",
+      effects: "console",
+    }),
+    "E0224",
+  );
+  assertEquals(
+    unit.message,
+    "`else return` takes the content of a `Result` or an `Option`, found `Unit`; write the statement without `else return …`, and put the `else` of an `if` on a line of its own.",
+  );
+  // The non-canonical `if` whose else ends a then-branch line (T2).
+  one(
+    fn('if true then\nstd.console.print_line(text: "a") else return Unit\nend if\nreturn Unit', {
+      out: "Unit",
+      effects: "console",
+    }),
+    "E0224",
+  );
+  const content = one(fn('std.int.parse(text: "1") else return 0\nreturn 0'), "E0217");
+  assertEquals(content.at, 'std.int.parse(text: "1") else return 0');
+  assertEquals(content.expected, 'let name: Int = std.int.parse(text: "1") else return …');
+  one(fn('check_width(width: w) else return "no"\nreturn Ok(w)', pure), "E0204");
+  // Like a let, it has no value to end a value block with.
+  const last = one(
+    fn(
+      "let n: Int = if w > 0 then\n  check_width(width: w) else return Err(error)\nelse\n  1\nend if\nreturn Ok(n)",
+      pure,
+    ),
+    "E0204",
+  );
+  assertEquals(last.message.startsWith("This block ends with `… else return` and has no value"), true);
+});
+
+Deno.test("check: a let binds no Unit (E0235)", () => {
+  const write = 'std.fs.write_text(path: "a", text: "b") else return Err(std.fs.describe(error: error))';
+  const io = { out: "Result<Unit, String>", effects: "fs.write" };
+  const source = fn(`let w: Unit = ${write}\nreturn Ok(Unit)`, io);
+  const d = one(source, "E0235");
+  assertEquals([d.at, d.expected, d.fix], [`let w: Unit = ${write}`, write, {
+    replace: `let w: Unit = ${write}`,
+    with: write,
+  }]);
+  assertEquals(
+    d.message,
+    "A `let` binds no `Unit`, which carries nothing (3): write the statement without `let w: Unit = `.",
+  );
+  clean(fixed(source, d));
+  // A used name: no fix, since the uses would dangle.
+  const used = one(fn(`let w: Unit = ${write}\nreturn Ok(w)`, io), "E0235");
+  assertEquals([used.expected, used.fix], [write, null]);
+  assertEquals(used.message.endsWith("without `let w: Unit = `, and `Unit` where `w` is used."), true);
+  const print = one(fn('let u: Unit = std.console.print_line(text: "a")\nreturn 0', { effects: "console" }), "E0235");
+  assertEquals(print.fix?.with, 'std.console.print_line(text: "a")');
+  // A match of Unit arms stays a match statement.
+  const units = fn(
+    'let x: Unit = match o\n  case Some(v) then\n    std.console.print_line(text: v)\n  case None then\n    std.console.print_line(text: "none")\nend match\nreturn 0',
+    { params: ["o: Option<String>"], effects: "console" },
+  );
+  const m = one(units, "E0235");
+  assertEquals(m.fix, { replace: "let x: Unit = match o", with: "match o" });
+  clean(fixed(units, m));
+  // A block value with `else`: without the let it would not parse, so no fix.
+  const options = fn(
+    "let x: Unit = match o\n  case Some(v) then\n    Some(Unit)\n  case None then\n    None\nend match else return 0\nreturn 1",
+    { params: ["o: Option<String>"] },
+  );
+  const block = one(options, "E0235");
+  assertEquals([block.fix, block.expected], [null, null]);
+  assertEquals(
+    block.message,
+    "A `let` binds no `Unit`, which carries nothing (3): bind the `match` to a `Result` or an `Option` with `let` first, then propagate that name.",
+  );
+  // One cause, one diagnostic: a let that fails otherwise is not E0235 too.
+  one(fn("let u: Unit = nothing()\nreturn 0"), "E0201");
+  one(fn("let u: Unit = 1\nreturn 0"), "E0204");
+  // Patterns, lambda parameters and for variables may still be Unit.
+  clean(fn(
+    "let r: Result<Unit, String> = Ok(Unit)\nlet n: Int = match r\n  case Ok(done) then\n    1\n  case Err(e) then\n    0\nend match\nreturn n",
+  ));
+  clean(fn(
+    "let ones: List<Int> = std.list.map(list: [Unit, Unit], with: fn(u: Unit): Int => 1)\nreturn std.list.length(list: ones)",
+  ));
+});
+
+Deno.test("check: a discarded Result<Unit, E> points to the propagation statement (T4)", () => {
+  const io = { out: "Result<Unit, String>", effects: "fs.write" };
+  const d = one(fn('std.fs.write_text(path: "a", text: "b")\nreturn Ok(Unit)', io), "E0217");
+  assertEquals(d.expected, 'std.fs.write_text(path: "a", text: "b") else return …');
+  assertEquals(
+    d.message,
+    "The value of type `Result<Unit, std.fs.Error>` is discarded; propagate its error: `… else return …`.",
+  );
+  assertEquals(d.fix, null);
+  // Any other value keeps the message that names `let`.
+  const other = one(fn('std.int.parse(text: "1")\nreturn 0'), "E0217");
+  assertEquals(other.expected, null);
+});
+
 Deno.test("check: if and for", () => {
   one(fn('let x: Int = if true then\n  1\nelse\n  "a"\nend if\nreturn x'), "E0204");
   one(

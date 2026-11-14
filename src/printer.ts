@@ -107,6 +107,8 @@ function printStmt(s: Stmt, indent: string): string {
       const head = `let ${s.name}: ${printTypeRef(s.type)} = ${printExpr(s.value, indent)}`;
       return s.elseReturn ? `${head} else return ${printExpr(s.elseReturn, indent)}` : head;
     }
+    case "propagate":
+      return `${printExpr(s.value, indent)} else return ${printExpr(s.elseReturn, indent)}`;
     case "return":
       return `return ${printExpr(s.value, indent)}`;
     case "expr":
