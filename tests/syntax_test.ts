@@ -377,3 +377,52 @@ Deno.test("let [...]: names only, at least one, with else return (T11, T12)", ()
     "A `case` takes no list apart: no set of cases covers every length without a catch-all (3.3). Use `let [first, second]: List<T> = items else return ...`, or `std.list.first` and `std.list.drop`.",
   ]);
 });
+
+Deno.test("shared cases: patterns joined by or on one case line round-trip (T6)", () => {
+  const source = [
+    "let n: Int = match x",
+    "  case A or B then",
+    "    1",
+    "  case Err(NotANumber) or Err(OutOfRange(n)) then",
+    "    2",
+    "end match",
+  ].join("\n");
+  assertEquals(canonicalStmts(source), source);
+  const [stmt] = parseStatements(source);
+  assertEquals(stmt.kind === "let" && stmt.value.kind === "match" && stmt.value.arms[1].patterns.length, 2);
+  const oneLine = ["E0101", "A `case` and all its patterns stand on one line, up to `then`."];
+  const message = (source: string) => {
+    const d = assertThrows(() => parseStatements(source), AlangError).diagnostic;
+    return [d.code, d.message];
+  };
+  assertEquals(message("match x\ncase A or\nB then\n1\nend match"), oneLine);
+  assertEquals(message("match x\ncase A\nor B then\n1\nend match"), oneLine);
+  // A name alternative is still a catch-all.
+  assertEquals(code(() => parseStatements("match x\ncase A or other then\n1\nend match")), "E0108");
+});
+
+Deno.test("shared cases: the forms of other languages name `or` (T9, 5.7)", () => {
+  const diagnostic = (source: string) => assertThrows(() => parseStatements(source), AlangError).diagnostic;
+  for (const line of ["case A | B then", "case A|B then", "case A  |  B then"]) {
+    const d = diagnostic(`match x\n${line}\n1\nend match`);
+    assertEquals([d.code, d.at, d.expected, d.fix], ["E0006", line, "or", { replace: line, with: "case A or B then" }]);
+  }
+  // Every `|` of the line outside its strings, and only those.
+  const literal = diagnostic('match x\ncase "a|b" | "c" then\n1\nend match');
+  assertEquals(literal.fix, { replace: 'case "a|b" | "c" then', with: 'case "a|b" or "c" then' });
+  const comma = diagnostic("match x\ncase A, B, Err(C) then\n1\nend match");
+  assertEquals([comma.code, comma.fix], ["E0101", {
+    replace: "case A, B, Err(C) then",
+    with: "case A or B or Err(C) then",
+  }]);
+  assertEquals(comma.message, "Patterns that share an arm are joined with `or`: `case A or B then`.");
+  assertEquals(diagnostic('match x\ncase "a", "b" then\n1\nend match').fix, null);
+  const nested = diagnostic("match x\ncase Err(A or B) then\n1\nend match");
+  assertEquals([nested.code, nested.fix], ["E0101", null]);
+  assertEquals(
+    nested.message,
+    "`or` joins whole patterns of a case, not the values inside one: `case Err(A) or Err(B) then`, not `case Err(A or B) then`.",
+  );
+  const logic = diagnostic("let x: Bool = a || b");
+  assertEquals([logic.code, logic.fix], ["E0006", { replace: "||", with: "or" }]);
+});

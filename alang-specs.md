@@ -160,7 +160,7 @@ For every purpose the grammar permits exactly one form, and every definition has
 | --- | --- |
 | Bind a value | `let name: Type = expression` |
 | Branch | `if … then … else … end if` |
-| Distinguish variants | `match … case … then … end match` |
+| Distinguish variants | `match … case … then … end match`; variants handled alike share one `case A or B then` |
 | Propagate an error | `let name: Type = expression else return …`; with nothing to bind, `expression else return …` |
 | Take apart a list of known length | `let [a, b]: List<Type> = list else return …` |
 | Transform a collection | `std.list.map`, `std.list.filter`, `std.list.fold` |
@@ -174,7 +174,7 @@ For every purpose the grammar permits exactly one form, and every definition has
 
 - **3.1 No method calls.** The form `x.f()` does not exist. The dot separates only module paths and record fields.
 - **3.2 Propagating errors.** In `let … else` the expression has type `Result<T, E>` or `Option<T>`. On `Ok` or `Some` the content is bound; otherwise the function returns the `return` value. In the `else` branch the error value is called `error`. A `let` never binds `Unit`: a `Result<Unit, E>` or `Option<Unit>` is propagated by the statement `expression else return …` alone. A `List` is taken apart the same way: `let [a, b]: List<T> = expression else return …` binds the items if there are exactly as many as names; otherwise the function returns, and `error` is `Unit`.
-- **3.3 Exhaustive `match`.** Every variant has its own `case`. There is no catch-all case, so that a new variant reports every affected place as an error.
+- **3.3 Exhaustive `match`.** Every variant is named in a `case`; one `case` may name several, `case A or B then`, and binds a name only if each of them binds it. There is no catch-all case, so that a new variant reports every affected place as an error.
 - **3.4 Expressions with a value.** `if`, `match` and `for` are expressions; the value of a branch is its last expression. `for` yields the list of these values in the order of the elements. A function always ends with an explicit `return`.
 - **3.5 Mandatory parentheses.** Arithmetic binds tighter than comparison, comparison tighter than logic. Mixing `+ -` with `* / %`, or `and` with `or`, requires parentheses.
 - **3.6 Spelling of names.** `snake_case` applies to values, functions and modules, `PascalCase` to types and variants. The lexer enforces this.
@@ -235,7 +235,7 @@ expr       = if | match | for | lambda | call | construct | list | map
            | binary | unary | field | literal | name ;
 if         = "if" expr "then" stmt { stmt } [ "else" stmt { stmt } ] "end" "if" ;
 match      = "match" expr arm { arm } "end" "match" ;
-arm        = "case" pattern "then" stmt { stmt } ;
+arm        = "case" pattern { "or" pattern } "then" stmt { stmt } ;
 pattern    = TypePath [ "(" ( pattern | name ) ")" ] | literal ;
 lambda     = "fn" "(" param { "," param } ")" ":" type "=>" expr ;
 call       = path [ "<" type { "," type } ">" ] "(" [ arg { "," arg } ] ")" ;
@@ -483,7 +483,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | Static proofs (5.2) and prefix checking (1.6) | Every `requires`, `ensures` and `where` is checked at runtime |
 | The depth limit (4.8) | Not enforced yet; keep to it anyway |
 | Concurrency | Everything runs in order; `std.http.serve` answers one request at a time, and `std.http.send` and `std.time.wait` hold the program until they return |
-| A wildcard pattern `_` | Every value in a pattern gets a name, used or not: `case Ok(done) then` |
+| A wildcard pattern `_` | Every value in a pattern gets a name, used or not: `case Ok(done) then`; in a shared case, a name that not every pattern binds is simply left unused |
 | A pattern over a list's items, `case [a, b] then` (E0101) | `let [a, b]: List<T> = xs else return …` for an exact length; `std.list.first` and `std.list.drop` for the first item and the rest |
 
 ### 7.2 Text
@@ -493,7 +493,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Numbers.** An integer with more than four digits is grouped in threes with `_` (`65_535`, `1_000_000`); `65535`, `1_000` and leading zeros are errors (4.7). A float is written `digits.digits` (`1.0`, `0.25`), never `1.`, `.5` or `1e3`. A negative number is a literal (`-3`, `-0.5`). There is no minus in front of other expressions; write `0 - x`.
 - **Other values.** `true`, `false`, and `Unit`, the one value of the type `Unit`.
 - **Reserved words.** `fn`, `type`, `const`, `extern`, `end`, `doc`, `in`, `out`, `effects`, `requires`, `ensures`, `examples`, `body`, `record`, `variant`, `where`, `none`, `let`, `else`, `return`, `if`, `then`, `match`, `case`, `for`, `do`, `and`, `or`, `not`, `true`, `false`. `result` (in `ensures`) and `error` (after `let ... else`) are bound by the language. They cannot name a parameter or a binding (E0109), but a field may use them.
-- **Foreign forms.** `===`, `!==`, `&&`, `||`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7). The message for `{` and `}` names the map literal `[key: value]`, and the one for index access names `std.list.get` and `std.map.get`.
+- **Foreign forms.** `===`, `!==`, `&&`, `||`, `|`, `!`, `{`, `}`, `?`, `;`, `'`, index access `xs[0]`, the list type `Int[]`, `var`, `null`, `while`, `import` and others get a diagnostic that names the alang form (E0006, 5.7). The message for `{` and `}` names the map literal `[key: value]`, and the one for index access names `std.list.get` and `std.map.get`.
 - **Layout.** A line break separates statements and section entries. Inside the parentheses of a call or a construction and inside the brackets of a list or a map, line breaks are ignored. Indentation has no meaning; the stored text uses two spaces per level (3.7) and never breaks a line, so a long example stays on one line.
 - **Files.** In a file given to `alang check` or `alang run`, the order of definitions has no meaning (6.2). The stored text and the export sort them by name, with one empty line between them.
 
@@ -516,11 +516,12 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **Taking a list apart.** `let [method, path, status]: List<String> = std.string.split(text: line, separator: " ") else return None` binds the items in order if the list has exactly as many items as names; any other length returns the `else` value, in which `error` is `Unit`. The type is the list's (E0204, with the fix, for the item type written instead). Only names stand in the brackets, at least one, and `else return` is required (E0101). A `case` takes no list apart (E0101): no set of cases covers every length without a catch-all (3.3).
 - **No shadowing (2.6).** A binding may not reuse a name that is visible at that point: a parameter, an earlier `let`, or a pattern or lambda variable (E0216). Sibling branches may use the same name.
 - **`if`.** `if condition then ... else ... end if`. Without `else`, only as a statement (E0110). The value of a branch is its last expression.
-- **`match` (3.3).** `match subject` is followed by `case Pattern then ...` lines and `end match`. Every case is covered (E0213), without a catch-all, and no case may be one that earlier cases already cover (E0214).
+- **`match` (3.3).** `match subject` is followed by `case Pattern then ...` lines and `end match`. Every case is covered (E0213), without a catch-all, and no case may be one that earlier cases already cover (E0214). Cases handled alike share an arm: `case std.fs.PermissionDenied or std.fs.IsADirectory or std.fs.Other(message) then`.
   - A case without a value is matched bare: `case None then`.
   - A case with a value always takes a sub-pattern, either a name or a nested case: `case Some(n) then`, `case Err(OutOfRange(n)) then`, `case Err(std.fs.NotFound) then`.
+  - Every pattern of a shared case is whole: `or` stands only between them, never inside parentheses (`case Err(A or B)` is E0101), and neither `|` (E0006) nor `,` (E0101) joins them. A case and its patterns stand on one line, up to `then` (E0101). A name is bound in the arm only if every pattern binds it with the same type: `case Circle(size) or Square(size) then` binds `size`, while `message` above has no value in the arm (E0236 where it is used). A pattern that earlier cases or patterns cover is E0214.
   - A `match` on `Int` or `String` can never be exhaustive (E0213); use `if`.
-  - A name may not stand for the remaining cases. After `case Err(std.fs.NotFound) then`, a `case Err(other) then` would be a catch-all, so a case added to `std.fs.Error` later would go unreported; it is rejected (E0227). Write a case for each. A name with no specific case beside it (`case Err(e) then` alone) binds the whole value, as usual.
+  - A name may not stand for the remaining cases. After `case Err(std.fs.NotFound) then`, a `case Err(other) then` would be a catch-all, so a case added to `std.fs.Error` later would go unreported; it is rejected (E0227). Write a case for each, or name them in one case: `case Err(std.fs.PermissionDenied) or Err(std.fs.IsADirectory) or Err(std.fs.AlreadyExists) or Err(std.fs.Other(message)) then`. A name with no specific case beside it (`case Err(e) then` alone) binds the whole value, as usual.
   - A branch may hold `let` statements before its value.
 - **`for` (3.4).** `for name: Type in list do ... end for`. As a statement, its body has type `Unit`. As a value, it is the list of the body's values; this is how effects per element are collected.
 - **Where `if`, `match` and `for` stand.** As a statement, as the value of a `let`, or after `return`. Not yet inside another expression (E0303).
@@ -880,6 +881,7 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | E0230 to E0233 | Effects |
 | E0234 | A key written twice in a map literal |
 | E0235 | A `let` that binds `Unit` |
+| E0236 | A name that only some patterns of a shared case bind |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0403 | Missing, failing and trapping examples |
 | E0501 to E0514 | Codebase operations |

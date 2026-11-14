@@ -237,7 +237,10 @@ export function printExpr(e: Expr, indent: string): string {
     case "match": {
       const lines = [`match ${printExpr(e.subject, indent)}`];
       for (const arm of e.arms) {
-        lines.push(`${inner}case ${printPattern(arm.pattern)} then`, printStmts(arm.body, inner + STEP));
+        lines.push(
+          `${inner}case ${arm.patterns.map(printPattern).join(" or ")} then`,
+          printStmts(arm.body, inner + STEP),
+        );
       }
       lines.push(`${indent}end match`);
       return lines.join("\n");

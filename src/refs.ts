@@ -149,7 +149,7 @@ function rebuild(
         return { kind: "expr", expr: expr(s.expr) };
     }
   };
-  const arm = (a: Arm): Arm => ({ pattern: pattern(a.pattern), body: stmts(a.body) });
+  const arm = (a: Arm): Arm => ({ patterns: a.patterns.map(pattern), body: stmts(a.body) });
 
   function expr(e: Expr): Expr {
     switch (e.kind) {

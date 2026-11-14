@@ -83,8 +83,10 @@ export type Payload =
   | { readonly kind: "args"; readonly args: readonly Arg[] }
   | { readonly kind: "value"; readonly value: Expr };
 
+// A case: one pattern, or several joined by `or` that share the body
+// (`case A or B then`), at least one.
 export interface Arm {
-  readonly pattern: Pattern;
+  readonly patterns: readonly Pattern[];
   readonly body: readonly Stmt[];
 }
 

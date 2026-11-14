@@ -62,7 +62,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   blocks; deeper code becomes a function.
 - \`match\` covers each case once (E0213, E0214). A case without a value is bare (\`case None then\`), patterns nest
   (\`case Err(NotANumber(word)) then\`), and every value gets a name, used or not: there is no \`_\`. No catch-all: a
-  name beside specific cases of its type is E0227. A \`match\` on \`Int\` or \`String\` is never exhaustive; use \`if\`.
+  name beside specific cases of its type is E0227; cases alike share an arm, which binds only what all of them bind:
+  \`case std.fs.PermissionDenied or std.fs.Other(message) then\`. A \`match\` on \`Int\` or \`String\` is never exhaustive.
 
 ## Expressions
 

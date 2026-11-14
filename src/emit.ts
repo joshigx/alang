@@ -427,15 +427,17 @@ class DefinitionEmitter {
       case "match": {
         const subject = this.temp("m");
         const lines = [`const ${subject} = ${this.expr(e.subject, scope)};`];
-        e.arms.forEach((arm, i) => {
+        // A shared case is one branch per pattern, each with its own binds
+        // and its own copy of the body, so TypeScript narrows each (T10).
+        e.arms.flatMap((arm) => arm.patterns.map((p) => ({ p, body: arm.body }))).forEach(({ p, body }, i) => {
           const conds: string[] = [];
           const binds: [string, string][] = [];
-          this.pattern(arm.pattern, subject, conds, binds);
+          this.pattern(p, subject, conds, binds);
           const armScope = scope.child();
           const test = conds.length === 0 ? "true" : conds.join(" && ");
           lines.push(`${i === 0 ? "if" : "} else if"} (${test}) {`);
           for (const [name, access] of binds) lines.push(`  const ${armScope.add(name)} = ${access};`);
-          lines.push(...indent(this.block(arm.body, armScope, sink), 1));
+          lines.push(...indent(this.block(body, armScope, sink), 1));
         });
         lines.push(
           "} else {",

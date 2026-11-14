@@ -544,6 +544,55 @@ fn propagate.first_of_pair
 end fn propagate.first_of_pair
 `;
 
+// Shared cases (T10): one TypeScript branch per pattern, each with its own
+// binds, so `n` has an access path of its own in each.
+const SHARED = `
+fn shared.value
+  doc: "The number inside, or the error code."
+  in:
+    outcome: Result<Option<Int>, Int>
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    value(outcome: Ok(Some(3))) == 3
+    value(outcome: Ok(None)) == 0
+    value(outcome: Err(7)) == 7
+  body:
+    let found: Int = match outcome
+      case Ok(Some(n)) or Err(n) then
+        n
+      case Ok(None) then
+        0
+    end match
+    return found
+end fn shared.value
+
+fn shared.retry
+  doc: "Whether a file operation is worth repeating after the error."
+  in:
+    error_kind: std.fs.Error
+  out: Bool
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    retry(error_kind: std.fs.NotFound) == true
+    retry(error_kind: std.fs.IsADirectory) == false
+    retry(error_kind: std.fs.Other("busy")) == false
+  body:
+    let again: Bool = match error_kind
+      case std.fs.NotFound then
+        true
+      case std.fs.PermissionDenied or std.fs.IsADirectory or std.fs.AlreadyExists or std.fs.Other(message) then
+        let quiet: Bool = false
+        quiet
+    end match
+    return again
+end fn shared.retry
+`;
+
 // The std types of std.fs named in a program: a variant type missing from
 // runtime.ts is caught only by `deno check` of such a program.
 const KINDS = `
@@ -783,6 +832,7 @@ const PROGRAMS: Record<string, string> = {
   app: APP,
   steps: STEPS,
   propagate: PROPAGATE,
+  shared: SHARED,
   kinds: KINDS,
   lists: LISTS,
   maps: MAPS,
@@ -825,7 +875,7 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
   assert_(!bad.success, "deno check accepted an ill-typed file");
 });
 
-for (const name of ["hello", "port", "clamp", "calc", "port_plus", "propagate"]) {
+for (const name of ["hello", "port", "clamp", "calc", "port_plus", "propagate", "shared"]) {
   Deno.test(`emit: spec examples of ${name} pass`, async () => {
     const results = await testExamples(built[name]);
     assertEquals(results.filter((r) => !r.passed), []);
@@ -887,6 +937,7 @@ Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(BLOCKS)), BLOCKS.trimStart());
   assertEquals(printProgram(parseProgram(STEPS)), STEPS.trimStart());
   assertEquals(printProgram(parseProgram(PROPAGATE)), PROPAGATE.trimStart());
+  assertEquals(printProgram(parseProgram(SHARED)), SHARED.trimStart());
   assertEquals(printProgram(parseProgram(KINDS)), KINDS.trimStart());
   assertEquals(printProgram(parseProgram(LISTS)), LISTS.trimStart());
   assertEquals(printProgram(parseProgram(MAPS)), MAPS.trimStart());

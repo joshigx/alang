@@ -477,6 +477,125 @@ Deno.test("check: a name after a specific case is a catch-all, and rejected (3.3
   assertEquals(nested.expected, "case Some(Err(name)) then");
 });
 
+// ---- shared cases (T6 to T8) ----
+
+// A match over `s: Shape` whose arms are the given case lines and values.
+const shapes = (arms: [string, string][], extra = SHAPE): string =>
+  fn(
+    [
+      "let n: Int = match s",
+      ...arms.flatMap(([c, v]) => [`  case ${c} then`, `    ${v}`]),
+      "end match",
+      "return n",
+    ].join("\n"),
+    { params: ["s: Shape"], extra },
+  );
+
+// A match over a `std.fs.Error` whose arms are the given case lines.
+const fsErrors = (arms: [string, string][], params = ["e: std.fs.Error"]): string =>
+  fn(
+    [
+      "let text: String = match e",
+      ...arms.flatMap(([c, v]) => [`  case ${c} then`, `    ${v}`]),
+      "end match",
+      "return text",
+    ].join("\n"),
+    { params, out: "String" },
+  );
+
+const UNREADABLE = "std.fs.PermissionDenied or std.fs.IsADirectory or std.fs.AlreadyExists or std.fs.Other(message)";
+
+Deno.test("check: cases handled alike share an arm (T6, T7)", () => {
+  clean(shapes([["Circle(size) or Square(size)", "size"], ["Dot", "0"]]));
+  clean(fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE, '"unreadable"']]));
+  // A name every pattern binds with one type is bound in the arm.
+  clean(fn(
+    "let n: Int = match r\n  case Ok(Some(v)) or Err(v) then\n    v\n  case Ok(None) then\n    0\nend match\nreturn n",
+    { params: ["r: Result<Option<Int>, Int>"] },
+  ));
+});
+
+Deno.test("check: a name not every pattern binds has no value in the arm (E0236)", () => {
+  const d = one(fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE, "message"]]), "E0236");
+  assertEquals([d.at, d.fix], ["message", null]);
+  assertEquals(
+    d.message,
+    "`message` is bound by `std.fs.Other(message)` but not by every pattern of its case, so it has no value here.",
+  );
+  const types = one(
+    fn(
+      "let n: Int = match r\n  case Ok(n) or Err(n) then\n    n\nend match\nreturn 0".replace(
+        "let n: Int",
+        "let k: Int",
+      ),
+      {
+        params: ["r: Result<Int, String>"],
+      },
+    ),
+    "E0236",
+  );
+  assertEquals(types.message, "`n` is an `Int` in `Ok(n)` and a `String` in `Err(n)`, so it has no single type here.");
+  // A module function of the same name does not stand in for it.
+  const message = 'fn m.message\n  doc: "M."\n  in: none\n  out: String\n  effects: none\n  requires: none\n' +
+    '  ensures: none\n  examples:\n    message() == "m"\n  body:\n    return "m"\nend fn m.message';
+  const withFn = fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE, "message"]]) + "\n\n" + message;
+  one(withFn, "E0236");
+  // Used twice: one cause, one diagnostic.
+  one(
+    fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE, "std.string.concat(left: message, right: message)"]]),
+    "E0236",
+  );
+  // Bound again in the arm, or by a pattern over a visible name: E0216.
+  one(
+    fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE, 'let message: String = "x"\n    message']]),
+    "E0216",
+  );
+  one(
+    fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE.replace("Other(message)", "Other(p)"), '"x"']], [
+      "e: std.fs.Error",
+      "p: Int",
+    ]),
+    "E0216",
+  );
+});
+
+Deno.test("check: shared cases are exhaustive and reachable pattern by pattern (T8)", () => {
+  const twice = one(shapes([["Dot or Dot", "0"], ["Circle(a) or Square(a)", "a"]]), "E0214");
+  assertEquals([twice.at, twice.message], [
+    "case Dot or Dot then",
+    "`Dot` is never reached; earlier cases or patterns cover it.",
+  ]);
+  one(shapes([["Circle(c)", "c"], ["Circle(t) or Dot", "0"], ["Square(q)", "q"]]), "E0214");
+  const missing = one(shapes([["Circle(a) or Square(a)", "a"]]), "E0213");
+  assertEquals(missing.expected, "case Dot then");
+  // A name after a specific pattern of the same case is a catch-all.
+  const port = specBlock("type net.port.Port") + "\n\n";
+  const inArm = one(
+    port + fn(
+      "let s: Int = match net.port.parse(text: t)\n  case Ok(p) then\n    1\n  case Err(net.port.NotANumber) or Err(e) then\n    0\nend match\nreturn s",
+      { params: ["t: String"] },
+    ),
+    "E0227",
+  );
+  assertEquals([inArm.at, inArm.expected], [
+    "case Err(net.port.NotANumber) or Err(e) then",
+    "case Err(net.port.NotANumber) or Err(net.port.OutOfRange(name)) then",
+  ]);
+  assertEquals(inArm.message.endsWith("Write a case for each, or name them in one case with `or`."), true);
+  // Several remaining cases: one case line naming them all.
+  const several = one(
+    fn(
+      'let text: String = match std.fs.read_text(path: p)\n  case Ok(t) then\n    t\n  case Err(std.fs.NotFound) then\n    ""\n  case Err(other) then\n    "x"\nend match\nreturn text',
+      { params: ["p: String"], out: "String", effects: "fs.read" },
+    ),
+    "E0227",
+  );
+  assertEquals([several.at, several.expected], [
+    "case Err(other) then",
+    "case Err(std.fs.PermissionDenied) or Err(std.fs.IsADirectory) or Err(std.fs.AlreadyExists) or Err(std.fs.Other(name)) then",
+  ]);
+});
+
 Deno.test("check: case patterns fit the subject type", () => {
   const opt = "let o: Option<Int> = Some(1)\n";
   one(

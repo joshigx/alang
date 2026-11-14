@@ -7,7 +7,7 @@
 // (expression types, how names resolved) goes into side tables keyed by
 // tree node, so the tree stays pure for equality and hashing (6.1).
 
-import type { Arg, Definition, Expr, FnDef, Literal, Path, Pattern, Stmt, TypeDef, TypeRef } from "./ast.ts";
+import type { Arg, Arm, Definition, Expr, FnDef, Literal, Path, Pattern, Stmt, TypeDef, TypeRef } from "./ast.ts";
 import { type Effect, EFFECTS, moduleOf, pathText } from "./ast.ts";
 import { type Diagnostic, diagnostic, type Fix } from "./diagnostic.ts";
 import { printExpr, printStmts, printString, printTypeRef } from "./printer.ts";
@@ -194,6 +194,9 @@ class Scope {
   private readonly vars = new Map<string, Type>();
   // Names of this scope that a name expression has read.
   private readonly used = new Set<string>();
+  // Names a pattern of a shared case binds that have no value in its arm,
+  // with the message of E0236 (T7).
+  private readonly hidden = new Map<string, string>();
   constructor(private readonly parent: Scope | null = null) {}
 
   child(): Scope {
@@ -206,6 +209,20 @@ class Scope {
 
   define(name: string, type: Type): void {
     this.vars.set(name, type);
+  }
+
+  // The names defined in this scope itself.
+  own(): ReadonlyMap<string, Type> {
+    return this.vars;
+  }
+
+  hide(name: string, message: string): void {
+    this.hidden.set(name, message);
+  }
+
+  // Why a hidden name has no value here, if it is hidden.
+  hiddenWhy(name: string): string | undefined {
+    return this.hidden.get(name) ?? this.parent?.hiddenWhy(name);
   }
 
   // Marks a read of `name` in the scope that defines it.
@@ -255,8 +272,8 @@ class DefChecker {
   }
 
   report(code: string, at: string, message: string, extra: { expected?: string; fix?: Fix } = {}): void {
-    // An unknown name used several times is one cause (5.6).
-    const unknownName = code === "E0201" || code === "E0202" || code === "E0203";
+    // An unknown or hidden name used several times is one cause (5.6).
+    const unknownName = code === "E0201" || code === "E0202" || code === "E0203" || code === "E0236";
     if (
       unknownName &&
       this.diagnostics.some((d) => d.definition === this.name && d.code === code && d.message === message)
@@ -496,7 +513,8 @@ class DefChecker {
   // ---- statements ----
 
   private bind(scope: Scope, name: string, type: Type, at: string): void {
-    if (scope.lookup(name) !== undefined) {
+    // A hidden name stands in its pattern's text, so it is bound there (2.6).
+    if (scope.lookup(name) !== undefined || scope.hiddenWhy(name) !== undefined) {
       this.report(
         "E0216",
         at,
@@ -825,6 +843,13 @@ class DefChecker {
       let t = local;
       for (const seg of e.path.slice(1)) t = this.field(t, seg, e);
       return t;
+    }
+    // A hidden name comes before the module's functions, so it never
+    // silently means one of them (T7).
+    const hidden = scope.hiddenWhy(head);
+    if (hidden !== undefined) {
+      this.report("E0236", head, hidden);
+      return ERROR;
     }
     const full = this.resolvePath(e.path);
     const fn = this.env.fns.get(full);
@@ -1510,29 +1535,34 @@ class DefChecker {
 
   private match(e: Extract<Expr, { kind: "match" }>, scope: Scope, mode: Mode): Type {
     const subject = this.expr(e.subject, scope, null);
-    const patterns: Pattern[] = [];
+    // Every pattern of every case, in text order (T8).
+    const items: CaseItem[] = [];
     let result: Type | null = mode.discard ? null : mode.expected;
     let allNever = true;
     // A broken pattern makes exhaustiveness a follow-up question (5.6).
     let sound = !containsError(subject);
     for (const arm of e.arms) {
-      const armScope = scope.child();
       const before = this.diagnostics.length;
-      this.pattern(arm.pattern, subject, armScope);
+      const armScope = this.armScope(arm, subject, scope);
       if (this.diagnostics.length > before) sound = false;
-      if (sound && this.subsumed(patterns, arm.pattern, subject)) {
-        this.report(
-          "E0214",
-          `case ${printPattern(arm.pattern)} then`,
-          "This case is never reached; earlier cases cover it.",
-        );
+      for (const p of arm.patterns) {
+        if (sound && this.subsumed(items.map((i) => i.p), p, subject)) {
+          this.report(
+            "E0214",
+            caseLine(arm),
+            arm.patterns.length === 1
+              ? "This case is never reached; earlier cases cover it."
+              : `\`${printPattern(p)}\` is never reached; earlier cases or patterns cover it.`,
+          );
+        }
+        items.push({ p, top: p, arm });
       }
-      patterns.push(arm.pattern);
       const t = this.block(arm.body, armScope, mode.discard ? DISCARD : value(result));
       if (t.k !== "never") allNever = false;
       if (!mode.discard && result === null && !isBottom(t)) result = t;
     }
-    if (sound) this.catchAlls(patterns.map((p) => ({ p, arm: p })), subject);
+    const patterns = items.map((i) => i.p);
+    if (sound) this.catchAlls(items, subject);
     if (sound) {
       const missing = this.missing(patterns, subject);
       if (missing === "_") {
@@ -1552,6 +1582,54 @@ class DefChecker {
     }
     if (mode.discard) return allNever ? NEVER : UNIT;
     return result ?? (allNever ? NEVER : ERROR);
+  }
+
+  // The scope of an arm, with the names its patterns bind (T7). Each pattern
+  // is checked into its own child of the enclosing scope, which keeps E0216
+  // against outer names. A name is bound in the arm if every pattern binds it
+  // with one type (or the error type, so nothing follows: 5.6); any other
+  // name a pattern binds is hidden, and E0236 where it is used.
+  private armScope(arm: Arm, subject: Type, scope: Scope): Scope {
+    const armScope = scope.child();
+    if (arm.patterns.length === 1) {
+      this.pattern(arm.patterns[0], subject, armScope);
+      return armScope;
+    }
+    const bound = arm.patterns.map((p) => {
+      const own = scope.child();
+      this.pattern(p, subject, own);
+      return own.own();
+    });
+    for (const name of new Set(bound.flatMap((b) => [...b.keys()]))) {
+      const types = bound.map((b) => b.get(name));
+      if (types.some((t) => t !== undefined && containsError(t))) {
+        armScope.define(name, ERROR);
+        continue;
+      }
+      const first = types.findIndex((t) => t !== undefined);
+      const lacking = types.findIndex((t) => t === undefined);
+      if (lacking >= 0) {
+        armScope.hide(
+          name,
+          `\`${name}\` is bound by \`${
+            printPattern(arm.patterns[first])
+          }\` but not by every pattern of its case, so it has no value here.`,
+        );
+        continue;
+      }
+      const other = types.findIndex((t) => !typeEquals(t!, types[first]!));
+      if (other >= 0) {
+        armScope.hide(
+          name,
+          `\`${name}\` is ${article(this.show(types[first]!))} in \`${printPattern(arm.patterns[first])}\` and ${
+            article(this.show(types[other]!))
+          } in \`${printPattern(arm.patterns[other])}\`, so it has no single type here.`,
+        );
+        continue;
+      }
+      armScope.define(name, types[first]!);
+    }
+    return armScope;
   }
 
   // The cases of a type that `match` can distinguish, or null.
@@ -1672,8 +1750,10 @@ class DefChecker {
   // a case added to the type later would not be reported there (E0227). A
   // name before the specific case makes that case unreachable instead (E0214),
   // so each order gets one diagnostic. `items` are the patterns at one
-  // position, in the order of their arms.
-  private catchAlls(items: readonly { p: Pattern; arm: Pattern }[], t: Type): void {
+  // position, in text order, each with the case pattern it is part of and
+  // its arm. The `expected` case names the remaining cases joined by `or`,
+  // in place of the catch-all, beside the case's other patterns (T8).
+  private catchAlls(items: readonly CaseItem[], t: Type): void {
     const cases = this.casesOf(t);
     if (!cases) return;
     items.forEach((item, k) => {
@@ -1688,18 +1768,23 @@ class DefChecker {
         return m === null ? [] : [`${c.written}(${m})`];
       });
       const target = item.p;
+      const patterns = item.arm.patterns.map((q) =>
+        q === item.top ? rest.map((r) => printPattern(q, target, r)).join(" or ") : printPattern(q)
+      );
       this.report(
         "E0227",
-        `case ${printPattern(item.arm)} then`,
+        caseLine(item.arm),
         `\`${target.name}\` stands for the remaining cases of \`${this.show(t)}\`: a catch-all, so a case added ` +
-          "later would not be reported here (3.3). Write a case for each.",
-        { expected: rest.map((r) => `case ${printPattern(item.arm, target, r)} then`).join(", ") },
+          "later would not be reported here (3.3). Write a case for each, or name them in one case with `or`.",
+        { expected: `case ${patterns.join(" or ")} then` },
       );
     });
     for (const c of cases) {
       if (!c.payload) continue;
       const sub = items.flatMap((i) =>
-        i.p.kind === "case" && i.p.path[i.p.path.length - 1] === c.name && i.p.sub ? [{ p: i.p.sub, arm: i.arm }] : []
+        i.p.kind === "case" && i.p.path[i.p.path.length - 1] === c.name && i.p.sub
+          ? [{ p: i.p.sub, top: i.top, arm: i.arm }]
+          : []
       );
       this.catchAlls(sub, c.payload);
     }
@@ -1729,8 +1814,26 @@ class DefChecker {
 
 // ---- helpers ----
 
+// A pattern of a `match`, in a position `p` within the case pattern `top`
+// of the arm `arm`.
+interface CaseItem {
+  readonly p: Pattern;
+  readonly top: Pattern;
+  readonly arm: Arm;
+}
+
 function firstLine(text: string): string {
   return text.split("\n", 1)[0];
+}
+
+// The line of a case, from `case` to `then`.
+function caseLine(arm: Arm): string {
+  return `case ${arm.patterns.map((p) => printPattern(p)).join(" or ")} then`;
+}
+
+// A type name with its article, quoted: "an `Int`", "a `String`".
+function article(shown: string): string {
+  return `${/^[AEIOU]/.test(shown) ? "an" : "a"} \`${shown}\``;
 }
 
 function moduleOfName(full: string): string {

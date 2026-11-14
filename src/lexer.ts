@@ -92,6 +92,12 @@ const FOREIGN: readonly { form: string; message: string; replacement?: string }[
   { form: "!==", message: "`!==` does not exist; inequality is `!=`.", replacement: "!=" },
   { form: "&&", message: "`&&` does not exist; use `and`.", replacement: "and" },
   { form: "||", message: "`||` does not exist; use `or`.", replacement: "or" },
+  // After `||`, which it would otherwise take. Its fix is the whole line (lex).
+  {
+    form: "|",
+    message:
+      "`|` does not exist; patterns that share an arm are joined with `or` (`case A or B then`), and logic is `or`.",
+  },
   { form: "//", message: "There are no comments; describe a definition in its `doc` section." },
   { form: "/*", message: "There are no comments; describe a definition in its `doc` section." },
   { form: "#", message: "There are no comments; describe a definition in its `doc` section." },
@@ -178,6 +184,25 @@ const C_ESCAPES: ReadonlyMap<string, number> = new Map([
   ["v", 0x0b],
   ["e", 0x1b],
 ]);
+
+// `line` with `change` applied to each part outside its string literals,
+// which may hold `\"` and `\\`.
+export function outsideStrings(line: string, change: (part: string) => string): string {
+  let out = "";
+  let part = "";
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== '"') {
+      part += line[i];
+      continue;
+    }
+    let j = i + 1;
+    while (j < line.length && line[j] !== '"') j += line[j] === "\\" ? 2 : 1;
+    out += change(part) + line.slice(i, j + 1);
+    part = "";
+    i = j;
+  }
+  return out + change(part);
+}
 
 export function lex(source: string): Token[] {
   const tokens: Token[] = [];
@@ -353,6 +378,14 @@ export function lex(source: string): Token[] {
 
     // Foreign forms before symbols, so that `===` is not read as `==` `=`.
     const foreign = FOREIGN.find((f) => source.startsWith(f.form, i));
+    if (foreign?.form === "|") {
+      // `case A | B then` (Rust, Python, Scala, OCaml): the whole line is
+      // quoted, so the fix replaces every `|` outside its strings, and the
+      // spaces around it, and cannot hit a `|` of another line.
+      const line = lineText();
+      const fixed = outsideStrings(line, (part) => part.replace(/\s*\|+\s*/g, " or "));
+      fail("E0006", foreign.message, line, { expected: "or", fix: { replace: line, with: fixed } });
+    }
     if (foreign && !(foreign.form === "!" && source[i + 1] === "=")) {
       fail(
         "E0006",

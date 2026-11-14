@@ -577,3 +577,38 @@ Deno.test("rename: a caller that propagates the renamed function's error follows
   assert_(cb.definition("sizes.area").text.includes("    checks.above_zero(n: width) else return Err(error)\n"));
   await done(cb);
 });
+
+Deno.test("rename: the cases of a shared case follow their type to another module (T6)", async () => {
+  const cb = await fresh();
+  const shape = [
+    "type old.Shape",
+    '  doc: "A shape."',
+    "  variant:",
+    "    Circle: Int",
+    "    Square: Int",
+    "    Dot",
+    "  where: none",
+    "end type old.Shape",
+  ].join("\n");
+  const size = fn("app.size", {
+    params: ["s: old.Shape"],
+    out: "Int",
+    examples: ["size(s: old.Dot) == 0"],
+    body: [
+      "let n: Int = match s",
+      "  case old.Circle(r) or old.Square(r) then",
+      "    r",
+      "  case old.Dot then",
+      "    0",
+      "end match",
+      "return n",
+    ].join("\n"),
+  });
+  await ok(cb, [add(shape), add(size)]);
+  await ok(cb, [rename(cb, "old.Shape", "fresh.Shape")]);
+  const text = cb.definition("app.size").text;
+  assert_(text.includes("  case fresh.Circle(r) or fresh.Square(r) then\n"), text);
+  assert_(text.includes("size(s: fresh.Dot) == 0"), text);
+  assertEquals(cb.callers("fresh.Shape").callers, ["app.size"]);
+  await done(cb);
+});

@@ -798,14 +798,44 @@ class Parser {
     const arms: Arm[] = [];
     while (this.isKeyword("case")) {
       this.next();
-      const pattern = this.pattern(true);
-      this.expectKeyword("then");
-      arms.push({ pattern, body: this.block(["case", "end"]) });
+      arms.push({ patterns: this.casePatterns(), body: this.block(["case", "end"]) });
     }
     if (arms.length === 0) this.fail("A `match` has at least one `case`.");
     this.expectKeyword("end");
     this.expectKeyword("match");
     return { kind: "match", subject, arms };
+  }
+
+  // The patterns of a case, joined by `or` (T6), up to and including `then`.
+  // A case line is one entry (3.7): from `case` to `then` on one line.
+  private casePatterns(): Pattern[] {
+    const oneLine = "A `case` and all its patterns stand on one line, up to `then`.";
+    const patterns = [this.pattern(true)];
+    for (;;) {
+      if (this.isKeyword("or")) {
+        this.next();
+        if (this.peek().kind === "newline") this.fail(oneLine);
+        patterns.push(this.pattern(true));
+        continue;
+      }
+      if (this.peek().kind === "newline" && this.isKeyword("or", 1)) this.fail(oneLine);
+      if (this.isSymbol(",")) {
+        // `case A, B then` (Go, Java, Kotlin, Swift; 5.7). Patterns hold no
+        // commas, since a case carries one value (4.2).
+        const line = this.peek().lineText;
+        const m = /^case (.*?) then\b/.exec(line);
+        const fixed = m && !line.includes('"')
+          ? line.replace(m[0], `case ${m[1].replace(/\s*,\s*/g, " or ")} then`)
+          : null;
+        this.fail("Patterns that share an arm are joined with `or`: `case A or B then`.", {
+          expected: "or",
+          fix: fixed ? { replace: line, with: fixed } : undefined,
+        });
+      }
+      break;
+    }
+    this.expectKeyword("then");
+    return patterns;
   }
 
   private pattern(top: boolean): Pattern {
@@ -828,6 +858,11 @@ class Parser {
     if (this.isSymbol("(")) {
       this.next();
       sub = this.pattern(false);
+      if (this.isKeyword("or")) {
+        this.fail(
+          "`or` joins whole patterns of a case, not the values inside one: `case Err(A) or Err(B) then`, not `case Err(A or B) then`.",
+        );
+      }
       this.expectSymbol(")");
     }
     return { kind: "case", path, sub };
