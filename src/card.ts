@@ -82,8 +82,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   \`and\` with \`or\`, needs parentheses: \`(c * 9 / 5) + 32\`. Only a literal takes a minus (\`-3\`); write \`0 - x\`.
 - Lambdas: \`fn(item: Int): Int => item * factor\`, one expression, pure (E0232), reading the bindings around them.
   A pure function's name is a value too: \`by: std.string.compare\`. A parameter, field or \`let\` may have a function
-  type such as \`(Int, Int) -> Order\`, applied by position: \`by(a, b)\`. No \`fn\` returns one (E0237). An \`Option\`
-  inside a lambda is unwrapped with \`std.option.with_default\` or \`std.list.filter_map\`.
+  type such as \`(Int, Int) -> Order\`, applied by position: \`by(a, b)\`. No \`fn\` returns one, even in a list or record
+  (E0237). An \`Option\` inside a lambda is unwrapped with \`std.option.with_default\` or \`std.list.filter_map\`.
 - Strings: double quotes, on one line. The escapes are only \`\\"\`, \`\\\\\`, \`\\n\`, \`\\t\` and \`\\u{1B}\` (uppercase hex) for
   other control characters (\`\\r\` is \`\\u{D}\`); every other character is itself (\`"é"\`). Join with \`std.string.concat\`
   or \`std.string.join(parts: [a, b], separator: "")\`, never \`+\`. A value as text: \`std.text.show(value: v)\`.
