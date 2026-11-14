@@ -122,7 +122,10 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     The gaps 7.1 listed (waiting, an HTTP client, console output without a line break) are closed. Every four-arm
     `match` over `std.fs.Error` is now E0213, among them the playground's `ledger`, `wordcount`, `logstat` and
     `tasks`. Decisions in `decisions.md`: Files (Error type, `create_text`, `create_directory`, `describe`, Links,
-    `print`, Waiting) and HTTP (`std.http`), renamed from "HTTP server". 307 tests. See "From std-net".
+    `print`, Waiting) and HTTP (`std.http`), renamed from "HTTP server". 307 tests. See "From std-net". After its
+    playground round (see "From the std-net round"), five fixes: `alang run` passes SIGTERM on only after 500 ms,
+    a connection closed without an answer has one `Failed` text, 7.8 names four host differences, the `serve` doc
+    warns about blocked ports, and `std.http.describe_serve_error`. 310 tests.
 
 **Next (2026-11-14, overnight run):** build `std-net` from `docs/plans/std-net.md` on branch `std-net` (fresh Opus
 agent), verify, run its playground round with `scripts/playground-round.sh` (plan section 7: adapt the setup, since
@@ -158,7 +161,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (307 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (310 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -303,6 +306,15 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   `checkHeader` with the server, its message naming a request or a response header; `ServeError` keeps
   `std.text.show`. In `decisions.md`: Files (Error type, `create_text`, `create_directory`, `describe`, Links,
   `print`, Waiting, Synchronous, Left out) and HTTP (`std.http`).
+- Fixes after the std-net round (2026-11-14; the brief was the main session's, the details the implementer's):
+  `alang run` passes SIGTERM on only if the program still runs 500 ms later (one timer at a time, armed again after
+  it fires, so a second SIGTERM to the tool alone still reaches a slow server; after a group SIGTERM a program that
+  needs more than 500 ms is ended by the passed-on signal); the fixed text `the server closed the connection without
+  answering`, used only while no response has arrived (a body cut short keeps the host's message), and Deno's
+  `error sending request ...: ` start stripped from other `Failed` texts; `describe_serve_error`'s texts `address
+  already in use` (the system's text for `EADDRINUSE`) and `permission denied`; the test server and
+  `examples/server.alang` showing `ServeError` through it. In `decisions.md`, HTTP (`std.http`): `alang run`,
+  `SendError`, `describe`, `describe_serve_error`, Bad ports, Host differences left.
 
 ## Database phase: open points (2026-11-12)
 
@@ -973,6 +985,66 @@ std-net round's analysis (`probe_close.py`) and the fixes after it.
   listening, `http://name.invalid/` and a URL of an in-process `std.http.serve`. Both printed `failed: cannot reach
   the server` twice and `200`, and exited right after the last line. On Node.js, `localhost` has two addresses and
   fetch fails with an `AggregateError` cause whose `code` is still `ECONNREFUSED`; the name gives `ENOTFOUND`.
+
+## From the std-net round (2026-11-14)
+
+The playground round of item 20: automated with `scripts/playground-round.sh` (headless Opus 5.5, no advisor,
+`--restricted`, an empty codebase), against `7700807` on `std-net`; folder
+`~/coding_projects/alang-rounds/2026-11-14-std-net/`. The task: a stock server on `std.http.serve` and a client on
+`std.http.send` that retries, prints a prompt line, and writes a report only if it does not exist yet, run against
+each other. A fresh Opus agent analyzed it; its files (a Python reference and fake servers, a runner on Deno and
+Node.js, the call table, the signal and closed-connection probes) are in `analysis/` there.
+
+- **Correct on both hosts.** All 16 server requests and 14 client cases the prompt specifies agree with the
+  reference (the 400 bodies and the text after `failed:` are left open by the prompt); exit codes, stderr and the
+  report bytes agree exactly. No trap in 27 client cases and 32 raw requests. No regression.
+- **The cheapest round so far.** 21 tool calls (`card` 1, `list` 9, `submit` 2, Bash 8, TaskStop 1), both submits
+  accepted without a diagnostic (16 definitions, 44 examples), 91.7 s, 10.7k output tokens (75% in the two submits),
+  $0.59.
+- **std `context` calls: 0.** `search` and `search_type` unused for the fifth round in a row; discovery was nine
+  `list` calls (25.2 KB). `list("std.http")` alone is now 4,215 characters (1,363 in the logstat round).
+- **Every new std function used:** `create_text` (with `AlreadyExists` tested by `==`), `std.fs.describe`,
+  `std.http.describe`, `print` (the prompt reached the pipe before the request), `wait(500)` and `send`, with the
+  right method, `""` content, `std.list.empty<std.http.Header>()`, no `host` header and the 2000 ms timeout.
+- **Evidence for `statements`:** two dummy `Unit` bindings (`written`, `served`; T1 to T5) and a five-arm `match`
+  in the pure `should_retry` whose bodies repeat (two arms `true`, three `false`; T6 to T10).
+- **What it found:** a group SIGTERM ended the server under `alang db run` with exit 143; the `Failed` text of a
+  connection closed without an answer carried Deno's ephemeral port and differed by host; Deno sent such a request
+  twice; the server listened on port 6000, which its own client refused as `invalid URL`; `ServeError` got a
+  hand-written three-arm `match` for its message; and a `2>` redirect was denied without the round's `CLAUDE.md`
+  saying so.
+
+What the fixes after it changed (on `std-net`, one commit each):
+
+- `e6504ac`: `alang run` passes SIGTERM on only if the program still runs 500 ms later, so a group SIGTERM ends a
+  server with exit 0; tests send SIGTERM to the group and to the tool alone (Decisions: HTTP, `alang run`).
+- `7a75e23`: a connection the server closes before answering is `Failed("the server closed the connection without
+  answering")` on both hosts, and Deno's `error sending request from ... for ... (...): ` start is stripped from
+  other `Failed` texts; 7.8 and the host table record that Deno sends such a request twice (four host differences).
+- `e55e99a`: the doc line of `std.http.serve` says that clients built on fetch refuse the blocked ports.
+- `a2665ca`: `std.http.describe_serve_error` (`address already in use`, `permission denied`, the host's message);
+  `examples/server.alang` and 7.9 use it.
+- `77473ef`: the round's `CLAUDE.md` says that redirections are refused and how to see an exit code.
+
+Left for later:
+
+- **L1, percent-encoding.** std has no URL encoder or decoder, so the client joined the item raw: `apple&x=1` and
+  `apple#y` printed `3`, and the server does not decode `?item=app%6Ce` (404). Not counted against the model.
+  Proposed as a new roadmap row (`std.url.*` or `std.http.query_value`); the roadmap itself is not changed here.
+- **L2, a `SendError` case for a closed connection.** It would let a program retry on it, but a fifth case breaks
+  every `match` over `SendError` (E0213); the fixed `Failed` text covers showing it for now.
+- **L4, SIGINT to the tool's PID alone is swallowed** (the server still answered after 4 s), by design: passing it
+  on would deliver a terminal's Ctrl-C twice, and a delayed pass-on would break the graceful double Ctrl-C. Document
+  at most.
+- **L5, no readiness signal for `serve`.** A program cannot say "listening" after the port is bound (the round's
+  server printed its line before `serve`, also when the port was taken); low priority.
+- **L6, `invalid URL` for a valid URL on a blocked port.** The text is decided (N4, N8); the `serve` doc line now
+  warns instead.
+- **The size of `list("std.http")`,** about 4.2 KB with long doc lines; it grows with every std function in the
+  module, and the round read it whole.
+- **The runtime's own status text** (`The server answered with status 600, outside 200 to 599.`) starts in upper
+  case and ends with a period, unlike the texts of `describe` and the new closed-connection text; the plan fixed it
+  verbatim, so it stays until a std phase revisits the texts.
 
 ## Spec observations
 
