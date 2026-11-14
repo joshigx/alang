@@ -137,8 +137,6 @@ Deno.test("generics: a type parameter is one capital letter in `<...>` (E0101)",
   ]);
   const open = header("fn m.f<T");
   assertEquals([open.code, open.message], ["E0101", "Expected `>`, found line break."]);
-  const end = parseError(UTIL.replace("end fn util.last\n", "end fn util.last<T>\n"));
-  assertEquals([end.code, end.message], ["E0101", "Expected a line break, found `<`."]);
 });
 
 // ---- checking (G2 to G6, G12) ----
@@ -622,6 +620,57 @@ Deno.test("generics: match, equality and function values over generic types (G2,
       },
     ),
   );
+});
+
+// ---- habits around generic headers (5.7) ----
+
+Deno.test("generics habits: a bound on a type parameter is E0006, naming the function parameter", () => {
+  for (const header of ["fn m.f<T: Ord>", "fn m.f<T extends Ord>", "fn m.f<T: Eq + Show>"]) {
+    const d = parseError(fn("return 0", { typeParams: "T", params: ["x: T"] }).replace("fn m.f<T>", header));
+    assertEquals([d.code, d.message, d.fix], [
+      "E0006",
+      "A type parameter takes no bounds: alang has no traits (2.6). Take what the function needs of `T` as a parameter, such as `same: (T, T) -> Bool` or `by: (T, T) -> Order`.",
+      null,
+    ]);
+  }
+});
+
+Deno.test("generics habits: the end line names the definition without its type parameters (E0103)", () => {
+  const source = UTIL.replace("end fn util.last\n", "end fn util.last<T>\n");
+  const d = parseError(source);
+  assertEquals([d.code, d.message, d.expected, d.fix], [
+    "E0103",
+    "The block end names the definition without its type parameters: `end fn util.last`.",
+    "end fn util.last",
+    { replace: "end fn util.last<T>", with: "end fn util.last" },
+  ]);
+  assertEquals(parseProgram(fixed(source, d)), parseProgram(UTIL));
+  const type = parseError(TREE.replace("end type tree.Tree\n", "end type tree.Tree<T>\n"));
+  assertEquals([type.code, type.fix], ["E0103", { replace: "end type tree.Tree<T>", with: "end type tree.Tree" }]);
+});
+
+Deno.test("generics habits: a pattern takes no type arguments; a constant takes no type parameters (E0101)", () => {
+  const pattern = parseError(
+    TREE.replace("      case Leaf then\n        std.list.empty", "      case Leaf<T> then\n        std.list.empty"),
+  );
+  assertEquals([pattern.code, pattern.message], [
+    "E0101",
+    "A pattern takes no type arguments; the `match` subject gives them: `case Leaf then`.",
+  ]);
+  const nested = parseError(
+    fn("return 0").replace(
+      "    return 0",
+      "    let n: Int = match t\n      case Some(Leaf<Int>) then\n        0\n    end match\n    return n",
+    ),
+  );
+  assertEquals(nested.message, "A pattern takes no type arguments; the `match` subject gives them: `Leaf`.");
+  const constant = parseError(
+    'const m.c<T>\n  doc: "C."\n  out: List<T>\n  body:\n    return std.list.empty<T>()\nend const m.c\n',
+  );
+  assertEquals([constant.code, constant.message], [
+    "E0101",
+    "A constant has one type and takes no type parameters; a value for every type is a `fn` with a type parameter, such as `fn m.empty<T>`.",
+  ]);
 });
 
 // ---- TypeScript and acceptance (G16) ----

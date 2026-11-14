@@ -210,6 +210,18 @@ class Parser {
     this.expectKeyword("end");
     this.expectKeyword(kind);
     const endPath = this.definitionPath(kind);
+    if (this.isSymbol("<")) {
+      // `end fn util.last<T>` (Rust and Java habits, 5.7): the end line
+      // names the definition alone. It stands alone on its line.
+      const line = this.peek().lineText;
+      const fixed = `end ${kind} ${pathText(path)}`;
+      this.fail(`The block end names the definition without its type parameters: \`${fixed}\`.`, {
+        code: "E0103",
+        at: line,
+        expected: fixed,
+        fix: { replace: line, with: fixed },
+      });
+    }
     if (pathText(endPath) !== pathText(path)) {
       this.fail(`The block end names \`${pathText(endPath)}\`, but the definition is \`${pathText(path)}\`.`, {
         code: "E0103",
@@ -361,7 +373,16 @@ class Parser {
       const shown = t.kind === "newline" || t.kind === "eof" ? this.describe(t) : `\`${t.text}\``;
       this.fail(`A type parameter is one capital letter, such as \`T\` or \`K\` (3); ${shown} is not one.`);
     }
-    return this.next().text;
+    const letter = this.next().text;
+    // `<T: Ord>`, `<T extends Ord>` (Rust, TypeScript, Java; 5.7).
+    const after = this.peek();
+    if (this.isSymbol(":") || (after.kind === "name" && after.text === "extends")) {
+      this.fail(
+        `A type parameter takes no bounds: alang has no traits (2.6). Take what the function needs of \`${letter}\` as a parameter, such as \`same: (${letter}, ${letter}) -> Bool\` or \`by: (${letter}, ${letter}) -> Order\`.`,
+        { code: "E0006" },
+      );
+    }
+    return letter;
   }
 
   // `const shop.max_items` with `doc`, `out` and `body`, in this order (C1):
@@ -390,6 +411,13 @@ class Parser {
       this.fail(`\`${last}\` is bound by the language and cannot name a constant.`, { code: "E0109", at: last });
     }
     this.definition = pathText(path);
+    if (this.isSymbol("<")) {
+      this.fail(
+        `A constant has one type and takes no type parameters; a value for every type is a \`fn\` with a type parameter, such as \`fn ${
+          pathText(path.slice(0, -1))
+        }.empty<T>\`.`,
+      );
+    }
     if (this.isSymbol(":")) this.oneLineConst(path);
     this.expectNewline();
     const doc = this.docSection();
@@ -1089,6 +1117,7 @@ class Parser {
     return patterns;
   }
 
+  // `top`: a pattern of its own on the case line, not one inside another.
   private pattern(top: boolean): Pattern {
     if (this.isSymbol("[")) {
       this.fail(
@@ -1105,6 +1134,11 @@ class Parser {
       return { kind: "bind", name: this.bindingName() };
     }
     const path = this.typePath();
+    if (this.isSymbol("<")) {
+      // `case Leaf<Int> then` (G7): the subject's type is known.
+      const bare = top ? `case ${pathText(path)} then` : pathText(path);
+      this.fail(`A pattern takes no type arguments; the \`match\` subject gives them: \`${bare}\`.`);
+    }
     let sub: Pattern | null = null;
     if (this.isSymbol("(")) {
       this.next();
