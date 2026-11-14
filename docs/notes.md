@@ -186,10 +186,15 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     In the codebase, letters are no references, hits and `search_type` show and match them as std's, and renaming
     one throughout is no interface change (G13 to G15). A case names its type arguments where neither the expected
     type nor its value gives them, `None<Int>`, and E0209 where they are given (G7). A generic function passed by
-    name takes its type arguments from the function type there (G9, resolving fn-types' F10). The spec gains
-    `util.contains_by` (7.3), accepted with its examples; the card names the header and `None<Int>` (159 lines,
-    9,873 bytes). Generic types (commit 5) and the habit diagnostics (commit 6) follow. Decisions in `decisions.md`,
-    rows listed in the review list below. 429 tests. See "From generics".
+    name takes its type arguments from the function type there (G9, resolving fn-types' F10). Generic types, `type
+    tree.Tree<T>`, written with their arguments wherever used (E0209), each letter in a field or case (E0250); a record
+    takes its type arguments from its fields left to right, a case by G7 (`Leaf<Int>`), and fields, patterns and actual
+    values see the substituted types; TypeScript generic types, a generic record still shown with its short name (R7)
+    (G8). Habits get the alang form: bounds `<T: Ord>` E0006, `end fn f<T>` E0103 with a fix, `case Leaf<Int>` and
+    `const m.c<T>` E0101. The spec gains `util.contains_by` and `tree.Tree`, `tree.Branch`, `tree.items` (7.3), each
+    accepted with its examples; the card names the header, `type util.Pair<A, B>` and `Leaf<Int>` (159 lines, 9,867
+    bytes, 29 fewer than before). Decisions in `decisions.md`, rows listed in the review list below. 443 tests. See
+    "From generics".
 
 **Next (2026-11-14, overnight run, updated by the main session at ~06:15):** `std-net` (item 20), `statements`
 (item 21), `fn-types` (item 22) and `const` (item 23, with R7 of `docs/plans/records.md`) are built, their rounds
@@ -229,7 +234,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided (`const` built, item 23).
 
-**Checks before every commit:** `deno task test` (429 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (443 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -493,7 +498,9 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   module's type, record or case of its letter, written in full there (not E0226), the short form E0203 with a fix;
   G5 every letter in a parameter type or `out` (E0250 with a fix); G6 a rigid type inside the definition, no
   variance; G7 a case names its type arguments exactly where neither the expected type nor its value gives them
-  (`None<Int>`, E0210), E0209 with a fix where they are given, records never; G9 a generic function passed by name
+  (`None<Int>`, E0210), E0209 with a fix where they are given, records never; G8 generic types, `type tree.Tree<T>`,
+  written with their arguments (E0209), a record typed by its fields left to right, a case by G7; G9 a generic
+  function passed by name
   takes its type arguments from the function type expected there (resolves F10); G10 F4 stays (no `fn` returns a
   function, generic or not); G11 a constant is not generic. The others: G12 examples at concrete types, letters
   E0202 there; G13 a type parameter compared by position in the interface; G14 letters are no references, E0510
@@ -509,10 +516,19 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   generic functions too, not only E0401 (G11); E0209 on `Unit<Int>` reads "`Unit` takes no type arguments."; E0210
   for two letters says "with types for `T` and `E`"; a generic function passed by name is checked for effects
   (E0232) after E0210 when no function type is there, since there is nothing to instantiate; the 7.10 sentences went
-  into the database commit, and the 7.3 generic bullet after the constants block. In `decisions.md`: Syntax
-  (`f<T>(...)` vs `a < b`, Generic definitions, Case type arguments), Semantics and runtime (Representation in TS),
-  Type checking (`Ok`, `Err`, `None`, Type parameters, Explicit type arguments, Map keys, Order, Own module names,
-  Function values, Uniqueness, std signatures), Database (Interface rule, Rename capture, `search(type)`, Hits).
+  into the database commit, and the 7.3 generic bullet after the constants block. For generic types (commit 5):
+  E0250 reads "`T` occurs in no field (case), so no value could give it a meaning"; the `<>` message names a header of
+  the definition's kind (`type util.Pair<A, B>`); a case of a generic variant where another type is expected is E0204
+  "Expected `Int`, found a case of `Tree<T>`." (non-generic cases keep the old mismatch text), and one with a value
+  of the wrong form and no type is E0223, not E0210; `fieldPath` (applications on a field) substitutes as `field` does;
+  a record field whose function type has known parameter types takes a generic function by name (G9 in records, as
+  in calls); the card says "one capital letter each" so that commit 5 shrinks the card too. For the habits (commit
+  6): E0103 quotes the whole end line and replaces it; a nested pattern's message names the bare case (`Leaf`); the
+  constant's message names its module (`fn shop.empty<T>`); 7.2 lists all four forms. In `decisions.md`: Lexical
+  (Foreign forms), Syntax (`f<T>(...)` vs `a < b`, Generic definitions, Case type arguments), Semantics and runtime
+  (Representation in TS), Type checking (`Ok`, `Err`, `None`, Type parameters, Generic types, Explicit type arguments,
+  Map keys, Order, Own module names, Function values, Uniqueness, std signatures), Database (Interface rule, Rename
+  capture, `search(type)`, Hits).
 
 ## Database phase: open points (2026-11-12)
 
@@ -1556,8 +1572,12 @@ Built from `docs/plans/generics.md` (written at `9ba84a8`, before `statements`, 
   as declared, needs the substitution of generic types (commit 5).
 - **Two of the plan's expectations were off.** `List<Int> -> Option<Int>` also finds the test's `util.tail_of`
   (plain `List<Int>`), and E0506 for two sections reads "changes its `in`, `out` section" (an older wording, kept).
-- **Generic output runs on Node.js.** A module with `util$last<T>` and calls `util$last<number>(...)`, imported by
-  `node` 26.13.0 with type stripping, runs (probed).
+- **Generic output runs on Node.js.** A module with `util$last<T>` and calls `util$last<number>(...)`, and one with
+  `tree$Tree<T>`, `tree$Branch<T>` and cases written `satisfies tree$Tree<number>`, imported by `node` 26.13.0 with
+  type stripping, run, and the tree's examples pass there (probed).
+- **G7 depends on position, as the plan's Risks said:** in `[t, tree.Leaf<Int>]` the first item gives the type, so
+  `tree.Leaf<Int>` is E0209 with a fix, while `[tree.Leaf<Int>, t]` is the form. Generic types work across modules
+  (`tree.Node(tree.Branch(...))`, `case tree.Node(b)` with `b.item`), probed.
 - **G4 in actual values.** Messages and fixes write `m.T` in full inside a definition with the letter `T`, but an
   example's actual value (E0402) still shows a module record `m.T` short, `T(n: 1)`, as it would outside. Rare; an
   `examples.ts` change if it ever confuses.
