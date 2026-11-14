@@ -291,6 +291,12 @@ type Mode = { readonly discard: true } | { readonly discard: false; readonly exp
 const DISCARD: Mode = { discard: true };
 const value = (expected: Type | null): Mode => ({ discard: false, expected });
 
+// What E0218 names after an `if` or `match` whose every branch returns (3.4).
+const UNREACHABLE_AFTER = {
+  match: "Make the `match` the value of a `let` (`let x: T = match …`, each arm ending in its value) and `return x`",
+  if: "Drop its `else` and put that branch after the `if`",
+} as const;
+
 // ---- per definition ----
 
 class DefChecker {
@@ -812,7 +818,21 @@ class DefChecker {
       const s = stmts[i];
       const last = i === stmts.length - 1;
       if (result.k === "never") {
-        this.report("E0218", firstLine(printStmts([s], "")), "This statement is never reached; it follows a `return`.");
+        // After an `if` or `match` whose every branch returns, the way out
+        // is named: a model wrote such a statement as a dummy last `return`.
+        const prev = stmts[i - 1];
+        const branched = prev.kind === "expr" && (prev.expr.kind === "if" || prev.expr.kind === "match")
+          ? prev.expr.kind
+          : null;
+        this.report(
+          "E0218",
+          firstLine(printStmts([s], "")),
+          branched === null
+            ? "This statement is never reached; it follows a `return`."
+            : `This statement is never reached: every branch of the \`${branched}\` before it returns. ${
+              UNREACHABLE_AFTER[branched]
+            } (3.4).`,
+        );
         break;
       }
       switch (s.kind) {

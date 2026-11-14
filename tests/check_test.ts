@@ -641,6 +641,22 @@ Deno.test("check: a body ends with return; nothing follows a return (3.4)", () =
   one(fn("if true then\n  return 1\nelse\n  return 2\nend if\nreturn 3"), "E0218");
 });
 
+Deno.test("check: E0218 after a branching statement names the way out (3.4)", () => {
+  assertEquals(
+    one(fn("return 1\nreturn 2"), "E0218").message,
+    "This statement is never reached; it follows a `return`.",
+  );
+  assertEquals(
+    one(fn("if true then\n  return 1\nelse\n  return 2\nend if\nreturn 3"), "E0218").message,
+    "This statement is never reached: every branch of the `if` before it returns. Drop its `else` and put that branch after the `if` (3.4).",
+  );
+  const match = "match n\n  case Some(v) then\n    return v\n  case None then\n    return 0\nend match\nreturn 1";
+  assertEquals(
+    one(fn(match, { params: ["n: Option<Int>"] }), "E0218").message,
+    "This statement is never reached: every branch of the `match` before it returns. Make the `match` the value of a `let` (`let x: T = match …`, each arm ending in its value) and `return x` (3.4).",
+  );
+});
+
 Deno.test("check: let ... else", () => {
   one(fn("let x: Int = 5 else return 0\nreturn x"), "E0224");
   one(fn('let x: String = std.int.parse(text: "1") else return 0\nreturn 0'), "E0204");
