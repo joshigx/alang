@@ -196,18 +196,15 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     bytes, 29 fewer than before). Decisions in `decisions.md`, rows listed in the review list below. 444 tests. See
     "From generics".
 
-**Next (2026-11-14, overnight run, updated by the main session at ~06:15):** `std-net` (item 20), `statements`
-(item 21), `fn-types` (item 22) and `const` (item 23, with R7 of `docs/plans/records.md`) are built, their rounds
-analyzed and fixed, and fast-forwarded into `main` (unpushed). `const` was verified by its round `parcel` and a rerun of
-`rank` (see "From the parcel round and the rank rerun"). Next: `generics` from `docs/plans/generics.md` on branch
-`generics` (fresh Opus agent; split point before generic types, commit 5), its round `shop`
-(`~/coding_projects/alang-rounds/prompts/shop.md`, reference `shop-reference.ts` beside it). Then `extern-fn`
-(`docs/plans/extern-fn.md`, round `query`, reference `~/coding_projects/alang-rounds/prompts/query-reference.mjs`; the
-user's playground MCP registration needs `--allow-run` once a codebase holds an extern, see that plan's E11). Row 9
-`records` is not built (R1 of its plan; run its evidence round `fleet` before row 9's turn). All plans were written by
-fresh Opus agents on 2026-11-14 and are committed. No Fable planners until the weekly reset (Sunday 2026-11-15 21:00
-local); the Fable advisor is fine. The user, before going to sleep on 2026-11-14: continue with the remaining items
-of the to-do list, never push, and shut the PC down when everything is finished.
+**Next (2026-11-14, overnight run, updated by the main session at ~07:20):** `std-net` (item 20), `statements`
+(item 21), `fn-types` (item 22), `const` (item 23, with R7 of `docs/plans/records.md`) and `generics` (item 24, generic
+types included) are built, their rounds analyzed and fixed, and fast-forwarded into `main` (unpushed). Next:
+`extern-fn` from `docs/plans/extern-fn.md` on branch `extern-fn` (fresh Opus agent), its round `query` (prompt in the
+plan, reference `~/coding_projects/alang-rounds/prompts/query-reference.mjs`). The user's playground MCP registration
+needs `--allow-run` once a codebase holds an extern (that plan's E11); no agent changes it. Row 9 `records` is not
+built (R1 of its plan; run its evidence round `fleet` before row 9's turn). No Fable planners until the weekly reset
+(Sunday 2026-11-15 21:00 local); the Fable advisor is fine. The user, before going to sleep on 2026-11-14: continue
+with the remaining items of the to-do list, never push, and shut the PC down when everything is finished.
 
 **Earlier next steps (kept for reference):** `logstat-fixes` is merged into `main` (2026-11-13). The `tasks` playground round, from an empty codebase,
 was started on 2026-11-14: prompt, checks and the steps after it are in `docs/plans/tasks-round.md`. When the user
@@ -1631,7 +1628,19 @@ condensed into `analysis/report.md` by the main session; call table, cases and s
     lambda, E0303, where such a test usually sits); so the message no longer names the literal form only through
     `match`, as "G2b is syntactic" in "From generics" says.
 
+**Confirmation rerun** against `4a3ddc3` (the two fixes; folder `~/coding_projects/alang-rounds/2026-11-14-shop-2/`,
+checked by the main session from the result, the transcript and the export, no analysis agent): every step right
+(by the model's report and the outputs shown), no denied command; 22 calls (`card` 1, `list` 11, `submit` 5, Bash 5,
+Write 2, Edit 3), 193 s, $0.94. G2b taught: `entry == None` inside a lambda over `Option<T>` in
+`shop.parse_lines<T>`. A generic type appeared this time, `type shop.Column<T>` (G8), beside `load<T>` and
+`parse_lines<T>`. The model submitted in five smaller transactions; one was rejected with two E0204s: `let [code, name,
+price]: List<String> = fields(line: line) else return None` where `fields` returns `Option<List<String>>` (the
+destructuring `let` takes a list, not an `Option`; the message had no hint).
+
 Left for later:
+- **`let [...]` over an `Option<List<T>>`** (the rerun): E0204 "Expected `List<String>`, found `Option<List<String>>`"
+  without a hint. A hint naming the two steps (`let parts: List<String> = ... else return ...`, then `let [...]`), or
+  letting the destructuring `let` unwrap an `Option` too, is a diagnostics or language decision.
 
 - **A round that needs a typed generic container**, to reach G7, G8, G9, G5 and the habit codes, none of which
   `shop` touched.
