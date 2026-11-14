@@ -1602,6 +1602,45 @@ Left for later:
 - **The round `shop`** (`~/coding_projects/alang-rounds/prompts/shop.md`, reference `shop-reference.ts`): the main
   session's.
 
+## From the shop round (2026-11-14)
+
+One automated round against `44354f8` on `generics` (headless Opus 5.5, no advisor), the round of `generics`; folder
+`~/coding_projects/alang-rounds/2026-11-14-shop/` (two files, tables), analyzed by one fresh Opus agent (its report was
+condensed into `analysis/report.md` by the main session; call table, cases and scripts beside it).
+
+- **All correct, in one submit.** 30 definitions and 50 examples, accepted as sent, 0 diagnostics; 23 calls (card 1,
+  list 12, submit 1, Bash 5, Write 2, Edit 2), 170 s, 20.1k output tokens, $0.83; no `context`, `search` or
+  `search_type`, no denied command. All 14 prompt runs match the reference byte for byte; 51 of 55 cases, the 4
+  differences open in the prompt (a `-0` price, duplicate codes) or from the Int range (two). `deno check` passes.
+- **Two generic functions, unprompted** (G1, G3, G6, G12): `shop.load<T>` and `shop.parse_records<T>(file, text,
+  parse: (String) -> Option<T>)`, the plan's `parse_lines<T>`, with examples at concrete types passing `parse_product`
+  and `parse_order` by name. Learned from the card's one line; the prompt never says "generic".
+- **Not used:** generic types (G8), case type arguments (G7), generic functions passed by name (G9), explicit type
+  arguments on its own generic functions. Tables took the string-row route (legitimate per the plan).
+- **No diagnostic fired**, so no evidence for E0250, E0209, E0210, E0222, E0211, E0202, E0204 or the habit codes.
+- **G2b was not taught.** Instead of `item == None` inside a lambda over `Option<T>`, the model wrote
+  `std.option.with_default(option: std.option.map(option: item, with: fn(value: T): Bool => false), default: true)`;
+  the card said only "A `T` has no `==` (E0222)". `item == None` passes `check` and all examples (probed).
+- **R7 still unexercised** (every `show` argument an `Int`). **No regressions:** `let [...]` at 3 sites, `const` at 4.
+- **Fixed (this session):**
+  - `9d0d2b9`: the card's generic line reads "A `T` has no `==` (E0222), except against literals and cases: `option
+    == None`." (+53 bytes: 159 lines, 9,920 bytes, so 1 line and 319 bytes left under the caps); `card_test` checks
+    the phrase.
+  - `c784fa2`: E0222's message for a type parameter names the literal side, "with a value built from literals and
+    cases, such as `option == None`," before "or tell cases apart with `match`" (a `match` is not allowed inside a
+    lambda, E0303, where such a test usually sits); so the message no longer names the literal form only through
+    `match`, as "G2b is syntactic" in "From generics" says.
+
+Left for later:
+
+- **A round that needs a typed generic container**, to reach G7, G8, G9, G5 and the habit codes, none of which
+  `shop` touched.
+- **Discovery reads whole modules:** 12 `list` calls, 27.9 KB, and no `search` or `search_type`.
+- **The dummy-default unwraps (4) and an identity `filter_map`** recur; a std helper or a card line, after another
+  round shows them.
+- **Prompt gaps:** `shop.md` leaves a `-0` price, unique codes and bounds open.
+- **The Int range:** an overflow trap in `line_of`; `std.int.parse` gives `None` for a number too large.
+
 ## Spec observations
 
 - `config.load_port` (section 2) uses `LoadError`, `FileUnreadable`, `InvalidPort` and `std.fs.read_text` /
