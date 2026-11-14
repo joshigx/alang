@@ -126,6 +126,19 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     playground round (see "From the std-net round"), five fixes: `alang run` passes SIGTERM on only after 500 ms,
     a connection closed without an answer has one `Failed` text, 7.8 names four host differences, the `serve` doc
     warns about blocked ports, and `std.http.describe_serve_error`. 310 tests.
+21. Statements, on branch `statements` (plan in `docs/plans/statements.md` with its addendum; the main session took
+    every recommendation, T1 to T15), one commit per plan step: the propagation statement `expression else return
+    value` for a `Result<Unit, E>` or `Option<Unit>` (T1; an `else` on the line of an `if`'s `then` still belongs to
+    the `if`, T2); a `let` of type `Unit` is E0235, with a fix when the name is unused (T3); E0217 names the statement
+    for a discarded `Result<Unit, E>` (T4); submit and import apply E0235's fix themselves, listed under `fixed` (T5).
+    `let [a, b]: List<T> = list else return v` takes a list of exactly that length apart (T11; `case [a, b]` is E0101,
+    T12). Shared cases `case A or B then` (T6 to T10): a name not every pattern binds is E0236 where it is used, `|` is
+    E0006 and `case A, B` E0101, each with a fix, and E0227's `expected` is one shared case. `std.list.set` and
+    `std.list.find_index` (T13, T15). `examples/lines.alang` takes its arguments apart and propagates its write; the
+    card teaches all three forms (158 lines, 9,630 bytes). On the way, a latent emitter bug: a `let` whose block value
+    binds its own name inside (`let n: Int = match o` with `case Some(n)`) crashed its example; it is now assigned
+    through a temporary. Record update moved to a new roadmap row 9, `records` (T14). Decisions in `decisions.md`, rows
+    listed in the review list below. 339 tests. See "From statements".
 
 **Next (2026-11-14, overnight run, updated by the main session at ~03:10):** `std-net` (item 20) is built, its
 round analyzed and fixed, re-verified by a second automated round, and fast-forwarded into `main` (unpushed). Next:
@@ -163,7 +176,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided.
 
-**Checks before every commit:** `deno task test` (310 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (339 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -317,6 +330,28 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   already in use` (the system's text for `EADDRINUSE`) and `permission denied`; the test server and
   `examples/server.alang` showing `ServeError` through it. In `decisions.md`, HTTP (`std.http`): `alang run`,
   `SendError`, `describe`, `describe_serve_error`, Bad ports, Host differences left.
+- Statements (item 21, 2026-11-14; the main session took every recommendation of `docs/plans/statements.md`, T1 to
+  T15, built without the user's review). Language changes first: T1 the propagation statement `expression else
+  return value` for a `Result<Unit, E>` or `Option<Unit>`; T2 not after an `if`, `match` or `for`, and an `else` on
+  the line of an `if`'s `then` belongs to that `if`; T3 a `let` never binds `Unit` (E0235, with a fix only when the
+  name is unused and the rest parses; patterns, parameters and `let [...]` names may still be `Unit`); T6 shared
+  cases `case A or B then`, whole patterns on one line; T7 a name is bound in a shared arm only if every pattern binds
+  it with one type, any other is hidden (E0236 at a use, E0216 if bound again, before the module's functions); T11
+  `let [a, b]: List<T> = list else return v`, exact length, names only, the list's type (E0204 with a fix for the
+  item type); T12 no list patterns in `case`. The others: T4 E0217 names the propagation statement for a discarded
+  `Result<Unit, E>`; T5 the codebase applies E0235's fix itself; T8 E0213, E0214 and E0227 per pattern, E0227's
+  `expected` one shared case; T9 `|` E0006 and `case A, B` E0101 with fixes, `Err(A or B)` E0101 without; T10 one
+  TypeScript branch per pattern; T13 `std.list.set` traps outside the list; T14 record update left to roadmap row 9
+  `records`; T15 `std.list.find_index`. Mine beyond the plan: E0235 is not held back by an E0226 inside the same
+  `let`, so submit applies both fixes in one round; E0236 is reported once per name and definition; a one-pattern case
+  keeps E0214's old message; E0235 for a block value with `else` has no `expected`; the comma fix turns only the
+  commas between `case` and `then` into `or`; a name with the error type in any pattern of a shared case is bound with
+  the error type; the message for `?` names the propagation statement; the MCP instructions name the new `fixed`
+  entry; a `let` with an `if`, `match` or `for` value is emitted through a temporary; the plan's `main` over
+  `std.env.args()` (test 3.5) is `lines.alang`'s io test, not a second program. In `decisions.md`: Lexical (Foreign
+  forms), Syntax (Propagation statement, Taking a list apart, Shared cases), Semantics and runtime (Representation in
+  TS), Type checking (Discarded values, `Unit` bindings, Taking a list apart, Blocks, `match`), Database (`Unit`
+  bindings fixed), MCP server (Instructions), Text, numbers and lists in std (`set`, `find_index`, Stopping).
 
 ## Database phase: open points (2026-11-12)
 
@@ -689,7 +724,11 @@ Left for later:
 - **Checked arithmetic.** An overflow traps, so a program cannot turn it into a message. Resolved (item 15):
   `std.int.checked_add`, `checked_subtract` and `checked_multiply` return `Option<Int>`.
 - **E0227 duplicates arms.** When every case but one is handled alike, each of them still needs its own arm.
-- **Propagating a `Result<Unit, E>`** takes a dummy binding: `let x: Unit = ... else return Err(error)`.
+  Resolved (item 21): shared cases `case A or B then`, and E0227's `expected` names the remaining cases in one such
+  case. The planner found that `check_output` itself is served better by `==` plus a let-else (5 lines instead of
+  12), since its body needs the error value that no shared case can name.
+- **Propagating a `Result<Unit, E>`** takes a dummy binding: `let x: Unit = ... else return Err(error)`. Resolved
+  (item 21): the statement `expression else return ...`, and a `let` of type `Unit` is E0235.
 - **Verbosity** from the missing list literals, the two-argument `std.string.concat` and no `std.string.lines`.
   Resolved (item 15): list literals, `std.string.join(parts: [a, b, c], separator: "")` for several texts, and
   `std.string.lines`.
@@ -844,7 +883,8 @@ Left for later:
 - **No std way to turn a `std.fs.Error` into text.** The third program with the same four-arm `match`. Planned as
   N3 in phase `std-net`. Resolved (item 20): `std.fs.describe` (N4 of that plan).
 - **Taking a list apart by position.** `case [a, b, c, d, e]` (or similar) would replace lines of `std.list.get` that
-  cannot fail after a length check. Phase `statements`.
+  cannot fail after a length check. Phase `statements`. Resolved (item 21): `let [a, b, c, d, e]: List<String> = parts
+  else return ...` (T11); a `case` takes no list apart (T12).
 - **Cheaper recovery after a rejected submit.** The resend of all 13 definitions after one failing example cost about
   25% of the round's output tokens. A way to resend only the failing definitions (or to keep the accepted part of a
   transaction) would cut it.
@@ -909,7 +949,7 @@ without the read permission); a lexer error in a submit names its definition.
   repo" rule, no `search` nudge, no allowed-command list; one Bash call with `rm` and a shell function was denied).
   The script now passes it with `--append-system-prompt` and records `instructions=sent` in `done.txt`.
 - **Same idiom twice:** both sessions found the first malformed line with a helper plus an identity `filter_map`;
-  `std.list.find_index` added to the `statements` plan (T15).
+  `std.list.find_index` added to the `statements` plan (T15). Resolved (item 21).
 - One run per condition: run-to-run variance (the missing CR example) drives part of the difference to the manual
   round, along with no user, no CLAUDE.md, no memory files and a shorter system prompt.
 
@@ -922,6 +962,8 @@ Left for later:
   `std.fs.Error` and would be the place. A language decision; not taken, in item 20 either (a sixth case would
   break every `match` again).
 - **`std.list.set` (or update) and a record-update form.** No phase yet; the `statements` planner judges them.
+  Resolved (item 21) for `std.list.set` (T13); record update went to a new roadmap row 9, `records` (T14; see "From
+  statements"). The two dummy `Unit` bindings and taking the one item out of a list are resolved too (T1, T11).
 - **Writing to a real link loop from a write-only program** is `NotFound` on Deno and `Other` on Node.js; the one
   host difference left in `std.fs`.
 
@@ -1009,7 +1051,7 @@ Node.js, the call table, the signal and closed-connection probes) are in `analys
   `std.http.describe`, `print` (the prompt reached the pipe before the request), `wait(500)` and `send`, with the
   right method, `""` content, `std.list.empty<std.http.Header>()`, no `host` header and the 2000 ms timeout.
 - **Evidence for `statements`:** two dummy `Unit` bindings (`written`, `served`; T1 to T5) and a five-arm `match`
-  in the pure `should_retry` whose bodies repeat (two arms `true`, three `false`; T6 to T10).
+  in the pure `should_retry` whose bodies repeat (two arms `true`, three `false`; T6 to T10). Built (item 21).
 - **What it found:** a group SIGTERM ended the server under `alang db run` with exit 143; the `Failed` text of a
   connection closed without an answer carried Deno's ephemeral port and differed by host; Deno sent such a request
   twice; the server listened on port 6000, which its own client refused as `invalid URL`; `ServeError` got a
@@ -1054,6 +1096,42 @@ Left for later:
 - **The runtime's own status text** (`The server answered with status 600, outside 200 to 599.`) starts in upper
   case and ends with a period, unlike the texts of `describe` and the new closed-connection text; the plan fixed it
   verbatim, so it stays until a std phase revisits the texts.
+
+## From statements (2026-11-14)
+
+Built from `docs/plans/statements.md` at `9ba84a8` (after `std-net`). What the build observed that is not decided:
+
+- **The plan predated `std-net`.** Only four dummy `Unit` bindings were left to convert (`examples/lines.alang`, the
+  servers in `tests/http_test.ts` and `tests/queries_test.ts`, the card); `probe`, `server`, `words` and the
+  `io_program` programs had none. The suite accepting every example and test program is the real confirmation.
+- **A `let` may share its name with a pattern inside its own value.** `let n: Int = match o` with `case Some(n) then
+  n` passes the checker, since the `let`'s name is visible only after it (2.6), but the emitter assigned to the
+  pattern's TypeScript constant and the example crashed with a JavaScript `TypeError` (not a trap). Fixed in the
+  emitter (`5b9943e`). Open: whether 2.6 ("every name has exactly one meaning in a body") should reject it instead
+  (E0216); today sibling branches may reuse a name, and this is close to that.
+- **E0235 and E0226 in one `let`.** With the plan's "nothing else raised" gate, `let x: Unit =
+  std.console.print_line(text: m.word())` reported only E0226; after the codebase shortened the name, the re-check
+  found E0235 and the submit was rejected. E0226 is now not counted as another cause, so both are reported and fixed
+  in one round.
+- **`lines.alang` refuses a third argument** (exact length, T11), where it used to ignore it; the io test pins it.
+- **Stored code with `let x: Unit`** (the user's playground export `tasks.alang` has two, its `alang.db.bak` ledger's
+  two) is refused on its next acceptance until those definitions are resent; T5 then fixes them on the submit. Rounds
+  start from empty codebases and are unaffected.
+- **Card budget.** 158 lines and 9,630 bytes (+191 over `std-net`); the test allows 160 lines and under 10,240 bytes,
+  so 2 lines and 609 bytes remain, and the next two phases plan about 190 bytes. The program's heading and sentence
+  were merged into `## A complete program, accepted as it stands` to fit.
+- **Output size of shared cases** (T10): each pattern copies the body. Nothing measured yet; the `tickets` round's
+  `out/` will show it.
+
+Left for later:
+
+- **Record update** (copying a record with one field changed): a new roadmap row 9, `records`, after `extern-fn`, to
+  pull forward when a round rebuilds a record of four or more fields to change one (T14). The tasks round rebuilt a
+  two-field record. 7.1 names the workaround. The roadmap table in `docs/plans/list-literals.md` and the "Next"
+  paragraph above are left as they are.
+- **The `tickets` round** (the plan's section 7; its prompt is saved at
+  `~/coding_projects/alang-rounds/prompts/tickets.md`) tests whether the card teaches the three forms and
+  `std.list.set` is found.
 
 ## Spec observations
 

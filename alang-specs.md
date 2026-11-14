@@ -485,6 +485,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | Concurrency | Everything runs in order; `std.http.serve` answers one request at a time, and `std.http.send` and `std.time.wait` hold the program until they return |
 | A wildcard pattern `_` | Every value in a pattern gets a name, used or not: `case Ok(done) then`; in a shared case, a name that not every pattern binds is simply left unused |
 | A pattern over a list's items, `case [a, b] then` (E0101) | `let [a, b]: List<T> = xs else return …` for an exact length; `std.list.first` and `std.list.drop` for the first item and the rest |
+| Copying a record with one field changed | Construct it again with every field named: `Task(text: task.text, done: true)` |
 
 ### 7.2 Text
 
