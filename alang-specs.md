@@ -389,7 +389,7 @@ Queries:
 | --- | --- |
 | `signature(name)` | All sections except `body` |
 | `definition(name)` | Complete canonical text |
-| `context(name)` | Definition plus the signatures of all functions and types it uses |
+| `context(name)` | Definition plus the signatures of all functions and types it uses, and the text of the constants it uses |
 | `callers(name)` | Definitions that use `name` |
 | `search(type)` | Functions with a matching signature, such as `String -> Result<Int, _>` |
 | `search(text)` | Matches in names and `doc` lines |
@@ -919,10 +919,10 @@ Section 6 in practice. `alang mcp` offers the queries and operations as tools fo
 
 | Query | Result |
 | --- | --- |
-| `list(module)` | The module's definitions (name, hash, kind, `signature` on one line, and doc) and submodules; without a module, the codebase's top level; `std` for the library. A function's signature is like `fn std.string.split(text: String, separator: String): List<String>, effects: none`, a type's like `type std.string.Cut, record: before: String, after: String` or `type std.fs.Kind, variant: File \| Directory`, with `, where: ...` unless the where is `none` |
+| `list(module)` | The module's definitions (name, hash, kind, `signature` on one line, and doc) and submodules; without a module, the codebase's top level; `std` for the library. A function's signature is like `fn std.string.split(text: String, separator: String): List<String>, effects: none`, a type's like `type std.string.Cut, record: before: String, after: String` or `type std.fs.Kind, variant: File \| Directory`, with `, where: ...` unless the where is `none`; a constant's like `const shop.sizes: List<String>` |
 | `search(text)` | Definitions whose name or `doc` contains the text, std included, shown as `list` shows them |
 | `search_type(pattern)` | Functions by signature, such as `String -> Option<Int>`, `Int, Int -> Bool`, or `-> Unit` for none. `_` matches any type; `Port` matches by last segment. The parameter count and the result type must match exactly, so `String -> Int` does not find `std.int.parse`. A function-typed parameter is written as a function type: `List<_>, (_) -> Bool -> List<_>` finds `std.list.filter` (`_` matches it too), and a whole pattern in parentheses, `(String) -> Option<Int>`, reads as `String -> Option<Int>` |
-| `context(name)` | The text and hash, and the signatures of everything it uses (std as one line or as alang text). Read this before a change. To call a std function or use a std type, its `signature` in a hit is enough; `context` of a function adds the types it mentions |
+| `context(name)` | The text and hash, and the signatures of everything it uses (std as one line or as alang text; a constant as its whole text, since examples depend on its value). Read this before a change. To call a std function or use a std type, its `signature` in a hit is enough; `context` of a function adds the types it mentions |
 | `definition(name)`, `signature(name)` | The text, or every section but `body` |
 | `callers(name)` | The definitions that use it |
 | `history(name)` | Every version with time and operation (`add`, `replace`, `remove`, `rename`, `follow`, `import`) |
@@ -937,7 +937,7 @@ Section 6 in practice. `alang mcp` offers the queries and operations as tools fo
 
 - **The hash is a guard (6.7).** Copy it from the last query or change result. A stale hash is rejected (E0501) together with the current version in `current`; redo the change on that version. Never write a hash into code.
 - **Results.** `ok: true` lists `written` (name, new hash, operation), `unchanged`, and, if present, `fixed`: E0226 and E0235, the two fixes the codebase applies itself. `ok: false` lists `diagnostics` and `current`, and nothing was written.
-- **Interface changes.** Every section of a function except `doc`, `examples` and `body` belongs to its interface; so do a type's shape and `where`. Removing an effect is not an interface change. A change to the interface is rejected while callers outside the transaction exist (E0506). Submit them in the same transaction, adapted or unchanged.
+- **Interface changes.** Every section of a function except `doc`, `examples` and `body` belongs to its interface; so do a type's shape and `where`, and a constant's `out`. A constant's body, its value, does not: a caller whose example the new value breaks is rejected by that example. Removing an effect is not an interface change. `replace` may turn a function into a constant of the same name or back, which changes the interface. A change to the interface is rejected while callers outside the transaction exist (E0506). Submit them in the same transaction, adapted or unchanged.
 - **Departures from section 6.** References are stored as names, not hashes, so `rename` rewrites every caller, and each caller gets a new version (6.1). `search(type)` is `search_type`. std can be read but not changed, and has no history.
 - **Export.** `export/<module>.alang` holds each module as canonical text for Git, and it is the source of truth. The database and the export follow each other automatically. If both changed, E0513 is reported, and which side wins is the user's call.
 - **Running.** `alang db run` runs the program the database holds. If there are several `main` functions, name one: `alang db run web.main` (E0304). Arguments for the program go after `--`: `alang db run web.main -- <args>`.

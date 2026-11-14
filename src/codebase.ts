@@ -171,7 +171,7 @@ export function hashText(text: string): string {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS definitions (
   hash TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('fn', 'type')),
+  kind TEXT NOT NULL CHECK (kind IN ('fn', 'type', 'const')),
   text TEXT NOT NULL,
   signature TEXT NOT NULL
 );
@@ -381,11 +381,11 @@ function operationText(change: Change, name: string | null): string {
 }
 
 // The name an add's text gives in its first line (`fn net.port.parse`,
-// `type net.port.Port`), read without the lexer, which may be what failed;
-// null if that line is not such a header.
+// `type net.port.Port`, `const shop.sizes`), read without the lexer, which may
+// be what failed; null if that line is not such a header.
 function headerName(text: string): string | null {
   const first = text.trimStart().split("\n", 1)[0];
-  return /^(?:fn|type) ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$/.exec(first)?.[1] ?? null;
+  return /^(?:fn|type|const) ([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$/.exec(first)?.[1] ?? null;
 }
 
 function list(names: Iterable<string>): string {
@@ -408,8 +408,56 @@ function openDatabase(path: string): { db: DatabaseSync; file: FileId } {
   const db = new DatabaseSync(path);
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA);
+  migrateKinds(db);
   const { dev, ino } = Deno.statSync(path);
   return { db, file: { dev, ino } };
+}
+
+// The definitions table as it is created today (in SCHEMA), under a name to
+// copy into.
+const DEFINITIONS_NEW = `CREATE TABLE definitions_new (
+  hash TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('fn', 'type', 'const')),
+  text TEXT NOT NULL,
+  signature TEXT NOT NULL
+)`;
+
+const definitionsSql = (db: DatabaseSync): string =>
+  (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'definitions'").get() as { sql: string })
+    .sql;
+
+// A database made before constants (C11) checks `kind IN ('fn', 'type')`,
+// which `CREATE TABLE IF NOT EXISTS` never changes, so it would refuse every
+// constant. It is migrated on open by SQLite's procedure for changes that
+// ALTER TABLE cannot make: a new table, the rows copied, the old one dropped
+// and the new one renamed, with foreign keys off (they cannot change inside a
+// transaction) and checked before the commit. Every row and the history are
+// kept; only the CHECK widens. Another process may migrate at the same time,
+// so the test is repeated inside the transaction.
+function migrateKinds(db: DatabaseSync): void {
+  if (definitionsSql(db).includes("'const'")) return;
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (!definitionsSql(db).includes("'const'")) {
+        db.exec(DEFINITIONS_NEW);
+        db.exec(
+          "INSERT INTO definitions_new (hash, kind, text, signature) SELECT hash, kind, text, signature FROM definitions",
+        );
+        db.exec("DROP TABLE definitions");
+        db.exec("ALTER TABLE definitions_new RENAME TO definitions");
+        const broken = db.prepare("PRAGMA foreign_key_check").all();
+        if (broken.length > 0) throw new Error(`migrating the definitions table broke references: ${broken.length}`);
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
 }
 
 // SQLite refuses every write to a database file that was moved or deleted
@@ -598,7 +646,8 @@ export class Codebase {
   }
 
   // The text of `name` and the signatures of everything it uses (6.5), in
-  // order of first use: functions, types, and the type of each case used. Then
+  // order of first use: functions, types, constants (each with its whole
+  // text, C10), and the type of each case used. Then
   // the types that appear in those signatures, one level deep, since calling
   // a function means building its arguments. std functions come as one line
   // (`signatureLine`), std types as alang text; both have no hash. For a std
@@ -635,10 +684,12 @@ export class Codebase {
         return signatureTypes(stdType);
       }
       const row = this.db.prepare(
-        "SELECT n.hash, d.text, d.signature FROM names n JOIN definitions d ON d.hash = n.hash WHERE n.name = ?",
-      ).get(owner) as { hash: string; text: string; signature: string } | undefined;
+        "SELECT n.hash, d.kind, d.text, d.signature FROM names n JOIN definitions d ON d.hash = n.hash WHERE n.name = ?",
+      ).get(owner) as { hash: string; kind: Definition["kind"]; text: string; signature: string } | undefined;
       if (!row) return null;
-      uses.push({ name: owner, hash: row.hash, text: row.signature });
+      // A constant with its whole text: the examples of what uses it depend
+      // on its value, which only the body holds (C10).
+      uses.push({ name: owner, hash: row.hash, text: row.kind === "const" ? row.text : row.signature });
       return signatureTypes(parseProgram(row.text)[0]);
     };
     const level2: string[] = [];
@@ -1066,7 +1117,9 @@ export class Codebase {
       shown.push({ name, hash: cur.hash, text: cur.text });
       return null;
     }
-    // The name also fixes the kind: functions are snake_case, types PascalCase.
+    // Only the name is compared. It tells types (PascalCase) from values
+    // (snake_case); a value may change between `fn` and `const`, which is an
+    // interface change for its callers (C7).
     if (change.op === "replace" && def && pathText(def.path) !== name) {
       diagnostics.push(diagnostic({
         code: "E0505",
@@ -1254,12 +1307,15 @@ export class Codebase {
     // a renamed type in its signature, or its own new name, is no change.
     const change = interfaceChange(rewritten.get(p.name)?.def ?? before, p.def!);
     const affected = new Set<string>();
-    if (change.sections.length > 0) { for (const c of outside(this.callersOf(p.name, before))) affected.add(c); }
+    if (change.sections.length > 0 || change.kind) {
+      for (const c of outside(this.callersOf(p.name, before))) affected.add(c);
+    }
     if (change.addedEffects.length > 0) {
       for (const c of this.lackingEffects(p.name, before, change.addedEffects, current, members)) affected.add(c);
     }
     if (affected.size === 0) return [];
-    const what = [
+    // A `fn` that becomes a `const` (C7): how every caller writes it changes.
+    const what = change.kind ? `changes from a \`${change.kind.from}\` to a \`${change.kind.to}\`` : [
       ...(change.sections.length > 0 ? [`changes its ${list(change.sections)} section`] : []),
       ...(change.addedEffects.length > 0 ? [`adds the effects ${list(change.addedEffects)}`] : []),
     ].join(" and ");

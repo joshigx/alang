@@ -99,7 +99,7 @@ edit): answer questions about its current state from a fresh query, not from ear
 1. Find: \`list\` (modules; \`std\` is the standard library), \`search\` (names and doc lines), \`search_type\` \
 (signatures such as \`String -> Result<Int, _>\`). std is included in all three.
 2. Read: \`context(name)\` gives the canonical text (examples, body), its hash, and the signatures of everything it \
-uses: all you need to change it. For a std name (hash null) it adds to the signature only the types it mentions, \
+uses (a constant's whole text): all you need to change it. For a std name (hash null) it adds to the signature only the types it mentions, \
 such as the fields of \`std.http.Request\`. std cannot be changed.
 3. Change: \`replace(name, hash, text)\` with the complete new definition and the hash the query returned. Hashes \
 are guards; never write one into code. A change is parsed, type- and effect-checked, and every example of the \
@@ -168,7 +168,7 @@ export const TOOLS: readonly Tool[] = [
     name: "context",
     title: "Definition with what it uses",
     description: "The canonical text of a definition and its hash, followed by the signatures of every function " +
-      "and type it uses, in order of first use, and of the types in those signatures (std functions as one " +
+      "and type it uses and the text of every constant it uses, in order of first use, and of the types in those signatures (std functions as one " +
       "line). Everything needed to change the definition: read this before `replace`. For a std name (hash " +
       "null), its signature line with the doc and the types it mentions, such as the fields of `std.http.Request`; " +
       "to call a std function or use a std type, its `signature` in a `list` or `search` hit is enough.",
@@ -209,7 +209,8 @@ export const TOOLS: readonly Tool[] = [
     description: "The definitions of a module (name, hash, kind, `signature` on one line, doc) and the names of " +
       "its direct submodules. A signature is like `fn std.string.split(text: String, separator: String): " +
       "List<String>, effects: none` for a function and `type std.string.Cut, record: before: String, after: " +
-      "String` or `type std.fs.Kind, variant: File | Directory` for a type, with `, where: ...` unless it is none. " +
+      "String` or `type std.fs.Kind, variant: File | Directory` for a type, with `, where: ...` unless it is none, and " +
+      "`const shop.zones: Map<String, Int>` for a constant. " +
       "Without `module`, the top-level modules of the codebase; `std` and its submodules (`std.http`) list the " +
       "standard library.",
     params: { module: { description: "A module such as `net.port`; leave it out for the top level.", optional: true } },
