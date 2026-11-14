@@ -553,6 +553,13 @@ export const STD: readonly Signature[] = [
     ["list", list(T)],
     ["index", INT],
   ], option(T)),
+  sig(
+    "std.list.set",
+    "Updates one item: the list with the item at the index replaced, counting from 0; copies the list. An index outside the list traps; `std.list.get` tells whether it is inside.",
+    ["T"],
+    [["list", list(T)], ["index", INT], ["item", T]],
+    list(T),
+  ),
   sig("std.list.map", "Applies the function to every item.", ["T", "U"], [
     ["list", list(T)],
     ["with", fnType([T], U)],
@@ -659,6 +666,13 @@ export const STD: readonly Signature[] = [
     ["T"],
     [["list", list(T)], ["with", fnType([T], BOOL)]],
     option(T),
+  ),
+  sig(
+    "std.list.find_index",
+    "The position of the first item for which the function is true, counting from 0; `None` if there is none. Stops at that item.",
+    ["T"],
+    [["list", list(T)], ["with", fnType([T], BOOL)]],
+    option(INT),
   ),
   sig(
     "std.list.filter_map",

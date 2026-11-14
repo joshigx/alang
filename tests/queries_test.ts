@@ -326,6 +326,11 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
   assertEquals(cb.searchText("effects: none"), []);
   assertEquals(cb.searchText("record:"), []);
   assertEquals(cb.searchText("OutOfRange"), []);
+  // Updating one item of a list is found under the words a model tries (T13).
+  for (const word of ["set", "replace", "update"]) {
+    assert_(cb.searchText(word).some((h) => h.name === "std.list.set"), word);
+  }
+  assert_(cb.searchText("position of the first").some((h) => h.name === "std.list.find_index"));
   await done(cb);
 });
 
@@ -365,6 +370,9 @@ Deno.test("queries: search(type) matches signatures by pattern", async () => {
   ]);
   // A type variable stands for one type throughout a signature.
   assertEquals(names("List<Int>, Int -> List<Int>"), ["std.list.append", "std.list.drop", "std.list.take"]);
+  // `fold`'s `A` is bound to `Int` by its second parameter, so it fails against `List<_>`.
+  assertEquals(names("List<_>, Int, _ -> List<_>"), ["std.list.set"]);
+  assertEquals(names("List<String>, _ -> Option<Int>"), ["std.list.find_index"]);
   assertEquals(names("List<Int>, String -> List<Int>"), []);
   assertEquals(names("List<String>, _ -> List<Int>"), ["std.list.enumerate", "std.list.filter_map", "std.list.map"]);
   assertEquals(names("-> _"), [

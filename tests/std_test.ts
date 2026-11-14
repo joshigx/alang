@@ -338,6 +338,39 @@ fn uses.labels
     let placed: List<String> = std.list.enumerate(list: names, with: fn(i: Int, name: String): String => std.string.concat(left: std.text.show(value: i), right: name))
     return std.list.concat(left: numbered, right: placed)
 end fn uses.labels
+
+fn uses.set_second
+  doc: "The list with its second item replaced by 9, if it has one."
+  in:
+    xs: List<Int>
+  out: List<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    set_second(xs: [1, 2, 3]) == [1, 9, 3]
+    set_second(xs: [1]) == [1]
+  body:
+    if std.list.length(list: xs) < 2 then
+      return xs
+    end if
+    return std.list.set(list: xs, index: 1, item: 9)
+end fn uses.set_second
+
+fn uses.first_blank
+  doc: "The position of the first empty line, counting from 0."
+  in:
+    lines: List<String>
+  out: Option<Int>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    first_blank(lines: ["a", "", "b", ""]) == Some(1)
+    first_blank(lines: ["a"]) == None
+  body:
+    return std.list.find_index(list: lines, with: fn(line: String): Bool => line == "")
+end fn uses.first_blank
 `;
 
 Deno.test("std: the new functions are accepted from alang, and their calls type-check", async () => {
@@ -365,6 +398,31 @@ Deno.test("std.list: first, last, take, drop, reverse, concat, flatten", () => {
   assertEquals([rt.std$list$concat([], xs), rt.std$list$concat(xs, []), rt.std$list$concat([], [])], [xs, xs, []]);
   assertEquals(rt.std$list$flatten([[1], [], [2, 3]]), [1, 2, 3]);
   assertEquals([rt.std$list$flatten([]), rt.std$list$flatten([[], []])], [[], []]);
+});
+
+Deno.test("std.list: set replaces one item of a copy; an index outside the list traps (T13)", () => {
+  const xs = [1, 2, 3];
+  assertEquals([0, 1, 2].map((i) => rt.std$list$set(xs, i, 9)), [[9, 2, 3], [1, 9, 3], [1, 2, 9]]);
+  assertEquals(xs, [1, 2, 3]);
+  const condition = "0 <= index and index < std.list.length(list: list)";
+  assertEquals(trapOf(() => rt.std$list$set(xs, -1, 9)), ["requires", "std.list.set", condition]);
+  assertEquals(trapOf(() => rt.std$list$set(xs, 3, 9)), ["requires", "std.list.set", condition]);
+  assertEquals(trapOf(() => rt.std$list$set([], 0, 9)), ["requires", "std.list.set", condition]);
+});
+
+Deno.test("std.list: find_index gives the first position, from 0, and stops there (T15)", () => {
+  const even = (n: number) => n % 2 === 0;
+  assertEquals([[], [1, 3], [2, 4], [1, 2, 4]].map((xs) => rt.std$list$find_index(xs, even)), [
+    rt.None,
+    rt.None,
+    rt.Some(0),
+    rt.Some(1),
+  ]);
+  const upTo = (n: number) => {
+    if (n > 2) throw new Error(`called on ${n}`);
+    return even(n);
+  };
+  assertEquals(rt.std$list$find_index([1, 2, 3], upTo), rt.Some(1));
 });
 
 Deno.test("std.list: contains compares structurally; range includes both ends", () => {

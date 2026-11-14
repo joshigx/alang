@@ -1778,6 +1778,19 @@ export function std$list$get<T>(list: readonly T[], index: number): Option<T> {
   return index >= 0 && index < list.length ? Some(list[index]) : None;
 }
 
+const SET_CONDITION = "0 <= index and index < std.list.length(list: list)";
+
+// An index outside the list is a program error, like `take`'s negative
+// count (S3): callers find the item with `get` first (T13).
+export function std$list$set<T>(list: readonly T[], index: number, item: T): readonly T[] {
+  if (index < 0 || index >= list.length) {
+    trap("requires", "std.list.set", SET_CONDITION, `Precondition of std.list.set violated: ${SET_CONDITION}`);
+  }
+  const copy = list.slice();
+  copy[index] = item;
+  return copy;
+}
+
 export function std$list$map<T, U>(list: readonly T[], fn: (item: T) => U): readonly U[] {
   return list.map((x) => fn(x));
 }
@@ -1875,9 +1888,9 @@ export function std$list$enumerate<T, U>(list: readonly T[], fn: (index: number,
   return list.map((x, i) => fn(i, x));
 }
 
-// `any`, `all`, `find`, `take_while` and `drop_while` stop at the item that
-// decides (H3). The function is pure, so stopping shows only as a trap in a
-// later item that does not happen; their docs say so.
+// `any`, `all`, `find`, `find_index`, `take_while` and `drop_while` stop at
+// the item that decides (H3). The function is pure, so stopping shows only as
+// a trap in a later item that does not happen; their docs say so.
 
 export function std$list$any<T>(list: readonly T[], fn: (item: T) => boolean): boolean {
   for (const x of list) if (fn(x)) return true;
@@ -1891,6 +1904,11 @@ export function std$list$all<T>(list: readonly T[], fn: (item: T) => boolean): b
 
 export function std$list$find<T>(list: readonly T[], fn: (item: T) => boolean): Option<T> {
   for (const x of list) if (fn(x)) return Some(x);
+  return None;
+}
+
+export function std$list$find_index<T>(list: readonly T[], fn: (item: T) => boolean): Option<number> {
+  for (let i = 0; i < list.length; i++) if (fn(list[i])) return Some(i);
   return None;
 }
 
