@@ -928,6 +928,9 @@ observed with `deno run` and `node` scripts and in-process servers unless marked
 | fetch without `--allow-net` | `NotCapable`, "Requires net access to …" | — |
 | fetch: `ftp:`, `u:p@` in the URL | "Url scheme 'ftp' not supported"; credentials ignored | "fetch failed"; `TypeError` for credentials |
 | fetch to a bad port (25) / to port 0 | connects | cause "bad port" / `ECONNREFUSED` (its list starts at 1) |
+| fetch: the server reads the request and closes without answering | sends it a second time, POST too (both at the same millisecond); "error sending request from 127.0.0.1:<ephemeral> for <url> (<address>): client error (SendRequest): connection closed before message completed" | sends it once; "fetch failed", cause "other side closed" (`UND_ERR_SOCKET`) |
+| fetch: the server answers bytes that are not HTTP | "error sending request from …: client error (SendRequest): invalid HTTP version parsed" | "fetch failed", cause "Response does not match the HTTP/1.1 protocol (Expected HTTP/, RTSP/ or ICE/)" |
+| fetch: a body cut short (`content-length` 10, 3 bytes; or a chunked body), then closed | `r.text()` fails: "error reading a body from connection" | `r.text()` fails: "terminated", cause a length mismatch or "Invalid EOF state" |
 | Redirect to `file:///etc/hostname` | "Fetch failed: Can not redirect to a non HTTP(s) url" | cause "URL scheme must be a HTTP(S) scheme" |
 | Redirect to a bad port | followed | cause "bad port" |
 | Redirect loop | "Maximum number of redirects (20) reached", after 21 requests | cause "redirect count exceeded" |
@@ -945,7 +948,8 @@ observed with `deno run` and `node` scripts and in-process servers unless marked
 Default request headers differ (Deno: user agent `Deno/2.8.0`, `accept-encoding: gzip,br`; Node.js: `node`,
 `gzip, deflate`, `sec-fetch-mode`); only the server sees them. The rows before "fetch: connection refused" and the
 plan's rows are from the planner's probes; the link, redirect, proxy, port 0, connect-timeout and permission rows
-were probed again or first by the implementer.
+were probed again or first by the implementer. The closed-connection, non-HTTP and cut-body rows are from the
+std-net round's analysis (`probe_close.py`) and the fixes after it.
 
 - **The link decision.** The task brief asked whether `create_text` over a dangling link can be `AlreadyExists` on
   both hosts for a program with `fs.write` alone. It can: an exclusive create never follows a link, and Deno does

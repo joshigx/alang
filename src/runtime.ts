@@ -1314,6 +1314,7 @@ export async function std$http$send(
     timedOut = true;
     controller.abort();
   });
+  let answered = false;
   try {
     const r = await fetch(target.href, {
       method,
@@ -1322,6 +1323,7 @@ export async function std$http$send(
       redirect: "follow",
       signal: controller.signal,
     });
+    answered = true;
     // UTF-8, invalid bytes as U+FFFD, a leading byte order mark dropped.
     const text = await r.text();
     if (r.status < 200 || r.status > 599) {
@@ -1353,14 +1355,30 @@ export async function std$http$send(
       return Err<std$http$SendError>({ tag: "Unreachable" });
     }
     const message = String(err.message ?? e);
+    // The server read the request and closed the connection before any
+    // answer: one text on every host, since Deno's names the port it sent
+    // from, which changes every run.
+    if (!answered && CLOSED_UNANSWERED.test(`${message}\n${err.cause?.message ?? ""}`)) {
+      return Err<std$http$SendError>({ tag: "Failed", value: "the server closed the connection without answering" });
+    }
+    const text = message.replace(DENO_SEND_PREFIX, "");
     return Err<std$http$SendError>({
       tag: "Failed",
-      value: err.cause?.message ? `${message}: ${err.cause.message}` : message,
+      value: err.cause?.message ? `${text}: ${err.cause.message}` : text,
     });
   } finally {
     cancel();
   }
 }
+
+// Deno's and Node.js's words for a connection closed before the response.
+const CLOSED_UNANSWERED = /connection closed before message completed|other side closed/;
+
+// How Deno starts a failure of sending: `error sending request from
+// 127.0.0.1:55278 for http://... (127.0.0.1:35681): `, an ephemeral port
+// first (older releases: `error sending request for url (http://...): `).
+// The rest of its message stays.
+const DENO_SEND_PREFIX = /^error sending request (?:from \S+ )?for (?:url \(\S+\)|\S+(?: \(\S+\))?): /;
 
 // The texts a program shows for an error; `Failed` carries the host's own.
 export function std$http$describe(error: std$http$SendError): string {

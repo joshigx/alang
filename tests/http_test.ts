@@ -585,6 +585,8 @@ async function netServer() {
         );
       case "/600":
         return sized("600 Odd", [], "");
+      case "/closed":
+        return null;
       case "/slow":
         return "hold";
       case "/ok":
@@ -734,6 +736,7 @@ Deno.test("send: odd answers of a server are Failed; content is read as UTF-8", 
     if (request.path === "/600") return raw("600 Odd", [["Content-Length", "0"], ["Connection", "close"]]);
     if (request.path === "/closed") return null;
     if (request.path === "/short") return raw("200 OK", [["Content-Length", "10"], ["Connection", "close"]], "abc");
+    if (request.path === "/nonsense") return "nonsense\r\n\r\n";
     return raw(
       "200 OK",
       [["Content-Length", "5"], ["Connection", "close"]],
@@ -741,9 +744,22 @@ Deno.test("send: odd answers of a server are Failed; content is read as UTF-8", 
     );
   });
   try {
-    for (const path of ["/600", "/closed", "/short"]) {
+    for (const path of ["/600", "/closed", "/short", "/nonsense"]) {
       assertEquals(failed(await std$http$send("GET", `${server.url}${path}`, [], "", 5000)), "Failed", path);
     }
+    // A connection closed without an answer has one text on every host.
+    for (const method of ["GET", "POST"]) {
+      assertEquals(
+        await std$http$send(method, `${server.url}/closed`, [], method === "POST" ? "x" : "", 5000),
+        Err<std$http$SendError>({ tag: "Failed", value: "the server closed the connection without answering" }),
+        method,
+      );
+    }
+    // Other host messages lose Deno's start, which names the addresses, a
+    // port of the client's that changes every run among them.
+    const nonsense = await std$http$send("GET", `${server.url}/nonsense`, [], "", 5000);
+    const message = nonsense.tag === "Err" && nonsense.value.tag === "Failed" ? nonsense.value.value : "";
+    assert_(message !== "" && !/error sending request|127\.0\.0\.1|:\d{2,5}\b/.test(message), message);
     // A leading byte order mark goes, an invalid byte becomes U+FFFD.
     const latin = await std$http$send("GET", `${server.url}/bytes`, [], "", 5000);
     assertEquals(latin.tag === "Ok" && latin.value.content, "a�");
@@ -805,8 +821,8 @@ end fn client.main
   assertEquals([out.code, trap.trap, trap.definition], [70, "effect", "std.http.send"]);
 });
 
-// The client program, alike on both hosts: what the runtime promises, and
-// the host's message in `Failed` left out.
+// The client program, alike on both hosts, byte for byte: its `Failed`
+// texts are the runtime's own.
 const NET_STDOUT = [
   'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "5"), ' +
   '(name: "set-cookie", value: "a=1"), (name: "set-cookie", value: "b=2"), (name: "x-a", value: "2, 3"), ' +
@@ -821,7 +837,8 @@ const NET_STDOUT = [
   'content: "odd"))',
   'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "4"), ' +
   '(name: "x-latin", value: "café")], content: "caf\uFFFD"))',
-  "Err(Failed)",
+  'Err(Failed("The server answered with status 600, outside 200 to 599."))',
+  'Err(Failed("the server closed the connection without answering"))',
   "Err(TimedOut)",
   "Err(Unreachable)",
   "Err(InvalidUrl)",
@@ -850,7 +867,7 @@ for (const host of ["deno", "node"] as const) {
     const server = await netServer();
     try {
       const [code, stdout, stderr] = await runOn(host, built, [server.url, `http://127.0.0.1:${freePort()}/`]);
-      assertEquals([code, stdout.replaceAll(/Failed\(".*?"\)/g, "Failed"), stderr], [0, NET_STDOUT, ""]);
+      assertEquals([code, stdout, stderr], [0, NET_STDOUT, ""]);
     } finally {
       await server.close();
     }

@@ -121,7 +121,7 @@ end fn ending.main
 
 // A client that sends to a server the test runs, given its base URL and a
 // URL where nothing listens, and prints every outcome: the same text on
-// every host, but for the host's message in `Failed`.
+// every host.
 export const NET_PROGRAM = `fn client.main
   doc: "Sends requests to the server whose base URL is the first argument and prints each outcome."
   in: none
@@ -142,6 +142,7 @@ export const NET_PROGRAM = `fn client.main
     std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/odd"), headers: plain, content: "", timeout_milliseconds: 5000)))
     std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/latin"), headers: plain, content: "", timeout_milliseconds: 5000)))
     std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/600"), headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "POST", url: std.string.concat(left: base, right: "/closed"), headers: plain, content: "x", timeout_milliseconds: 5000)))
     std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/slow"), headers: plain, content: "", timeout_milliseconds: 300)))
     std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: closed, headers: plain, content: "", timeout_milliseconds: 5000)))
     std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: "ftp://127.0.0.1/", headers: plain, content: "", timeout_milliseconds: 5000)))
