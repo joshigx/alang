@@ -195,6 +195,23 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     accepted with its examples; the card names the header, `type util.Pair<A, B>` and `Leaf<Int>` (159 lines, 9,867
     bytes, 29 fewer than before). Decisions in `decisions.md`, rows listed in the review list below. 444 tests. See
     "From generics".
+25. Extern functions, on branch `extern-fn` (plan in `docs/plans/extern-fn.md`; the main session took every
+    recommendation, E1 to E20), one commit per plan step plus one hardening commit after commit 3. `extern fn
+    text.encode` has the sections of a `fn` with `target: "./text.ts#encode"` in place of `body:`, then `end extern fn
+    text.encode` (E1; `target` stays unreserved, E4); the target is a `.ts` module of the project, relative to the
+    codebase's directory or the file's (E0260, one fix for a missing `./`, E3); no function value in `in` (E0261, E6)
+    and no type parameters (E0101, E7). Its result is checked deeply against `out` and rebuilt, records through their
+    constructor (so `where` holds and `show` names them), arguments are copied out (E2, E8); a pure extern returns at
+    once, a Promise traps, one with effects is awaited (E5); an exception traps `extern`, a permission refusal `effect`
+    (E9). A program with an extern evaluates its constants and runs its examples in a separate Deno process without
+    any permission, without remote modules, with a 30 s limit (E10); E0406 (a module missing, not loading, not
+    exporting the function, or a report the tool cannot read), E0407 (the limit), E0408 (a tool without
+    `--allow-run`, E11; the README's MCP registration and the round script now grant it). In the codebase an extern is
+    a `fn` whose hits start `extern fn`, whose `target` is no interface (E13, E14), and whose module is retested at
+    every acceptance (E15). The MCP instructions name the module as the one file the model writes; the card teaches
+    the form (158 lines, 9,910 bytes, 10 fewer). The spec gains `text.decode` and `text.encode` with their TypeScript
+    (7.3), accepted with their examples, and section 7.12. Decisions in `decisions.md`, rows listed in the review list
+    below. 477 tests. See "From extern-fn".
 
 **Next (2026-11-14, overnight run, updated by the main session at ~07:20):** `std-net` (item 20), `statements`
 (item 21), `fn-types` (item 22), `const` (item 23, with R7 of `docs/plans/records.md`) and `generics` (item 24, generic
@@ -228,10 +245,10 @@ user (2026-11-12); async output makes it possible now. Reconnect the playground'
 is done; see "From the MCP server". Claude Code connected and used every kind of tool, so the protocol works with a
 real client (the official SDK client was not run). Open from that round, each the user's call: an MCP `run` tool
 (`alang db run` is built; see "From db run"); recording what triggered an `import` in `history`; a tool operation for renaming a
-parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
-and need their form decided (`const` built, item 23).
+parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` were unparsed
+and needed their form decided (`const` built, item 23; `extern fn` built, item 25).
 
-**Checks before every commit:** `deno task test` (444 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (477 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -526,6 +543,41 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   (Representation in TS), Type checking (`Ok`, `Err`, `None`, Type parameters, Generic types, Explicit type arguments,
   Map keys, Order, Own module names, Function values, Uniqueness, std signatures), Database (Interface rule, Rename
   capture, `search(type)`, Hits).
+- Extern functions (item 25, 2026-11-14; the main session took every recommendation of `docs/plans/extern-fn.md`, E1
+  to E20, built without the user's review). **Your playground's MCP registration lacks `--allow-run`:** once that
+  codebase holds an `extern fn`, every change there is refused with E0408, whose message gives the line to register
+  (`deno run --allow-read --allow-write --allow-run <path>/src/cli.ts mcp --dir <dir>`, as the README now says). No
+  agent changes it; it is yours to change. Language changes first: E1 the form, the sections of a `fn` with `target:
+  "./text.ts#encode"` in place of `body:` and `end extern fn <name>`, a pure extern needing examples; E3 a target is
+  `./path.ts#name` inside the project, relative to the codebase's directory (the file's for file commands), `.ts`
+  only, no scheme, no `..` (E0260, one fix for a missing `./`); E4 `target` is not reserved; E5 a pure extern returns
+  at once and a Promise traps, one with effects is awaited; E6 no function value in `in` (E0261); E7 no type
+  parameters (E0101); E8 the value forms (`Unit` `null` or `undefined` back, `Int` a safe integer with `-0` as `0`,
+  `Float` not NaN with infinities allowed, a string without lone surrogates, `Map` a JavaScript `Map`, tagged objects
+  otherwise); E12 effects declared, not checked, with acceptance running externs without permissions. The others: E2
+  results checked deeply and rebuilt, arguments copied; E9 an exception traps `extern`, a refusal `effect`; E10
+  acceptance in a separate process without permissions, `--no-remote`, `--cached-only`, 30 s, never a fallback; E11
+  `--allow-run` for the MCP server, E0408 without it; E13 an extern is a `fn` with `target`, hits start `extern fn`;
+  E14 `target` is no interface, `replace` may switch `fn` and `extern fn`; E15 the hash covers the target text, not
+  the module's code; E16 the codes E0260, E0261, E0406 to E0408; E17 the card's bullet and its four cuts; E18 the
+  module's portability is its author's; E19 `context` does not show the module; E20 a new section 7.12. Mine beyond
+  the plan: the shapes of records and variants are per type definition (a constant, or a function of a generic type's
+  shapes) with thunks, not one constant per instantiated type, since the checker accepts a type that grows
+  (`Nest<T>` with a field `Nest<List<T>>`) and eager shapes would never end; a misfit names `out` and the type at the
+  place in full (`out: List<b.Tree>`, `b.Tree`); the parent checks the report item by item against the program's own
+  constants and examples and turns a report it cannot read, or values it cannot show, into E0406 "The examples'
+  process gave a report this tool cannot read …" (a module that patched `Array.prototype.map` crashed the tool before;
+  the marker separates the report from other output, it does not make it true); the entry ends with `Deno.exit(0)`
+  and a report counts even if the process is killed after it (a module's pending timer); the marker is found anywhere
+  in a line; `Built` carries `base`, and `build` and `testExamples` take the options; E0401 and E0237 give an extern
+  the example form, never the constant's text; E0305's and E0512's `at` and E0505's `expected` print `extern fn`;
+  the 7.3 bullet stands after the generic types block, which the plan did not know; 7.12 says that a `jsr:` import is
+  refused and an `npm:` package loads only from Deno's cache (observed); the tests in three new files
+  (`tests/extern_test.ts`, `extern_fixtures.ts`, `extern_db_test.ts`), as `const` and `generics` did. In
+  `decisions.md`: Lexical (Keywords, Foreign forms), Syntax (`extern fn`), Semantics and runtime (Representation in
+  TS, Extern boundary), Type checking (Extern functions), Effects (Extern effects), Examples and acceptance (Where
+  examples run, Foreign code at acceptance), Database (Extern functions), MCP server (Instructions, Card,
+  Registration), Temporary limits, Open questions (the code outside the hash, effects no permission covers).
 
 ## Database phase: open points (2026-11-12)
 
@@ -1650,6 +1702,55 @@ Left for later:
 - **Prompt gaps:** `shop.md` leaves a `-0` price, unique codes and bounds open.
 - **The Int range:** an overflow trap in `line_of`; `std.int.parse` gives `None` for a number too large.
 
+## From extern-fn (2026-11-14)
+
+Built from `docs/plans/extern-fn.md` (written at `f0d9ecb`, before `fn-types`, `const` and `generics` were built) on
+`extern-fn`, from `main` at `878e248`. What the build observed that is not decided:
+
+- **The plan predated three phases.** Re-grepped: `containsFn` (now in `types.ts`), `ConstDef`, `$constants` and
+  `runConstants` with one load, G1's header and `info.shapes` (a generic type's fields hold its letters as `var`)
+  were as planned. Places it did not know: E0237's constant text (from `const`) offered an extern the constant form
+  too, and skips externs now, as E0401's does; R7's `$rt.record` registers a record's name in its constructor, so
+  rebuilding a returned record through the constructor gives `show` its name (tested with a generic `Box<Int>` and
+  `std.string.Cut`).
+- **The plan's "to verify" items**, with Deno 2.8.0 and Node.js 26.13.0:
+  - `Deno.permissions.querySync({ name: "run", command: Deno.execPath() })` is `granted` with `--allow-run` (also
+    with `--allow-run=deno`) and `prompt` without; E0408 rests on it.
+  - `Deno.exit(3)` works without any permission (the `leave` test: E0406 "ended without a result (exit code 3)").
+  - `--no-remote` refuses `https:` and `jsr:` imports before any fetch; `--cached-only` refuses an `npm:` package
+    that is not in Deno's cache ("npm package not found in cache"), and a cached one (`npm:acorn@8.15.0`) loads in a
+    process without any permission. So a target module may use whatever npm package the user's cache holds.
+  - `env: { NO_COLOR: "1" }` on `Deno.Command` needs no `--allow-env` in the parent: an MCP server started with
+    exactly `--allow-read --allow-write --allow-run` reports a module's syntax error without terminal colors.
+  - Node.js refuses an `enum` with `SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]` "TypeScript enum is not
+    supported in strip-only mode", as 7.12 warns.
+  - `load` in `toolchain.ts` is the only dynamic import of built output in `src/` (grepped), and `testProgram` never
+    calls it for a program with an extern.
+  - The MCP instructions are 2,889 characters without the spec path (under the test's 3,000); the card 158 lines and
+    9,910 bytes (159 and 9,920 before).
+  - A warm isolated acceptance of a small program takes 35 to 50 ms in all.
+- **One plan expectation was off:** `context(text.pair).uses` starts with `std.string.join`, since `uses` is in order
+  of first use; `text.encode` comes second. Fixture B's `Span` has `start` and `stop`, since `end` is a keyword.
+- **A hostile module can falsify its own results.** It runs in the process that makes the report and may replace
+  built-ins (`Array.prototype.map`, `Object.prototype.toJSON`); the marker only tells the report from other output.
+  The parent now checks the report's form item by item and turns anything it cannot read into E0406, so the tool never
+  throws; it cannot check that a passing example really passed. That is within 2.5 (an extern is an assumption), and
+  it never gains the tool's permissions.
+- **Risks left as they are:** the parent buffers the child's stdout and stderr for up to 30 s, so a module that
+  prints without end grows the tool's memory (no cap on the captured output, nor on the child's heap); a module's
+  static imports at fixed paths are read as it loads (O15 of the plan), so a module could report a readable file's
+  content through a failing example; at run time an extern has all of `main`'s permissions; `deno compile` would have
+  no `deno` at `Deno.execPath()` to start the separate process; Windows paths and `SIGKILL` are untested.
+- **The round `query`** (prompt and reference saved by the main session) is not run by this phase.
+
+Left for later:
+
+- **Output per example:** the separate process could attribute a pure extern's console output to the example that
+  printed it, catching the `console` effect that no permission covers.
+- **Caps for the separate process:** a heap limit (`--v8-flags=--max-old-space-size=…`) and a cap on the captured
+  output.
+- **The module's code under the hash** (decisions, Open questions) and `context` showing the module (E19).
+
 ## Spec observations
 
 - `config.load_port` (section 2) uses `LoadError`, `FileUnreadable`, `InvalidPort` and `std.fs.read_text` /
@@ -1672,6 +1773,8 @@ Left for later:
 
 ## Ideas
 
+- **Foreign code at acceptance** (from `extern-fn`): attribute a pure extern's console output to the example that
+  printed it, and cap the separate process's heap and captured output (see "From extern-fn").
 - **Prefix checker (1.6):** the recursive descent parser already knows, at each failure point, what it expected.
   Collecting the expected-token set at the end of input is a cheap first approximation of 1.6.
 - **Parser error recovery:** the parser stops at the first error. Since definitions start with `fn`/`type` at line
@@ -1735,7 +1838,9 @@ Left for later:
   function in `runtime.ts` that works on Deno and Node.js alike. Resolved (2026-11-13, `std-io`): every effect has a
   function now (`net` through `std.http.serve`).
 - **`time`, `random`, `log`, `console` are not enforced at runtime.** Deno has no permission for them, so only the
-  checker guards them. An `extern fn` that reads the clock without declaring `time` goes unnoticed.
+  checker guards them. An `extern fn` that reads the clock without declaring `time` goes unnoticed (still true after
+  item 25: acceptance runs externs without permissions, which catches files, network, environment and processes,
+  not these four; decisions, Open questions).
 - **`log` vs `console`.** Both end up on the process output. The spec should say what `log` writes to (stderr?
   structured lines?) so the two stay distinguishable. Resolved (2026-11-13, `std-io`): `std.log.print_line` writes
   plain lines to stderr, `std.console.print_line` to stdout.
@@ -1744,7 +1849,8 @@ Left for later:
 - **Permissions are all-or-nothing per effect.** `--allow-read` grants every path. The recorded capability
   alternative in the spec would allow `--allow-read=<dir>`; effect labels cannot express that.
 - **`extern fn`** is the place where 2.5 matters most and where the runtime enforcement is the only guard. It needs
-  its form decided (open since the slice) before it can be tested.
+  its form decided (open since the slice) before it can be tested. Resolved (item 25, `extern-fn`): the form is decided
+  and tested; its result is checked at every call, and its examples run without permissions.
 - **Examples for effectful functions** are now rejected by 5.4. The spec's "To revisit later" has two alternatives
   (fixed answers, capabilities); with E0233 in place, such examples fail loudly instead of running effects.
 - **The run entry file** (`out/<name>.run.ts`) exits with code 70 on a trap. Node.js would need its own entry if
@@ -1752,7 +1858,9 @@ Left for later:
   `process.exit` itself, and the tests start it with `node` (`http_test.ts`, `io_test.ts`).
 - **Examples run with the tool's permissions.** The checker runs examples in its own process, which has broad
   permissions. That is safe only while purity is checked; an `extern fn` declared `effects: none` could do IO at
-  every acceptance. Running examples in a subprocess without permissions would close this.
+  every acceptance. Running examples in a subprocess without permissions would close this. Resolved for programs with
+  an `extern fn` (item 25): they run their constants and examples in a separate Deno process without any permission;
+  programs without one keep the in-process path, where only checked alang code runs.
 - **Case names in `std.fs` are taken.** Case names are unique per module, so `std.fs.NotFound` and `std.fs.Other`
   belong to `ReadError`; a later `WriteError` in `std.fs` cannot reuse them. Either give each error type its own
   module (`std.fs.read.NotFound`) or revisit the per-module rule for std. Resolved (2026-11-13, `std-io`, the user's choice D2): one
