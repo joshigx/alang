@@ -1258,7 +1258,7 @@ Deno.test("check: no fn returns a function value, also not inside another type (
   assertEquals([d.section, d.at, d.message, d.expected, d.fix], [
     "out",
     "(Int) -> Int",
-    "`f` returns `(Int) -> Int`, which holds a function value; a `fn` never does, since its result could not be compared, shown or stated in an example (3.9, 5.1). Build the function where it is applied, with `let` (from a `match`, an `if` or a map literal), or take what decides it as a parameter.",
+    "`f` returns `(Int) -> Int`, which holds a function value; a `fn` never does, since its result could not be compared, shown or stated in an example (3.9, 5.1). Build the function where it is applied, with `let` (from a `match`, an `if` or a map literal), or take what decides it as a parameter. For a lookup, return the name and apply the function where it is used; a table of functions is a `const`.",
     null,
     null,
   ]);

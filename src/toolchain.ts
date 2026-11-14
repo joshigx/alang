@@ -80,7 +80,11 @@ export async function acceptDefinitions(
   checked: CheckResult = checkProgram(defs),
 ): Promise<Accepted> {
   const { diagnostics, info } = checked;
-  const all = byDefinition(defs, [...diagnostics, ...missingExamples(defs)]);
+  // A function that E0237 turns into a constant (its `expected`) needs no
+  // example: one cause, one diagnostic (5.6).
+  const toConst = new Set(diagnostics.filter((d) => d.code === "E0237" && d.expected).map((d) => d.definition));
+  const missing = missingExamples(defs).filter((d) => !toConst.has(d.definition));
+  const all = byDefinition(defs, [...diagnostics, ...missing]);
   if (all.length > 0) throw new AlangError(all);
   const built = await emitTo(defs, info, outPath);
   const { constants, examples } = await testProgram(built);

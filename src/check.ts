@@ -23,7 +23,7 @@ import type {
 } from "./ast.ts";
 import { type Effect, EFFECTS, moduleOf, pathText } from "./ast.ts";
 import { type Diagnostic, diagnostic, type Fix } from "./diagnostic.ts";
-import { printExpr, printStmts, printString, printTypeRef } from "./printer.ts";
+import { printConst, printExpr, printStmts, printString, printTypeRef } from "./printer.ts";
 import { type Signature, STD, STD_TYPES } from "./std.ts";
 import {
   BOOL,
@@ -510,17 +510,31 @@ class DefChecker {
     // option or a record, since a pure one could never get an example: an
     // example compares with `==`, which such a type lacks (3.9, 5.1). With or
     // without effects, so the rule is one sentence. Run here, in pass 3, when
-    // every record's fields are declared.
+    // every record's fields are declared. A pure function without parameters
+    // whose result is no function itself always gives the same value, a
+    // table of functions: that is a constant, which has no examples (C5), so
+    // E0237 gives the constant's text.
     this.section = "out";
     if (containsFn(sig.out, (n) => this.env.recordFields(n))) {
       const out = printTypeRef(def.out);
-      this.report(
-        "E0237",
-        out,
-        `\`${
-          def.path[def.path.length - 1]
-        }\` returns \`${out}\`, which holds a function value; a \`fn\` never does, since its result could not be compared, shown or stated in an example (3.9, 5.1). Build the function where it is applied, with \`let\` (from a \`match\`, an \`if\` or a map literal), or take what decides it as a parameter.`,
-      );
+      const lead = `\`${
+        def.path[def.path.length - 1]
+      }\` returns \`${out}\`, which holds a function value; a \`fn\` never does, since its result could not be compared, shown or stated in an example (3.9, 5.1).`;
+      if (def.params.length === 0 && def.effects.length === 0 && sig.out.k !== "fn") {
+        const constant = printConst({ kind: "const", path: def.path, doc: def.doc, out: def.out, body: def.body });
+        this.report(
+          "E0237",
+          out,
+          `${lead} Without parameters it always gives the same value: write it as a constant, which needs no example, as under \`expected\`.`,
+          { expected: constant },
+        );
+      } else {
+        this.report(
+          "E0237",
+          out,
+          `${lead} Build the function where it is applied, with \`let\` (from a \`match\`, an \`if\` or a map literal), or take what decides it as a parameter. For a lookup, return the name and apply the function where it is used; a table of functions is a \`const\`.`,
+        );
+      }
       this.outHoldsFn = true;
     }
     this.section = null;

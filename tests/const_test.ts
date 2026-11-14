@@ -342,6 +342,52 @@ Deno.test("const: a constant may hold functions, applied by position (C5 with fn
   assertEquals(named.fix, { replace: "ops.double(n: ops.square(n))", with: "ops.double(ops.square(n))" });
 });
 
+// The rank round's design: a table of functions returned by a `fn` without
+// parameters (F4 kept; the constant is the form).
+const RULES_FN = `fn m.rules
+  doc: "Every rule, in order."
+  in: none
+  out: List<Measure>
+  effects: none
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    return [Measure(name: "double", value: fn(n: Int): Int => n * 2)]
+end fn m.rules`;
+
+Deno.test("const: E0237 points a fn without parameters to a constant, and lookups to the name", async () => {
+  const types = MEASURES.slice(0, MEASURES.indexOf("const m.measures"));
+  const d = one(types + RULES_FN, "E0237");
+  const constant = [
+    "const m.rules",
+    '  doc: "Every rule, in order."',
+    "  out: List<Measure>",
+    "  body:",
+    '    return [Measure(name: "double", value: fn(n: Int): Int => n * 2)]',
+    "end const m.rules",
+  ].join("\n");
+  assertEquals([d.at, d.expected, d.fix], ["List<Measure>", constant, null]);
+  assert_(d.message.endsWith("write it as a constant, which needs no example, as under `expected`."), d.message);
+  // At acceptance it is the only diagnostic: E0401 is the same cause (5.6).
+  assertEquals((await acceptance(types + RULES_FN)).map((x) => x.code), ["E0237"]);
+  clean(types + constant);
+  // A lookup that returns a record holding a function: return the name.
+  const lookup = fn(
+    "m.find",
+    "name: String",
+    "Option<Measure>",
+    'find(name: "x") == None',
+    "return std.list.find(list: measures, with: fn(m: Measure): Bool => m.name == name)",
+  );
+  const e = one(
+    MEASURES + "\n" + lookup.replace('find(name: "x") == None', 'find(name: "x") == find(name: "y")'),
+    "E0237",
+  );
+  assertEquals(e.expected, null);
+  assert_(e.message.includes("For a lookup, return the name and apply the function where it is used"), e.message);
+});
+
 // ---- the generated TypeScript (1.8) ----
 
 // deno-lint-ignore no-explicit-any
