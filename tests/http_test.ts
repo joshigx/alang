@@ -221,14 +221,14 @@ async function serverProgram(): Promise<{ built: Built; entry: string; url: stri
   return { built, entry: await writeEntry(built), url: `http://127.0.0.1:${port}` };
 }
 
-// Waits until the server answers, at most five seconds.
-async function get(url: string): Promise<{ status: number; text: string }> {
+// Waits until the server answers, by default at most five seconds.
+async function get(url: string, tries = 100): Promise<{ status: number; text: string }> {
   for (let i = 0;; i++) {
     try {
       const r = await fetch(url);
       return { status: r.status, text: await r.text() };
     } catch (e) {
-      if (i >= 100) throw e;
+      if (i >= tries) throw e;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
@@ -276,6 +276,53 @@ for (const host of ["deno", "node"] as const) {
       [0, ["GET /hello", "GET //odd", "GET /again", "stopped"]],
       decode(out.stderr),
     );
+  });
+}
+
+const CLI = new URL("../src/cli.ts", import.meta.url).pathname;
+
+// The server under `alang run`, in a process group of its own, so that one
+// signal can reach the tool and the program together, as a terminal's or a
+// service manager's does.
+async function servingThroughTool(): Promise<{ child: Deno.ChildProcess; url: string }> {
+  const port = freePort();
+  await Deno.mkdir(OUT, { recursive: true });
+  const file = `${OUT}group_${port}.alang`;
+  await Deno.writeTextFile(file, SERVER(port));
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "--allow-read", "--allow-write", "--allow-run", CLI, "run", file, "-o", `${OUT}group_${port}.ts`],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+    detached: true,
+  }).spawn();
+  return { child, url: `http://127.0.0.1:${port}` };
+}
+
+for (const to of ["the process group", "the tool alone"] as const) {
+  Deno.test(`http: SIGTERM to ${to} ends a server under alang run with exit 0`, async () => {
+    if (Deno.build.os !== "linux") return;
+    const { child, url } = await servingThroughTool();
+    const ended = child.output();
+    try {
+      assertEquals(await get(`${url}/up`, 300), { status: 200, text: "path /up" });
+      // Up for a while: the group's signal used to end it with 143 then,
+      // every time, since the tool passed it on a second time at once.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const start = performance.now();
+      Deno.kill(to === "the process group" ? -child.pid : child.pid, "SIGTERM");
+      const out = await ended;
+      assertEquals([out.code, decode(out.stdout).split("\n")], [0, ["GET /up", "stopped"]], decode(out.stderr));
+      // The tool passes a signal on only after 500 ms.
+      if (to === "the tool alone") assert_(performance.now() - start >= 400, `${performance.now() - start} ms`);
+    } finally {
+      try {
+        Deno.kill(-child.pid, "SIGKILL");
+      } catch {
+        // Ended already.
+      }
+      await ended.catch(() => {});
+    }
   });
 }
 

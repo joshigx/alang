@@ -241,9 +241,24 @@ export async function run(built: Built, options: RunOptions = {}): Promise<Deno.
   // A Ctrl-C in the terminal reaches the program itself (same process
   // group), which may end on its own terms: a server answers the requests
   // in progress and returns from `std.http.serve`. The tool waits for that
-  // instead of ending first. A SIGTERM sent to the tool alone is passed on.
+  // instead of ending first. A SIGTERM is passed on only if the program
+  // still runs 500 ms later: one sent to the whole group has reached the
+  // program already, and passing it on at once would be a second signal,
+  // which ends a server before it returns. One sent to the tool alone
+  // reaches the program late, but reaches it; a further one after that is
+  // passed on the same way, so the second signal still ends a slow server.
   const waitForProgram = () => {};
-  const passOn = () => child.kill("SIGTERM");
+  let passing: ReturnType<typeof setTimeout> | undefined;
+  const passOn = () => {
+    passing ??= setTimeout(() => {
+      passing = undefined;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // The program has ended meanwhile.
+      }
+    }, 500);
+  };
   const listening: [Deno.Signal, () => void][] = [];
   for (const [signal, listener] of [["SIGINT", waitForProgram], ["SIGTERM", passOn]] as const) {
     try {
@@ -256,8 +271,9 @@ export async function run(built: Built, options: RunOptions = {}): Promise<Deno.
   try {
     return await child.output();
   } finally {
-    await feeding;
     for (const [signal, listener] of listening) Deno.removeSignalListener(signal, listener);
+    clearTimeout(passing);
+    await feeding;
   }
 }
 
