@@ -521,7 +521,11 @@ class DefChecker {
       const lead = `\`${
         def.path[def.path.length - 1]
       }\` returns \`${out}\`, which holds a function value; a \`fn\` never does, since its result could not be compared, shown or stated in an example (3.9, 5.1).`;
-      if (def.params.length === 0 && def.effects.length === 0 && sig.out.k !== "fn") {
+      // A contract has no place in a constant, so then the text would not
+      // say the same (`asConstant` in examples.ts).
+      const constantForm = def.params.length === 0 && def.effects.length === 0 && sig.out.k !== "fn" &&
+        def.requires === null && def.ensures === null;
+      if (constantForm) {
         const constant = printConst({ kind: "const", path: def.path, doc: def.doc, out: def.out, body: def.body });
         this.report(
           "E0237",

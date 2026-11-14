@@ -25,12 +25,20 @@ import type { Type } from "./types.ts";
 
 // ---- presence ----
 
+// Whether a pure function without parameters can be written as a constant
+// that says the same: its result is neither `Unit` nor a function type
+// (E0248), and it has no contract, which a constant has no section for.
+export function asConstant(def: FnDef): boolean {
+  const unit = def.out.kind === "type" && def.out.path.length === 1 && def.out.path[0] === "Unit";
+  return def.out.kind !== "function" && !unit && def.requires === null && def.ensures === null;
+}
+
 export function missingExamples(defs: readonly Definition[]): Diagnostic[] {
   return defs
     .filter((d): d is FnDef => d.kind === "fn" && d.effects.length === 0 && d.examples.length === 0)
     .map((def) => {
       const short = def.path[def.path.length - 1];
-      if (def.params.length === 0) {
+      if (def.params.length === 0 && asConstant(def)) {
         // A constant written the long way (C6): it stays legal for now
         // (E0405 is reserved for rejecting it), but the fix is the constant.
         return diagnostic({

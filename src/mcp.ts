@@ -168,8 +168,8 @@ export const TOOLS: readonly Tool[] = [
     name: "context",
     title: "Definition with what it uses",
     description: "The canonical text of a definition and its hash, followed by the signatures of every function " +
-      "and type it uses and the text of every constant it uses, in order of first use, and of the types in those signatures (std functions as one " +
-      "line). Everything needed to change the definition: read this before `replace`. For a std name (hash " +
+      "and type it uses and the text of every constant it uses, in order of first use, and of the types in " +
+      "those signatures (std functions as one line). Everything needed to change the definition: read this before `replace`. For a std name (hash " +
       "null), its signature line with the doc and the types it mentions, such as the fields of `std.http.Request`; " +
       "to call a std function or use a std type, its `signature` in a `list` or `search` hit is enough.",
     params: { name: NAME },
@@ -209,10 +209,9 @@ export const TOOLS: readonly Tool[] = [
     description: "The definitions of a module (name, hash, kind, `signature` on one line, doc) and the names of " +
       "its direct submodules. A signature is like `fn std.string.split(text: String, separator: String): " +
       "List<String>, effects: none` for a function and `type std.string.Cut, record: before: String, after: " +
-      "String` or `type std.fs.Kind, variant: File | Directory` for a type, with `, where: ...` unless it is none, and " +
-      "`const shop.zones: Map<String, Int>` for a constant. " +
-      "Without `module`, the top-level modules of the codebase; `std` and its submodules (`std.http`) list the " +
-      "standard library.",
+      "String` or `type std.fs.Kind, variant: File | Directory` for a type, with `, where: ...` unless it is none, " +
+      "and `const shop.zones: Map<String, Int>` for a constant. Without `module`, the top-level modules of the " +
+      "codebase; `std` and its submodules (`std.http`) list the standard library.",
     params: { module: { description: "A module such as `net.port`; leave it out for the top level.", optional: true } },
     query: true,
     run: (cb, a) => cb.list(a.module === undefined ? "" : s(a.module)),

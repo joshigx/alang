@@ -549,6 +549,26 @@ Deno.test("const habits: E0401 for a pure function without parameters gives the 
   ]]);
   assertEquals(ds[0].expected, 'const m.b\n  doc: "b."\n  out: Int\n  body:\n    return 2\nend const m.b');
   assertEquals(await acceptance(ds[0].expected!), []);
+  // Where no constant says the same (`Unit` or a function type, which a
+  // constant cannot have, or a contract it has no section for), E0401 keeps
+  // the form of an example: no `expected` points to a rejected form.
+  const noExamples = (out: string, body: string, requires = "none") =>
+    fn("m.g", "", out, "x", body).replace("  examples:\n    x", "  examples: none")
+      .replace("  requires: none", `  requires: ${requires}`);
+  for (
+    const [source, expected] of [
+      [noExamples("Unit", "return Unit"), "g() == Unit"],
+      [noExamples("Int", "return 1", "1 < 2"), "g() == Int"],
+      [noExamples("(Int) -> Int", "return fn(n: Int): Int => n") + "\n\n" + LIMIT_FN, "g() == (Int) -> Int"],
+    ]
+  ) {
+    const found = (await acceptance(source)).filter((d) => d.code === "E0401");
+    assertEquals(found.map((d) => d.expected), [expected]);
+  }
+  // E0237 gives the constant only without a contract, too.
+  const types = MEASURES.slice(0, MEASURES.indexOf("const m.measures"));
+  const guarded = one(types + RULES_FN.replace("  requires: none", "  requires: 1 < 2"), "E0237");
+  assertEquals(guarded.expected, null);
 });
 
 // ---- references (1.12) ----

@@ -459,12 +459,13 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   to E0249 and E0404; C15 the card (K1 to K5); C16 the spec's `shop.sizes`. Mine beyond the plan: a constant, or a
   field of one, is applied by position like a local's field (`ops.double(2)`, the plan predated fn-types), named
   arguments on it are E0220 with the application as fix, and a constant applied as a function (`limit(1)`) is E0238;
-  E0247 only when no local takes the name; the `rank` follow-ups (E0237 gives a pure `fn` without parameters whose
-  result is no function itself the constant's text, and then E0401 is not reported beside it; for other functions it
+  E0247 only when no local takes the name; the `rank` follow-ups (E0237 gives a pure `fn` without parameters and contracts
+  whose result is no function itself the constant's text, and then E0401 is not reported beside it; for other functions it
   adds "For a lookup, return the name and apply the function where it is used; a table of functions is a `const`.")
   as their own commit after commit 1, so the cut order cannot drop them; K5 (`const` out of the card's "Not in
   alang") in commit 1, so each commit's docs are true; E0404 leaves out `(at …)` when the trap's location is the
-  constant itself (a stack overflow); `alang test` evaluates the constants before the examples too (one load); E0203
+  constant itself (a stack overflow); E0401 keeps the form of an example where no constant says the same (a result of
+  `Unit` or a function type, or a contract), so no `expected` points to a form the checker rejects; `alang test` evaluates the constants before the examples too (one load); E0203
   names a constant only for a bare `MaxItems`, without a value; the tests in two new files, `tests/const_test.ts`
   and `tests/const_db_test.ts`, with their own TypeScript check, instead of spread over the plan's eight files. In
   `decisions.md`: Lexical (Foreign forms), Syntax (`const`, `a.b.c`), Semantics and runtime (Representation in TS),
@@ -1447,6 +1448,9 @@ Built from `docs/plans/const.md` (written at `7700807`, before `statements` and 
   written and runs `measures`, `top`, `bottom` and `goal` as the reference does (probed, not a test).
 - **Node.js runs constants.** A generated module with constants, imported by `node` (26.13.0, type stripping),
   evaluates each once and shows a record constant as `Limits(items: 100, sizes: 4)` (probed).
+- **The E0204 fix for a generic function without parameters** (`let xs: List<Int> = std.list.empty`) gives
+  `std.list.empty()`, which is then E0209 for its type argument: two steps where one would do. The fix could take the
+  type arguments from the expected type, as E0209's guess does.
 - **Card budget.** 159 lines and 9,896 bytes (+113 for this phase, R7 nothing); 1 line and 344 bytes remain under
   the test's 160 lines and 10,240 bytes. The keywords bullet lost `record`, and the `context` bullet the sentence on
   std hits.
