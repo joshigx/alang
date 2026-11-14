@@ -725,3 +725,15 @@ The script builds its own work directory, worktree and MCP config under `~/codin
 - /home/josua/coding_projects/alang/src/codebase.ts (commit 2), /home/josua/coding_projects/alang/src/std.ts and /home/josua/coding_projects/alang/src/runtime.ts (commit 5)
 - /home/josua/coding_projects/alang/alang-specs.md (sections 3, 4.6, 7.1, 7.4, 7.8, 7.10, 7.11), with /home/josua/coding_projects/alang/src/card.ts and /home/josua/coding_projects/alang/docs/decisions.md
 - /home/josua/coding_projects/alang/tests/check_test.ts, /home/josua/coding_projects/alang/tests/syntax_test.ts, /home/josua/coding_projects/alang/tests/emit_test.ts, /home/josua/coding_projects/alang/tests/spec_test.ts
+
+## Addendum (main session, 2026-11-14, after the automated `tasks` round)
+
+- **T15 `std.list.find_index`.** Add it in commit 5 next to `std.list.set`: the position (from 0) of the first item
+  for which the function gives `true`, or `None`. Mirror `std.list.find`'s parameter names and doc style, and state the
+  counting base in the doc line (W1). Evidence: both `tasks` rounds (manual and automated) built the same helper plus
+  an identity `filter_map` to find the first malformed line. Record it with T13 in `docs/decisions.md`.
+- **The round harness changed** after this plan was written: `scripts/playground-round.sh` now passes the round's
+  `CLAUDE.md` through `--append-system-prompt` (under `--restricted` it was ignored) and names the allowed shell
+  commands there (`alang`, `cat`, `ls`, `printf`, `echo`, `mkdir`, `cd`; joined with `;`; no `rm`, no shell
+  functions). Check `instructions=sent` in the round's `done.txt`. Exit codes show with `alang db run ...; echo $?`
+  (observed in the automated `tasks` round).
