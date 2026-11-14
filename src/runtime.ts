@@ -1362,6 +1362,20 @@ export async function std$http$send(
   }
 }
 
+// The texts a program shows for an error; `Failed` carries the host's own.
+export function std$http$describe(error: std$http$SendError): string {
+  switch (error.tag) {
+    case "InvalidUrl":
+      return "invalid URL";
+    case "Unreachable":
+      return "cannot reach the server";
+    case "TimedOut":
+      return "timed out";
+    case "Failed":
+      return error.value;
+  }
+}
+
 // ---- std.log, std.random, std.time ----
 
 // The log is stderr on every host; the console (print_line) is stdout.

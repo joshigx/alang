@@ -2,7 +2,7 @@
 // The spec programs come straight from alang-specs.md.
 
 import { assert_, assertEquals, assertThrows } from "./assert.ts";
-import { ENDING_PROGRAM, IO_PROGRAM } from "./io_program.ts";
+import { ENDING_PROGRAM, IO_PROGRAM, NET_PROGRAM } from "./io_program.ts";
 import { AlangError } from "../src/diagnostic.ts";
 import * as rt from "../src/runtime.ts";
 import { Trap } from "../src/runtime.ts";
@@ -671,6 +671,8 @@ const PROGRAMS: Record<string, string> = {
   maps: MAPS,
   io: IO_PROGRAM,
   ending: ENDING_PROGRAM,
+  net: NET_PROGRAM,
+  probe: await Deno.readTextFile(new URL("../examples/probe.alang", import.meta.url)),
 };
 
 const built: Record<string, Built> = {};
@@ -691,6 +693,8 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
     await writeEntry(built.io),
     // A `Result` main reads `.tag`, which a `Unit` main's entry must not.
     await writeEntry(built.ending),
+    await writeEntry(built.net),
+    await writeEntry(built.probe),
   ];
   const files = [...Object.values(built).map((b) => b.outPath), ...entries];
   const result = await new Deno.Command(Deno.execPath(), { args: ["check", ...files], stderr: "piped" }).output();
@@ -770,6 +774,7 @@ Deno.test("emit: the test programs are themselves canonical", () => {
   assertEquals(printProgram(parseProgram(MAPS)), MAPS.trimStart());
   assertEquals(printProgram(parseProgram(IO_PROGRAM)), IO_PROGRAM);
   assertEquals(printProgram(parseProgram(ENDING_PROGRAM)), ENDING_PROGRAM);
+  assertEquals(printProgram(parseProgram(NET_PROGRAM)), NET_PROGRAM);
 });
 
 Deno.test("emit: Int overflow traps", async () => {

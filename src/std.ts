@@ -82,7 +82,7 @@ type std.http.ServeError
 end type std.http.ServeError
 
 type std.http.SendError
-  doc: "Why std.http.send got no response. InvalidUrl: not an absolute http or https URL, one with a user name or password, or one with port 0 or a port the Fetch standard blocks (such as 25), found before sending. Unreachable: the host name does not resolve, or the server refuses the connection. TimedOut: no whole response within the timeout. Failed: anything else, with the host's message, which differs between runtimes: show it, do not compare it."
+  doc: "Why std.http.send got no response; \`std.http.describe\` gives it as text. InvalidUrl: not an absolute http or https URL, one with a user name or password, or one with port 0 or a port the Fetch standard blocks (such as 25), found before sending. Unreachable: the host name does not resolve, or the server refuses the connection. TimedOut: no whole response within the timeout. Failed: anything else, with the host's message, which differs between runtimes: show it, do not compare it."
   variant:
     InvalidUrl
     Unreachable
@@ -255,6 +255,13 @@ export const STD: readonly Signature[] = [
     ]],
     result(con("std.http.Response"), con("std.http.SendError")),
     ["net"],
+  ),
+  sig(
+    "std.http.describe",
+    "The error as a short text for a message, starting in lower case and without a final period: `invalid URL`, `cannot reach the server`, `timed out`, or the host's message that `Failed` carries.",
+    [],
+    [["error", con("std.http.SendError")]],
+    STRING,
   ),
 
   sig(

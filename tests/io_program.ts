@@ -118,3 +118,35 @@ export const ENDING_PROGRAM = `fn ending.main
     return Ok(Unit)
 end fn ending.main
 `;
+
+// A client that sends to a server the test runs, given its base URL and a
+// URL where nothing listens, and prints every outcome: the same text on
+// every host, but for the host's message in `Failed`.
+export const NET_PROGRAM = `fn client.main
+  doc: "Sends requests to the server whose base URL is the first argument and prints each outcome."
+  in: none
+  out: Result<Unit, String>
+  effects: net, env, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let args: List<String> = std.env.args()
+    let base: String = std.list.get(list: args, index: 0) else return Err("usage: client <base url> <closed url>")
+    let closed: String = std.list.get(list: args, index: 1) else return Err("usage: client <base url> <closed url>")
+    let plain: List<std.http.Header> = std.list.empty<std.http.Header>()
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/headers"), headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/gzip"), headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "POST", url: std.string.concat(left: base, right: "/echo"), headers: [std.http.Header(name: "X-Test", value: "1")], content: "ä", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/redirect"), headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/odd"), headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/latin"), headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/600"), headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: std.string.concat(left: base, right: "/slow"), headers: plain, content: "", timeout_milliseconds: 300)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: closed, headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: "ftp://127.0.0.1/", headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.text.show(value: std.http.send(method: "GET", url: "http://127.0.0.1:25/", headers: plain, content: "", timeout_milliseconds: 5000)))
+    std.console.print_line(text: std.http.describe(error: std.http.TimedOut))
+    return Ok(Unit)
+end fn client.main
+`;

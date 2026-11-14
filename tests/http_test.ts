@@ -22,6 +22,7 @@ import {
 } from "../src/runtime.ts";
 import { STD_TYPES } from "../src/std.ts";
 import { accept, type Built, run, writeEntry } from "../src/toolchain.ts";
+import { NET_PROGRAM } from "./io_program.ts";
 
 const OUT = new URL("../out/test/http/", import.meta.url).pathname;
 
@@ -494,28 +495,61 @@ Deno.test("send: a request reaches std.http.serve, its response comes back", asy
   }
 });
 
-Deno.test("send: response headers sorted and joined as fetch gives them; compressed content arrives decoded", async () => {
+// The server NET_PROGRAM and examples/probe.alang talk to, and the tests of
+// response headers: answers std.http.serve never gives.
+async function netServer() {
   const gzip = new Uint8Array(
     await new Response(new Blob([encode("compressed ä")]).stream().pipeThrough(new CompressionStream("gzip")))
       .arrayBuffer(),
   );
-  const server = rawServer((request) =>
-    request.path === "/gzip"
-      ? raw(
-        "200 OK",
-        [["Content-Encoding", "gzip"], ["Content-Length", String(gzip.length)], ["Connection", "close"]],
-        gzip,
-      )
-      : raw("200 OK", [
-        ["Set-Cookie", "a=1"],
-        ["X-B", "1"],
-        ["x-a", "2"],
-        ["Set-Cookie", "b=2"],
-        ["x-a", "3"],
-        ["Connection", "close"],
-        ["Content-Length", "5"],
-      ], "hello")
-  );
+  const sized = (status: string, headers: [string, string][], content: Uint8Array | string) => {
+    const length = typeof content === "string" ? encode(content).length : content.length;
+    return raw(status, [...headers, ["Content-Length", String(length)], ["Connection", "close"]], content);
+  };
+  return rawServer((request) => {
+    const field = (name: string) => new RegExp(`^${name}: *(.*)$`, "im").exec(request.head)?.[1] ?? "";
+    switch (request.path) {
+      case "/headers":
+        return raw("200 OK", [
+          ["Set-Cookie", "a=1"],
+          ["X-B", "1"],
+          ["x-a", "2"],
+          ["Set-Cookie", "b=2"],
+          ["x-a", "3"],
+          ["Connection", "close"],
+          ["Content-Length", "5"],
+        ], "hello");
+      case "/gzip":
+        return sized("200 OK", [["Content-Encoding", "gzip"]], gzip);
+      case "/echo": {
+        const content = new TextDecoder().decode(request.content);
+        return sized("200 OK", [], `${request.method} ${field("content-type")} ${field("x-test")} ${content}`);
+      }
+      case "/redirect":
+        return sized("302 Found", [["Location", "/headers"]], "");
+      case "/odd":
+        return sized("299 Odd", [], "odd");
+      case "/latin":
+        // A header value and content in ISO-8859-1: the header reads as
+        // é, the content as UTF-8.
+        return joined(
+          joined(encode("HTTP/1.1 200 OK\r\nX-Latin: caf"), new Uint8Array([0xe9])),
+          joined(encode("\r\nContent-Length: 4\r\nConnection: close\r\n\r\ncaf"), new Uint8Array([0xe9])),
+        );
+      case "/600":
+        return sized("600 Odd", [], "");
+      case "/slow":
+        return "hold";
+      case "/ok":
+        return sized("200 OK", [], "fine");
+      default:
+        return sized("404 Not Found", [], "missing");
+    }
+  });
+}
+
+Deno.test("send: response headers sorted and joined as fetch gives them; compressed content arrives decoded", async () => {
+  const server = await netServer();
   try {
     assertEquals(
       await std$http$send("GET", `${server.url}/headers`, [], "", 5000),
@@ -721,3 +755,84 @@ end fn client.main
   const trap = JSON.parse(decode(out.stderr));
   assertEquals([out.code, trap.trap, trap.definition], [70, "effect", "std.http.send"]);
 });
+
+// The client program, alike on both hosts: what the runtime promises, and
+// the host's message in `Failed` left out.
+const NET_STDOUT = [
+  'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "5"), ' +
+  '(name: "set-cookie", value: "a=1"), (name: "set-cookie", value: "b=2"), (name: "x-a", value: "2, 3"), ' +
+  '(name: "x-b", value: "1")], content: "hello"))',
+  'Ok((status: 200, headers: [(name: "connection", value: "close")], content: "compressed ä"))',
+  'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "35")], ' +
+  'content: "POST text/plain; charset=utf-8 1 ä"))',
+  'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "5"), ' +
+  '(name: "set-cookie", value: "a=1"), (name: "set-cookie", value: "b=2"), (name: "x-a", value: "2, 3"), ' +
+  '(name: "x-b", value: "1")], content: "hello"))',
+  'Ok((status: 299, headers: [(name: "connection", value: "close"), (name: "content-length", value: "3")], ' +
+  'content: "odd"))',
+  'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "4"), ' +
+  '(name: "x-latin", value: "café")], content: "caf\uFFFD"))',
+  "Err(Failed)",
+  "Err(TimedOut)",
+  "Err(Unreachable)",
+  "Err(InvalidUrl)",
+  "Err(InvalidUrl)",
+  "timed out",
+  "",
+].join("\n");
+
+const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
+// Runs a built program with these arguments on a host, its output piped.
+async function runOn(host: "deno" | "node", built: Built, args: string[]): Promise<[number, string, string]> {
+  const out = host === "deno" ? await run(built, { stdio: "piped", args }) : await new Deno.Command("node", {
+    args: [await writeEntry(built), ...args],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  return [out.code, text(out.stdout), text(out.stderr)];
+}
+
+for (const host of ["deno", "node"] as const) {
+  Deno.test(`send: one client program gives the same outcomes on every host (${host})`, async () => {
+    if (host === "node" && !(await hasNode())) return;
+    const built = (await accept(NET_PROGRAM, `${OUT}net_${host}.ts`)).built;
+    const server = await netServer();
+    try {
+      const [code, stdout, stderr] = await runOn(host, built, [server.url, `http://127.0.0.1:${freePort()}/`]);
+      assertEquals([code, stdout.replaceAll(/Failed\(".*?"\)/g, "Failed"), stderr], [0, NET_STDOUT, ""]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  Deno.test(`send: examples/probe.alang checks URLs, once more if no server answered (${host})`, async () => {
+    if (host === "node" && !(await hasNode())) return;
+    const source = await Deno.readTextFile(new URL("../examples/probe.alang", import.meta.url));
+    const built = (await accept(source, `${OUT}probe_${host}.ts`)).built;
+    const server = await netServer();
+    try {
+      const closed = `http://127.0.0.1:${freePort()}/`;
+      const urls = [`${server.url}/ok`, `${server.url}/missing`, closed, "ftp://example.com/"];
+      const start = performance.now();
+      assertEquals(await runOn(host, built, urls), [
+        0,
+        [
+          `${urls[0]} ... 200`,
+          `${urls[1]} ... 404`,
+          `${closed} ... failed: cannot reach the server`,
+          "ftp://example.com/ ... failed: invalid URL",
+          "",
+        ].join("\n"),
+        "",
+      ]);
+      // The closed URL was tried twice, a second apart.
+      const took = performance.now() - start;
+      assert_(took >= 1000, `${took} ms`);
+      assertEquals(await runOn(host, built, []), [1, "", "usage: probe <url>...\n"]);
+    } finally {
+      await server.close();
+    }
+  });
+}

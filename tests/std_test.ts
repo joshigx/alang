@@ -36,6 +36,16 @@ Deno.test("std.fs: describe gives each error as a short text", () => {
   for (const [error, text] of cases) assertEquals(rt.std$fs$describe(error), text);
 });
 
+Deno.test("std.http: describe gives each error of send as a short text", () => {
+  const cases: [rt.std$http$SendError, string][] = [
+    [{ tag: "InvalidUrl" }, "invalid URL"],
+    [{ tag: "Unreachable" }, "cannot reach the server"],
+    [{ tag: "TimedOut" }, "timed out"],
+    [{ tag: "Failed", value: "fetch failed: other side closed" }, "fetch failed: other side closed"],
+  ];
+  for (const [error, text] of cases) assertEquals(rt.std$http$describe(error), text);
+});
+
 Deno.test("std.int: min, max and abs", () => {
   assertEquals([rt.std$int$min(3, -4), rt.std$int$min(-4, 3), rt.std$int$min(2, 2)], [-4, -4, 2]);
   assertEquals([rt.std$int$max(3, -4), rt.std$int$max(-4, 3), rt.std$int$max(2, 2)], [3, 3, 2]);

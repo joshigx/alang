@@ -243,6 +243,7 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
     ["std.http.Response", "type", null],
     ["std.http.SendError", "type", null],
     ["std.http.ServeError", "type", null],
+    ["std.http.describe", "fn", null],
     ["std.http.send", "fn", null],
     ["std.http.serve", "fn", null],
   ]);

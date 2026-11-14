@@ -1,0 +1,88 @@
+fn probe.retry
+  doc: "Whether a request is worth sending once more: only when no server answered, not for a URL that cannot be sent or for an answer."
+  in:
+    outcome: Result<std.http.Response, std.http.SendError>
+  out: Bool
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    retry(outcome: Err(std.http.Unreachable)) == true
+    retry(outcome: Err(std.http.TimedOut)) == true
+    retry(outcome: Err(std.http.InvalidUrl)) == false
+    retry(outcome: Err(std.http.Failed("connection reset"))) == false
+    retry(outcome: Ok(std.http.Response(status: 503, headers: std.list.empty<std.http.Header>(), content: ""))) == false
+  body:
+    return match outcome
+      case Ok(response) then
+        false
+      case Err(std.http.InvalidUrl) then
+        false
+      case Err(std.http.Unreachable) then
+        true
+      case Err(std.http.TimedOut) then
+        true
+      case Err(std.http.Failed(reason)) then
+        false
+    end match
+end fn probe.retry
+
+fn probe.verdict
+  doc: "The status of a response as text, or why there is none."
+  in:
+    outcome: Result<std.http.Response, std.http.SendError>
+  out: String
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    verdict(outcome: Ok(std.http.Response(status: 404, headers: std.list.empty<std.http.Header>(), content: "missing"))) == "404"
+    verdict(outcome: Err(std.http.TimedOut)) == "failed: timed out"
+    verdict(outcome: Err(std.http.Failed("connection reset"))) == "failed: connection reset"
+  body:
+    return match outcome
+      case Ok(response) then
+        std.text.show(value: response.status)
+      case Err(problem) then
+        std.string.concat(left: "failed: ", right: std.http.describe(error: problem))
+    end match
+end fn probe.verdict
+
+fn probe.fetch_once_more
+  doc: "Sends a GET to the URL; if no server answered, waits a second and sends it once more."
+  in:
+    url: String
+  out: Result<std.http.Response, std.http.SendError>
+  effects: net, time
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let first: Result<std.http.Response, std.http.SendError> = std.http.send(method: "GET", url: url, headers: std.list.empty<std.http.Header>(), content: "", timeout_milliseconds: 5000)
+    if not retry(outcome: first) then
+      return first
+    end if
+    std.time.wait(milliseconds: 1000)
+    return std.http.send(method: "GET", url: url, headers: std.list.empty<std.http.Header>(), content: "", timeout_milliseconds: 5000)
+end fn probe.fetch_once_more
+
+fn probe.main
+  doc: "Checks each URL given as an argument and prints its status, or why there is none."
+  in: none
+  out: Result<Unit, String>
+  effects: net, time, env, console
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    let urls: List<String> = std.env.args()
+    if urls == std.list.empty<String>() then
+      return Err("usage: probe <url>...")
+    end if
+    for url: String in urls do
+      std.console.print(text: std.string.concat(left: url, right: " ... "))
+      let outcome: Result<std.http.Response, std.http.SendError> = fetch_once_more(url: url)
+      std.console.print_line(text: verdict(outcome: outcome))
+    end for
+    return Ok(Unit)
+end fn probe.main

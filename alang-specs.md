@@ -566,6 +566,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | `std.fs.describe(error: std.fs.Error): String` | none | The error as a short text for a message, starting in lower case and without a final period: `no such file or directory`, `permission denied`, `is a directory`, `already exists`, or the host's message that `Other` carries. |
 | `std.http.serve(host: String, port: Int, handler: (std.http.Request) -> std.http.Response with effects): Result<Unit, std.http.ServeError>` | net | Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them. |
 | `std.http.send(method: String, url: String, headers: List<std.http.Header>, content: String, timeout_milliseconds: Int): Result<std.http.Response, std.http.SendError>` | net | Sends an HTTP request, like fetch, and waits for the whole response, following up to 20 redirects; `timeout_milliseconds` covers all of it. The response's header names are lowercase and sorted, repeated ones joined with `, ` except `set-cookie`; compressed content arrives decompressed, without its `content-encoding` and `content-length` headers. Content is sent and read as UTF-8 text; without a `content-type` header, content is sent as text/plain. Traps: a method not in capital letters, or CONNECT, TRACE or TRACK; content with GET or HEAD; a header HTTP manages itself (`connection`, `content-length`, `expect`, `host`, `keep-alive`, `te`, `trailer`, `transfer-encoding`, `upgrade`); a timeout below 1. |
+| `std.http.describe(error: std.http.SendError): String` | none | The error as a short text for a message, starting in lower case and without a final period: `invalid URL`, `cannot reach the server`, `timed out`, or the host's message that `Failed` carries. |
 | `std.log.print_line(text: String): Unit` | log | Writes a line to the log, which is the standard error stream. |
 | `std.random.int(low: Int, high: Int): Int` | random | A random integer from `low` to `high`, both included; traps if `low > high`. Not for secrets. |
 | `std.time.now_milliseconds(): Int` | time | The clock's time in milliseconds since 1970-01-01T00:00:00Z. |
@@ -715,7 +716,7 @@ type std.http.ServeError
 end type std.http.ServeError
 
 type std.http.SendError
-  doc: "Why std.http.send got no response. InvalidUrl: not an absolute http or https URL, one with a user name or password, or one with port 0 or a port the Fetch standard blocks (such as 25), found before sending. Unreachable: the host name does not resolve, or the server refuses the connection. TimedOut: no whole response within the timeout. Failed: anything else, with the host's message, which differs between runtimes: show it, do not compare it."
+  doc: "Why std.http.send got no response; `std.http.describe` gives it as text. InvalidUrl: not an absolute http or https URL, one with a user name or password, or one with port 0 or a port the Fetch standard blocks (such as 25), found before sending. Unreachable: the host name does not resolve, or the server refuses the connection. TimedOut: no whole response within the timeout. Failed: anything else, with the host's message, which differs between runtimes: show it, do not compare it."
   variant:
     InvalidUrl
     Unreachable

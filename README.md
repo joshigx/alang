@@ -26,6 +26,7 @@ deno task alang run examples/hello.alang     # run main with the permissions of 
 deno task alang run examples/server.alang    # a web server on localhost:8080, Ctrl-C stops it
 deno task alang run examples/lines.alang -- in.txt out.txt   # program arguments go after --
 deno task alang run examples/words.alang -- in.txt          # count the words of a file with a Map
+deno task alang run examples/probe.alang -- http://localhost:8080/   # check URLs with std.http.send
 deno task alang db --dir project list        # database queries and operations (section 6), JSON out
 deno task alang db --dir project run         # run the program the database holds (main's full name if several)
 deno task alang db --dir project run app.main -- <args>      # with arguments for the program
