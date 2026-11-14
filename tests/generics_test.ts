@@ -13,6 +13,8 @@ import { applyOwnFixes } from "../src/refs.ts";
 import { accept, build } from "../src/toolchain.ts";
 import { FIRST_SOME, HIDE, PAIR, TREE, TYPE_T, UTIL } from "./generics_fixtures.ts";
 import * as rt from "../src/runtime.ts";
+import { STD } from "../src/std.ts";
+import { fnType, freeVars, INT, showType, substitute } from "../src/types.ts";
 
 const OUT = new URL("../out/test/generics/", import.meta.url).pathname;
 
@@ -513,6 +515,10 @@ Deno.test("generics: a generic type's header round-trips; `<>` and a word are E0
 
 Deno.test("generics: generic types check: fields and cases at their type arguments (G8)", () => {
   clean(TREE);
+  // A constant is not generic (G11), but its type may be a generic type.
+  const empty =
+    'const tree.empty\n  doc: "The empty tree of Int."\n  out: Tree<Int>\n  body:\n    return Leaf\nend const tree.empty';
+  clean(`${TREE}\n${empty}\n\n${fn("return std.list.length(list: items(tree: empty))", { name: "tree.size" })}`);
   clean(fn(
     'let p: Pair<Int, String> = Pair(left: 1, right: "a")\nlet q: Pair<Option<Int>, Int> = Pair(left: None, right: 1)\nlet r: Int = Pair(left: None<Int>, right: 1).right\nreturn Pair(left: 1, right: "a").right',
     { out: "String", extra: PAIR },
@@ -691,6 +697,24 @@ Deno.test("generics: TypeScript generics, with the checked type arguments at use
   assert_(text.includes("export function util$last<T>(list: ReadonlyArray<T>): $rt.Option<T> {"));
   assert_(text.includes('util$repeat<T>(item, $rt.int_sub(count, 1, "util.repeat"))'));
   assert_(text.includes("actual: () => util$last<number>("));
+});
+
+// Every pure generic std function whose type parameters its parameters
+// bind is a value at `Int` (G9), and TypeScript accepts it there too, since
+// a function value is passed bare and TypeScript instantiates it.
+Deno.test("generics: every generic std function is a value at Int, in alang and in TypeScript (G9)", () => {
+  const generic = STD.filter((sig) => {
+    if (sig.typeParams.length === 0 || sig.effects.length > 0 || sig.params.length === 0) return false;
+    const bound = new Set<string>();
+    for (const p of sig.params) freeVars(p.type, bound);
+    return sig.typeParams.every((tp) => bound.has(tp));
+  });
+  assert_(generic.length > 30, String(generic.length));
+  for (const sig of generic) {
+    const ints = new Map(sig.typeParams.map((tp) => [tp, INT]));
+    const type = showType(fnType(sig.params.map((p) => substitute(p.type, ints)), substitute(sig.out, ints)));
+    clean(fn(`let f: ${type} = ${sig.name}\nreturn 0`));
+  }
 });
 
 Deno.test("generics: every accepted program here is accepted by TypeScript too", async () => {

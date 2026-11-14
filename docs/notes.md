@@ -193,7 +193,7 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     (G8). Habits get the alang form: bounds `<T: Ord>` E0006, `end fn f<T>` E0103 with a fix, `case Leaf<Int>` and
     `const m.c<T>` E0101. The spec gains `util.contains_by` and `tree.Tree`, `tree.Branch`, `tree.items` (7.3), each
     accepted with its examples; the card names the header, `type util.Pair<A, B>` and `Leaf<Int>` (159 lines, 9,867
-    bytes, 29 fewer than before). Decisions in `decisions.md`, rows listed in the review list below. 443 tests. See
+    bytes, 29 fewer than before). Decisions in `decisions.md`, rows listed in the review list below. 444 tests. See
     "From generics".
 
 **Next (2026-11-14, overnight run, updated by the main session at ~06:15):** `std-net` (item 20), `statements`
@@ -234,7 +234,7 @@ real client (the official SDK client was not run). Open from that round, each th
 parameter; `search_type` through `Option`/`Result`; `std.int.min`/`max` (built, item 15). `extern fn` and `const` are still unparsed
 and need their form decided (`const` built, item 23).
 
-**Checks before every commit:** `deno task test` (443 tests; the task now allows `net`, for the server tests),
+**Checks before every commit:** `deno task test` (444 tests; the task now allows `net`, for the server tests),
 `deno lint`, `deno fmt --check`.
 
 **Working conventions** agreed with the user:
@@ -1569,7 +1569,7 @@ Built from `docs/plans/generics.md` (written at `9ba84a8`, before `statements`, 
   (the plan's `resolveName`), `Arm.patterns`, `Scope.hiddenWhy` and `applyOwnFixes` were as planned or needed
   nothing. Two places it did not know: E0237's constant text (from `10c6d30`) offered a constant for a generic `fn`
   without parameters as E0401 did, and both skip generic functions now; and `fieldPath`, which reads record fields
-  as declared, needs the substitution of generic types (commit 5).
+  as declared, substitutes a generic type's arguments as `field` does (commit 5).
 - **Two of the plan's expectations were off.** `List<Int> -> Option<Int>` also finds the test's `util.tail_of`
   (plain `List<Int>`), and E0506 for two sections reads "changes its `in`, `out` section" (an older wording, kept).
 - **Generic output runs on Node.js.** A module with `util$last<T>` and calls `util$last<number>(...)`, and one with
@@ -1585,6 +1585,8 @@ Built from `docs/plans/generics.md` (written at `9ba84a8`, before `statements`, 
   Option<T>` is E0222, whose message names the literal form only through "tell cases apart with `match`".
 - **Unbound type arguments in TypeScript.** A call of a user generic function whose type argument stayed unbound
   (an argument of type `Never`) gets no TypeScript type arguments; no accepted program was found that does it.
+- **Every pure generic std function is a value** at `Int` whose parameters bind its type parameters, accepted by the
+  checker and by `deno check` (a test sweeps `STD`), so passing std functions bare to TypeScript holds for all of them.
 - **`info.instances` holds std calls too**, unused by the emitter, which writes only the written type arguments for
   std (`std$text$show(value: unknown)` is not generic in TypeScript).
 
