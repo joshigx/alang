@@ -108,9 +108,13 @@ Deno.test("extern db: a module edit is caught by the next acceptance of anything
   await Deno.writeTextFile(join(cb.dir, "text.ts"), TEXT_TS.replace("encodeURIComponent(text)", "text.toUpperCase()"));
   const one = fn("other.one", { out: "Int", examples: ["one() == 1"], body: "return 1" });
   const r = await fails(cb, [add(one)]);
+  // The extern's own examples name its module and the two ways out; a
+  // caller's (`text.pair`) do not.
+  const stale = " `text.encode` runs `./text.ts#encode`: if the module changed, `replace` the example; " +
+    "if the example is right, fix the module.";
   assertEquals(r.diagnostics.map((d) => [d.code, d.definition, d.message]), [
-    ["E0402", "text.encode", 'The example does not hold: `encode(text: "a b&c")` is `"A B&C"`.'],
-    ["E0402", "text.encode", 'The example does not hold: `encode(text: "é")` is `"É"`.'],
+    ["E0402", "text.encode", 'The example does not hold: `encode(text: "a b&c")` is `"A B&C"`.' + stale],
+    ["E0402", "text.encode", 'The example does not hold: `encode(text: "é")` is `"É"`.' + stale],
     ["E0402", "text.pair", 'The example does not hold: `pair(key: "q", value: "café au lait")` is `"Q=CAFÉ AU LAIT"`.'],
   ]);
   assertEquals(cb.list("").submodules.includes("other"), false);

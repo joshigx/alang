@@ -77,6 +77,8 @@ export interface ExampleOutcome {
   // Its left side, the call.
   readonly call: string;
   readonly passed: boolean;
+  // The function's `target` if it is an `extern fn`, else null.
+  readonly target: string | null;
   // The value of the call as alang text; null if the example trapped.
   readonly actual: string | null;
   readonly trap: TrapInfo | null;
@@ -104,6 +106,7 @@ export function describeResults(
       text: r.text,
       call: printExpr(ex.left, ""),
       passed: r.passed,
+      target: def.target,
       actual: r.trap || !type ? null : showValue(r.actual, type, info.shapes, module),
       trap: r.trap,
     };
@@ -126,7 +129,12 @@ export function exampleDiagnostics(outcomes: readonly ExampleOutcome[]): Diagnos
     return diagnostic({
       ...base,
       code: "E0402",
-      message: `The example does not hold: \`${o.call}\` is \`${o.actual}\`.`,
+      // A failing example of an extern is a module and an example that
+      // disagree; which one is wrong is the author's call (E15).
+      message: `The example does not hold: \`${o.call}\` is \`${o.actual}\`.` +
+        (o.target === null
+          ? ""
+          : ` \`${o.definition}\` runs \`${o.target}\`: if the module changed, \`replace\` the example; if the example is right, fix the module.`),
     });
   });
 }
