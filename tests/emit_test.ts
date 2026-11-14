@@ -591,6 +591,27 @@ fn shared.retry
     end match
     return again
 end fn shared.retry
+
+fn shared.inside
+  doc: "The number inside, or 0; the pattern's name is the name the value is bound to."
+  in:
+    o: Option<Int>
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    inside(o: Some(3)) == 3
+    inside(o: None) == 0
+  body:
+    let n: Int = match o
+      case Some(n) then
+        n
+      case None then
+        0
+    end match
+    return n
+end fn shared.inside
 `;
 
 // The std types of std.fs named in a program: a variant type missing from

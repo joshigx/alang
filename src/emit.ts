@@ -357,13 +357,15 @@ class DefinitionEmitter {
           return lines;
         }
         if (isBlock(s.value)) {
-          const target = local(s.name);
-          const lines = [
+          // Through a temporary: a pattern or `let` inside the value may bind
+          // the same name, since the binding is visible only after it (2.6),
+          // and would otherwise take the assignment in TypeScript.
+          const target = this.temp("v");
+          return [
             `let ${target}: ${type};`,
             ...this.blockExpr(s.value, scope, { kind: "assign", target }),
+            `const ${scope.add(s.name)}: ${type} = ${target};`,
           ];
-          scope.add(s.name);
-          return lines;
         }
         const value = this.expr(s.value, scope);
         return [`const ${scope.add(s.name)}: ${type} = ${value};`];
