@@ -109,6 +109,10 @@ function printStmt(s: Stmt, indent: string): string {
     }
     case "propagate":
       return `${printExpr(s.value, indent)} else return ${printExpr(s.elseReturn, indent)}`;
+    case "destructure":
+      return `let [${s.names.join(", ")}]: ${printTypeRef(s.type)} = ${printExpr(s.value, indent)} else return ${
+        printExpr(s.elseReturn, indent)
+      }`;
     case "return":
       return `return ${printExpr(s.value, indent)}`;
     case "expr":

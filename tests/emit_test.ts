@@ -501,6 +501,47 @@ fn propagate.settle
         check_width(width: 1) else return Unit
     end match
 end fn propagate.settle
+
+fn propagate.fields
+  doc: "The last of exactly three words."
+  in:
+    line: String
+  out: Option<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    fields(line: "GET /index 200") == Some("200")
+    fields(line: "GET /index") == None
+    fields(line: "GET /index 200 extra") == None
+    fields(line: "") == None
+  body:
+    let [method, path, status]: List<String> = std.string.split(text: line, separator: " ") else return None
+    return Some(status)
+end fn propagate.fields
+
+fn propagate.first_of_pair
+  doc: "The first item of a list of two, or the else value, inside a match arm."
+  in:
+    items: Option<List<Int>>
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    first_of_pair(items: Some([4, 5])) == 4
+    first_of_pair(items: Some([4])) == -1
+    first_of_pair(items: None) == 0
+  body:
+    let first: Int = match items
+      case Some(pair) then
+        let [left, right]: List<Int> = pair else return -1
+        left
+      case None then
+        0
+    end match
+    return first
+end fn propagate.first_of_pair
 `;
 
 // The std types of std.fs named in a program: a variant type missing from

@@ -115,7 +115,36 @@ fn sizes.area
   body:
     checks.positive(n: width) else return Err(error)
     return Ok(width * height)
-end fn sizes.area`;
+end fn sizes.area
+
+fn sizes.words
+  doc: "The words of a line."
+  in:
+    line: String
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    words(line: "a b") == ["a", "b"]
+  body:
+    return std.string.split(text: line, separator: " ")
+end fn sizes.words
+
+fn sizes.second
+  doc: "The second of exactly two words."
+  in:
+    line: String
+  out: Option<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    second(line: "a b") == Some("b")
+  body:
+    let [first, other]: List<String> = words(line: line) else return None
+    return Some(other)
+end fn sizes.second`;
 
 Deno.test("refs: a call in a propagation statement is a reference and is rewritten", () => {
   const program = parseProgram(PROPAGATING);
@@ -126,4 +155,17 @@ Deno.test("refs: a call in a propagation statement is a reference and is rewritt
   const target = (r: { full: string }) => (r.full === "checks.positive" ? "checks.above_zero" : r.full);
   const renamed = printDefinition(mapReferences(area, checked.info, target));
   assertEquals(renamed.includes("    checks.above_zero(n: width) else return Err(error)\n"), true);
+});
+
+Deno.test("refs: a call in the value of a let [...] is a reference and is rewritten (T11)", () => {
+  const program = parseProgram(PROPAGATING);
+  const checked = checkProgram(program);
+  const second = program.find((d) => pathText(d.path) === "sizes.second")!;
+  assertEquals(dependencies(second, checked.info), ["sizes.second", "sizes.words"]);
+  const target = (r: { full: string }) => (r.full === "sizes.words" ? "sizes.split_words" : r.full);
+  const renamed = printDefinition(mapReferences(second, checked.info, target));
+  assertEquals(
+    renamed.includes("    let [first, other]: List<String> = split_words(line: line) else return None\n"),
+    true,
+  );
 });

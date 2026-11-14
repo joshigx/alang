@@ -51,7 +51,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 - \`let n: Int = expression\`, always with the type, never \`Unit\` (E0235); immutable, reusing no visible name (E0216).
 - \`let n: Int = std.int.parse(text: t) else return Err(NotANumber(t))\`: the content of \`Some\` or \`Ok\` is bound;
   otherwise the function returns the \`else\` value, in which \`error\` is the \`Err\` value. A \`Result<Unit, E>\` needs
-  no \`let\`: \`std.fs.write_text(path: p, text: t) else return Err(error)\`.
+  no \`let\`: \`std.fs.write_text(path: p, text: t) else return Err(error)\`. A list of exactly two items is taken
+  apart with \`let [key, value]: List<String> = parts else return None\`.
 - \`if c then ... else ... end if\`, \`match x\` with \`case Pattern then ...\` lines and \`end match\`, and
   \`for x: T in list do ... end for\` stand as a statement, as the value of a \`let\`, or after \`return\`; never inside
   another expression or a lambda (E0303). As a value, a branch's value is its last line, an \`if\` needs \`else\`
@@ -104,9 +105,7 @@ No comments (the \`doc\` describes), \`const\`, \`extern fn\`, imports, \`var\`,
 (use recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, generic definitions, function types in your
 own signatures, concurrency. Most of these get E0006, which names the alang form.
 
-## A complete program
-
-Accepted as it stands: a type, a pure function with examples, and a thin \`main\`.
+## A complete program, accepted as it stands
 
 \`\`\`
 type temp.Problem

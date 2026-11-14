@@ -339,3 +339,41 @@ Deno.test("propagate: no else after a block or before anything but return (T2)",
   assertEquals(message("f(x: 1) else g(x: 1)"), lineBreak);
   assertEquals(code(() => parseStatements("if c then\nf(x: 1)\nend if else return Unit")), "E0101");
 });
+
+Deno.test("let [...]: a list taken apart into names round-trips (T11)", () => {
+  const line = "let [a, b]: List<String> = xs else return None";
+  assertEquals(canonicalStmts(line), line);
+  assertEquals(canonicalStmts("let [\n  a,\n  b\n]: List<String> = xs else return None"), line);
+  assertEquals(
+    canonicalStmts("let [only]: List<Int> = [1] else return 0"),
+    "let [only]: List<Int> = [1] else return 0",
+  );
+});
+
+Deno.test("let [...]: names only, at least one, with else return (T11, T12)", () => {
+  const message = (source: string) => {
+    const d = assertThrows(() => parseStatements(source), AlangError).diagnostic;
+    return [d.code, d.message];
+  };
+  const namesOnly = [
+    "E0101",
+    "A `let [...]` takes a list apart into names only: `let [first, second]: List<String> = items else return ...`.",
+  ];
+  assertEquals(message("let []: List<Int> = xs else return 0"), ["E0101", "A `let [...]` names at least one item."]);
+  assertEquals(message("let [a, ]: List<Int> = xs else return 0"), [
+    "E0101",
+    "A `let [...]` ends after its last name; remove the comma before `]`.",
+  ]);
+  for (const items of ['"x", b', "A", "[a]", "a b", "a.b"]) {
+    assertEquals(message(`let [${items}]: List<Int> = xs else return 0`), namesOnly, items);
+  }
+  assertEquals(message("let [a, b]: List<String> = xs"), [
+    "E0101",
+    "A `let [...]` needs `else return ...` for a list of another length.",
+  ]);
+  assertEquals(code(() => parseStatements("let [error]: List<Int> = xs else return 0")), "E0109");
+  assertEquals(message("match xs\ncase [a, b] then\n1\nend match"), [
+    "E0101",
+    "A `case` takes no list apart: no set of cases covers every length without a catch-all (3.3). Use `let [first, second]: List<T> = items else return ...`, or `std.list.first` and `std.list.drop`.",
+  ]);
+});

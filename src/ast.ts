@@ -106,6 +106,15 @@ export type Stmt =
   // `expression else return value`: a `Result<Unit, E>` or `Option<Unit>`
   // propagated without a binding, since its content carries nothing (3.2).
   | { readonly kind: "propagate"; readonly value: Expr; readonly elseReturn: Expr }
+  // `let [a, b]: List<T> = list else return value`: binds the items of a
+  // list of exactly as many items as names (3.2); `type` is the list's.
+  | {
+    readonly kind: "destructure";
+    readonly names: readonly string[];
+    readonly type: TypeRef;
+    readonly value: Expr;
+    readonly elseReturn: Expr;
+  }
   | { readonly kind: "return"; readonly value: Expr }
   | { readonly kind: "expr"; readonly expr: Expr };
 

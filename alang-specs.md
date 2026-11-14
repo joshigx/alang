@@ -162,6 +162,7 @@ For every purpose the grammar permits exactly one form, and every definition has
 | Branch | `if … then … else … end if` |
 | Distinguish variants | `match … case … then … end match` |
 | Propagate an error | `let name: Type = expression else return …`; with nothing to bind, `expression else return …` |
+| Take apart a list of known length | `let [a, b]: List<Type> = list else return …` |
 | Transform a collection | `std.list.map`, `std.list.filter`, `std.list.fold` |
 | Effect per element | `for name: Type in list do … end for` |
 | Repeat until a condition holds | Recursion |
@@ -172,7 +173,7 @@ For every purpose the grammar permits exactly one form, and every definition has
 | Sort | `std.list.sort(list: list, by: compare)` |
 
 - **3.1 No method calls.** The form `x.f()` does not exist. The dot separates only module paths and record fields.
-- **3.2 Propagating errors.** In `let … else` the expression has type `Result<T, E>` or `Option<T>`. On `Ok` or `Some` the content is bound; otherwise the function returns the `return` value. In the `else` branch the error value is called `error`. A `let` never binds `Unit`: a `Result<Unit, E>` or `Option<Unit>` is propagated by the statement `expression else return …` alone.
+- **3.2 Propagating errors.** In `let … else` the expression has type `Result<T, E>` or `Option<T>`. On `Ok` or `Some` the content is bound; otherwise the function returns the `return` value. In the `else` branch the error value is called `error`. A `let` never binds `Unit`: a `Result<Unit, E>` or `Option<Unit>` is propagated by the statement `expression else return …` alone. A `List` is taken apart the same way: `let [a, b]: List<T> = expression else return …` binds the items if there are exactly as many as names; otherwise the function returns, and `error` is `Unit`.
 - **3.3 Exhaustive `match`.** Every variant has its own `case`. There is no catch-all case, so that a new variant reports every affected place as an error.
 - **3.4 Expressions with a value.** `if`, `match` and `for` are expressions; the value of a branch is its last expression. `for` yields the list of these values in the order of the elements. A function always ends with an explicit `return`.
 - **3.5 Mandatory parentheses.** Arithmetic binds tighter than comparison, comparison tighter than logic. Mixing `+ -` with `* / %`, or `and` with `or`, requires parentheses.
@@ -187,6 +188,13 @@ Reading files and collecting the results, with `for` as an expression per 3.4 in
 let contents: List<Result<String, std.fs.Error>> = for path: String in paths do
   std.fs.read_text(path: path)
 end for
+```
+
+Taking a line apart and writing a file, with the two forms of 3.2 that need no index and no dummy name:
+
+```
+let [path, text]: List<String> = std.string.split(text: line, separator: "=") else return Err(line)
+std.fs.write_text(path: path, text: text) else return Err(std.fs.describe(error: error))
 ```
 
 Grammar excerpt (EBNF, line breaks omitted):
@@ -216,8 +224,9 @@ case       = TypeName [ ":" type ] ;
 example    = call "==" expr ;
 type       = TypePath [ "<" type { "," type } ">" ] ;
 
-stmt       = let | propagate | return | expr ;
+stmt       = let | destructure | propagate | return | expr ;
 let        = "let" name ":" type "=" expr [ "else" "return" expr ] ;
+destructure = "let" "[" name { "," name } "]" ":" type "=" expr "else" "return" expr ;
 propagate  = expr "else" "return" expr ;
 return     = "return" expr ;
 for        = "for" name ":" type "in" expr "do" stmt { stmt } "end" "for" ;
@@ -245,7 +254,7 @@ No construct requires counting positions or tracking mutable state across severa
 - **4.3 No tuples.** Composite values are records with named fields.
 - **4.4 Named block ends.** Blocks end with `end if`, `end for`, `end match`, `end fn <name>` or `end type <name>`. There are no curly braces and no significant indentation.
 - **4.5 No assignment.** Every binding is immutable. An intermediate result gets a new name.
-- **4.6 No index access.** The form `list[i]` does not exist. `std.list.get(list: xs, index: i)` returns `Option<T>`; for neighbours and positions there are `first`, `last`, `zip`, `enumerate` and `window`.
+- **4.6 No index access.** The form `list[i]` does not exist. `std.list.get(list: xs, index: i)` returns `Option<T>`; for neighbours and positions there are `first`, `last`, `zip`, `enumerate` and `window`, and a list of known length is taken apart by name: `let [key, value]: List<String> = parts else return …` (3.2).
 - **4.7 Grouped numbers.** Integer literals with more than four digits carry `_` as a thousands separator: `65_535`, `1_000_000`.
 - **4.8 Limited depth.** Blocks are nested at most two levels deep. Anything deeper becomes its own function.
 
@@ -475,6 +484,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 | The depth limit (4.8) | Not enforced yet; keep to it anyway |
 | Concurrency | Everything runs in order; `std.http.serve` answers one request at a time, and `std.http.send` and `std.time.wait` hold the program until they return |
 | A wildcard pattern `_` | Every value in a pattern gets a name, used or not: `case Ok(done) then` |
+| A pattern over a list's items, `case [a, b] then` (E0101) | `let [a, b]: List<T> = xs else return …` for an exact length; `std.list.first` and `std.list.drop` for the first item and the rest |
 
 ### 7.2 Text
 
@@ -503,6 +513,7 @@ These forms are common in other languages but do not exist in alang. Write the f
 - **The end.** The last statement of a body is literally a `return` (E0218). Nothing may follow a `return`, or an `if` or `match` whose branches all return (E0218). So an `if` or `match` whose branches all return cannot end a body either. Write `if c then return a end if` and then `return b`, or bind the value of the `if` or `match` with `let` and return that.
 - **`let` (3.2).** `let n: Int = expression`, always with the type, which is never `Unit` (E0235): write a `Unit` expression as a statement, and `Unit` for its value; the codebase applies this fix itself (7.10). In `let n: Int = std.int.parse(text: s) else return Err(NotANumber)`, the expression is a `Result` or an `Option` (E0224). On `Ok` or `Some`, its content is bound. Otherwise the function returns the `else` value, in which `error` is the `Err` value, or `Unit` for `None`.
 - **Propagating without a value.** A `Result<Unit, E>` or an `Option<Unit>` has nothing to bind, so it is propagated by a statement: `std.fs.write_text(path: p, text: t) else return Err(Unwritable(error))`. Its `else` and `error` work as in a `let`. A content other than `Unit` must be bound (E0217), and an expression that is no `Result` or `Option` takes no `else` (E0224). The expression is not an `if`, `match` or `for`. On one line, `if c then f(x: 1) else return v end if` keeps its meaning: an `else` on the line of `then` belongs to the `if`.
+- **Taking a list apart.** `let [method, path, status]: List<String> = std.string.split(text: line, separator: " ") else return None` binds the items in order if the list has exactly as many items as names; any other length returns the `else` value, in which `error` is `Unit`. The type is the list's (E0204, with the fix, for the item type written instead). Only names stand in the brackets, at least one, and `else return` is required (E0101). A `case` takes no list apart (E0101): no set of cases covers every length without a catch-all (3.3).
 - **No shadowing (2.6).** A binding may not reuse a name that is visible at that point: a parameter, an earlier `let`, or a pattern or lambda variable (E0216). Sibling branches may use the same name.
 - **`if`.** `if condition then ... else ... end if`. Without `else`, only as a statement (E0110). The value of a branch is its last expression.
 - **`match` (3.3).** `match subject` is followed by `case Pattern then ...` lines and `end match`. Every case is covered (E0213), without a catch-all, and no case may be one that earlier cases already cover (E0214).

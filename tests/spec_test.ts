@@ -35,7 +35,7 @@ Deno.test("spec: block inventory", () => {
   // Guards against blocks silently dropping out of the test set.
   assertEquals(definitionBlocks.length, 6);
   assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 17);
-  assertEquals(statementBlocks.length, 2);
+  assertEquals(statementBlocks.length, 3);
   assertEquals(prefixBlocks.length, 1);
 });
 

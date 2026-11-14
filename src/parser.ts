@@ -439,9 +439,42 @@ class Parser {
     return this.peek().line !== thenLine;
   }
 
+  // `let [a, b]: List<T> = expression else return value` (3.2), after `let`.
+  // Line breaks inside the brackets are ignored, as in a list literal.
+  private destructure(): Stmt {
+    const namesOnly =
+      "A `let [...]` takes a list apart into names only: `let [first, second]: List<String> = items else return ...`.";
+    this.expectSymbol("[");
+    this.skipNewlines();
+    if (this.isSymbol("]")) this.fail("A `let [...]` names at least one item.");
+    const names: string[] = [];
+    for (;;) {
+      if (this.peek().kind !== "name") this.fail(namesOnly);
+      names.push(this.bindingName());
+      this.skipNewlines();
+      if (!this.isSymbol(",")) break;
+      this.next();
+      this.skipNewlines();
+      if (this.isSymbol("]")) this.fail("A `let [...]` ends after its last name; remove the comma before `]`.");
+    }
+    if (!this.isSymbol("]")) this.fail(namesOnly);
+    this.next();
+    this.expectSymbol(":");
+    const type = this.type();
+    this.expectSymbol("=");
+    const value = this.expr();
+    if (!this.isKeyword("else") || !this.isKeyword("return", 1)) {
+      this.fail("A `let [...]` needs `else return ...` for a list of another length.");
+    }
+    this.next();
+    this.next();
+    return { kind: "destructure", names, type, value, elseReturn: this.expr() };
+  }
+
   private stmt(thenLine: number | null = null): Stmt {
     if (this.isKeyword("let")) {
       this.next();
+      if (this.isSymbol("[")) return this.destructure();
       const name = this.bindingName();
       this.expectSymbol(":");
       const type = this.type();
@@ -776,6 +809,11 @@ class Parser {
   }
 
   private pattern(top: boolean): Pattern {
+    if (this.isSymbol("[")) {
+      this.fail(
+        "A `case` takes no list apart: no set of cases covers every length without a catch-all (3.3). Use `let [first, second]: List<T> = items else return ...`, or `std.list.first` and `std.list.drop`.",
+      );
+    }
     const lit = this.literal();
     if (lit) return { kind: "literal", value: lit };
     const t = this.peek();

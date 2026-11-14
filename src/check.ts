@@ -530,6 +530,10 @@ class DefChecker {
           this.propagate(s, scope);
           result = this.noValue(s, last, mode, "`… else return`");
           break;
+        case "destructure":
+          this.destructure(s, scope);
+          result = this.noValue(s, last, mode, "`let`");
+          break;
         case "return":
           this.ret(s.value, scope);
           result = NEVER;
@@ -626,6 +630,36 @@ class DefChecker {
     const elseScope = scope.child();
     elseScope.define("error", error);
     this.ret(s.elseReturn, elseScope);
+  }
+
+  // `let [a, b]: List<T> = list else return value` (T11): binds the items of
+  // a list of exactly as many items as names, each with the item type `T`;
+  // any other length returns the `else` value, in which `error` is `Unit`.
+  // What stands left of the colon is a list, so the type is the list's
+  // (1.3), and it is the value's expected type, as for a `let` (1.4).
+  private destructure(s: Extract<Stmt, { kind: "destructure" }>, scope: Scope): void {
+    const declared = this.resolveType(s.type);
+    const at = firstLine(printStmts([s], ""));
+    let item: Type = ERROR;
+    if (isCon(declared, "List")) {
+      this.expr(s.value, scope, declared);
+      item = declared.args[0];
+    } else {
+      const v = this.expr(s.value, scope, null);
+      if (!containsError(declared)) {
+        // The written list type of the value, if it has one (as for E0228).
+        const written = isCon(v, "List") && writable(v.args[0]) ? `List<${this.show(v.args[0])}>` : null;
+        const expected = written ?? "List<T>";
+        this.report("E0204", at, `\`[${s.names.join(", ")}]\` is a list, so its type is a \`List\`: \`${expected}\`.`, {
+          expected,
+          fix: written ? { replace: `]: ${printTypeRef(s.type)} =`, with: `]: ${written} =` } : undefined,
+        });
+      }
+    }
+    const elseScope = scope.child();
+    elseScope.define("error", UNIT);
+    this.ret(s.elseReturn, elseScope);
+    for (const name of s.names) this.bind(scope, name, item, at);
   }
 
   // Checks a `let`. Returns whether it binds `Unit` and raised nothing else,

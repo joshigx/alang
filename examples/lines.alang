@@ -7,9 +7,7 @@ fn lines.main
   ensures: none
   examples: none
   body:
-    let args: List<String> = std.env.args()
-    let source: String = std.list.get(list: args, index: 0) else return Err("usage: lines <source> <target>")
-    let target: String = std.list.get(list: args, index: 1) else return Err("usage: lines <source> <target>")
+    let [source, target]: List<String> = std.env.args() else return Err("usage: lines <source> <target>")
     let text: String = std.fs.read_text(path: source) else return Err(std.string.concat(left: "cannot read the source: ", right: std.fs.describe(error: error)))
     std.fs.write_text(path: target, text: sorted(text: text)) else return Err(std.string.concat(left: "cannot write the target: ", right: std.fs.describe(error: error)))
     return Ok(Unit)

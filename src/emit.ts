@@ -322,7 +322,8 @@ class DefinitionEmitter {
       lines.push(...this.stmt(s, scope, last ? sink : DISCARD));
       // A statement without a value that ends a block delivers `Unit`, so a
       // `return match` in a `Unit` function returns in every branch.
-      if (last && (s.kind === "let" || s.kind === "propagate") && sink.kind !== "discard") {
+      const valueless = s.kind === "let" || s.kind === "propagate" || s.kind === "destructure";
+      if (last && valueless && sink.kind !== "discard") {
         lines.push(this.applySink(sink, `${RT}.Unit`));
       }
     });
@@ -369,6 +370,21 @@ class DefinitionEmitter {
       }
       case "propagate":
         return this.unpack(s.value, s.elseReturn, scope)[0];
+      case "destructure": {
+        // The checker accepted it, so the type is `List<T>`.
+        const item = this.ts(s.type.args[0]);
+        const tmp = this.temp("r");
+        const elseScope = scope.child();
+        const err = elseScope.add("error");
+        return [
+          `const ${tmp} = ${this.expr(s.value, scope)};`,
+          `if (${tmp}.length !== ${s.names.length}) {`,
+          `  const ${err} = ${RT}.Unit;`,
+          `  return ${this.expr(s.elseReturn, elseScope)};`,
+          "}",
+          ...s.names.map((name, i) => `const ${scope.add(name)}: ${item} = ${tmp}[${i}];`),
+        ];
+      }
       case "return":
         if (isBlock(s.value)) return this.blockExpr(s.value, scope, { kind: "return" });
         return [`return ${this.expr(s.value, scope)};`];

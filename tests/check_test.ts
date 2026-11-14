@@ -659,6 +659,56 @@ Deno.test("check: a discarded Result<Unit, E> points to the propagation statemen
   assertEquals(other.expected, null);
 });
 
+Deno.test("check: a list of known length is taken apart by name (T11)", () => {
+  clean(fn(
+    'let [method, path, status]: List<String> = std.string.split(text: line, separator: " ") else return None\nreturn Some(status)',
+    { params: ["line: String"], out: "Option<String>" },
+  ));
+  // The declared type is the value's expected type: the literal is a List<Int>.
+  clean(fn("let [only]: List<Int> = [1] else return 0\nreturn only"));
+  // `error` is Unit in the else value.
+  clean(fn("let [a, b]: List<Int> = xs else return Err(error)\nreturn Ok(a + b)", {
+    params: ["xs: List<Int>"],
+    out: "Result<Int, Unit>",
+  }));
+  // The fragment of section 3.
+  clean(fn(specBlock("let [path, text]").trimEnd() + "\nreturn Ok(Unit)", {
+    params: ["line: String"],
+    out: "Result<Unit, String>",
+    effects: "fs.write",
+  }));
+});
+
+Deno.test("check: the type of a let [...] is the list's type (T11)", () => {
+  const parts = { params: ["parts: List<String>"], out: "Option<String>" };
+  const source = fn("let [a, b]: String = parts else return None\nreturn Some(b)", parts);
+  const d = one(source, "E0204");
+  assertEquals(d.at, "let [a, b]: String = parts else return None");
+  assertEquals(d.message, "`[a, b]` is a list, so its type is a `List`: `List<String>`.");
+  assertEquals([d.expected, d.fix], ["List<String>", { replace: "]: String =", with: "]: List<String> =" }]);
+  clean(fixed(source, d));
+  // A value that is no List: the placeholder, and no fix.
+  const option = one(
+    fn("let [a]: String = o else return None\nreturn Some(a)", {
+      params: ["o: Option<String>"],
+      out: "Option<String>",
+    }),
+    "E0204",
+  );
+  assertEquals([option.expected, option.fix], ["List<T>", null]);
+  one(
+    fn("let [a]: List<String> = o else return None\nreturn Some(a)", {
+      params: ["o: Option<String>"],
+      out: "Option<String>",
+    }),
+    "E0204",
+  );
+  one(fn("let [a, a]: List<String> = parts else return None\nreturn Some(a)", parts), "E0216");
+  one(fn("let [parts, b]: List<String> = parts else return None\nreturn Some(b)", parts), "E0216");
+  // The names are not visible in the else value.
+  one(fn("let [a]: List<String> = parts else return Some(a)\nreturn Some(a)", parts), "E0203");
+});
+
 Deno.test("check: if and for", () => {
   one(fn('let x: Int = if true then\n  1\nelse\n  "a"\nend if\nreturn x'), "E0204");
   one(
