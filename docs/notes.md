@@ -403,6 +403,11 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   In `decisions.md`: Syntax (`a.b.c`, Function types, Applying a function value), Type checking (List literals,
   Locals vs functions, Function values, Function results, std signatures), Effects (Function values), Examples and
   acceptance (Actual values), Database (`search(type)`); the open question "Function types" is closed.
+- F4 kept after the `rank` round (2026-11-14, the main session's decision on the analysis's recommendation): nothing
+  is loosened now; the `const` phase is the loosening (E0237 points a function without parameters to `const`, the
+  card says where a table of functions goes, `rank` is rerun). Reasons: 5.1 with 3.9 (E0401 would need an exemption
+  too), principle 3 (two ways), 3.8 (loosening later breaks nothing). In `decisions.md`, Type checking (Function
+  results); details in "From the rank round".
 
 ## Database phase: open points (2026-11-12)
 
@@ -1287,6 +1292,67 @@ Left for later:
   not apply) and a `fn` returning a function (`compose`). Loosening E0237 breaks no program.
 - **Generic functions as values (F10):** E0210 stays even where an expected function type would fix the type
   arguments (`let n: (List<Int>) -> Int = std.list.length`); instantiation belongs to `generics`.
+
+## From the rank round (2026-11-14)
+
+The playground round of item 22: automated with `scripts/playground-round.sh` (headless Opus 5.5, no advisor,
+`--restricted`, an empty codebase), against `3e0ff8e` on `fn-types`; folder
+`~/coding_projects/alang-rounds/2026-11-14-rank/`. The task: `rank`, a command-line tool that ranks the products of a
+shop by three measures (`units`, `price`, `revenue`) with the commands `measures`, `top`, `bottom` and `goal` (the
+plan's section 7). A fresh Opus agent analyzed it; its report, the call table, the correctness cases, the F4
+alternatives and the scripts are in `analysis/` there.
+
+- **Correct where the prompt decides.** All 14 prompt steps match the reference byte for byte; 53 of 64 cases match.
+  Of the 11 differences, 5 are open in the prompt (argument vs file order, CRLF, `-0`), 4 come from the `Int` range
+  (±(2^53−1) against the reference's float64), and 2 are the model's overflow traps (exit 70: `units * price` beyond
+  the range, and `goal` summing every value before checking). `deno check` of `out/*.ts` passes.
+- **No function-type form in the accepted program.** Submit 1 had the planned design: a table of measures, a
+  `List<Measure>` whose field `value: (Product) -> Int` holds lambdas, returned from `fn rank.measures`. It hit E0237
+  (and E0221 on the example `std.list.length(list: measures()) == 3`), and the model turned the formulas into data
+  (`factors: List<Column>`, multiplied in `rank.value`), so a fourth measure is one table line only if it is a product
+  of columns. E0237 cost a redesign but few tokens (submit 1 held 6 definitions, 812 output tokens); its advice (a
+  `let` or a map literal where the function is applied) was not taken, and it names no place for a table read in
+  three places.
+- **The expensive rejection was E0204** in `main` (`load()`, a `Result`, as an `if` branch where a `List<Product>` is
+  expected): fixed in one step, but resending all 24 definitions cost 8,323 tokens, 33.7% of the output. The third
+  round where the whole-transaction resend is the largest single cost (tickets 36.7%, tasks 18%).
+- **Effort.** 21 tool calls (`card` 1, `list` 5, `search` 4, all exact-name lookups, `submit` 3, Bash 6, Write 1,
+  Edit 1); 193 s, 24.7k output tokens, $1.00. `search_type` and `context` unused, so F9 has no round evidence.
+- **One denied command:** a zsh `for` loop over the runs; loops are not on the harness's allowlist, and the round's
+  `CLAUDE.md` did not name them.
+- **F4 alternatives** (in `analysis/alternatives/`, each checked and run on the 14 steps): (a) F4 loosened, a record
+  with a function field returned from a `fn`, is E0237 and E0401 today; (b) `const rank.measures` is a sketch, not
+  checkable yet; (c) a variant with one `match` in `value` over a data table and (d) the table as a `let` in `main`,
+  passed down, are both accepted, 14 of 14. `const` legalises the table, not lookups that return a `Measure`
+  (`find_measure(): Option<Measure>` stays E0237).
+
+**Decision on F4** (the main session, on the analysis's recommendation): keep F4 and loosen nothing now; the `const`
+phase is the loosening. There E0237's message and `expected` point a function without parameters to `const`, add
+"return the name; apply the function where it is used", the card says where a table of functions goes, and `rank` is
+rerun. Reasons: 5.1 with 3.9 (loosening F4 for `fn` would also need an exemption from E0401, since a type holding a
+function has no `==`); principle 3 (a table as a `fn` now and as a `const` next would be two ways); 3.8 (loosening
+later breaks nothing). Caveat: one run. In `decisions.md`, Type checking (Function results), and in the review list.
+
+What the fixes after it changed (on `fn-types`, one commit each):
+
+- `0a2be3a`: the round's `CLAUDE.md` names loops among the refused shell commands ("`rm`, loops such as `for`, shell
+  functions, scripts").
+- `4d0913a`: the card says "No `fn` returns one, even in a list or record (E0237)." (159 lines, 9,783 bytes; 456
+  bytes remain).
+- `3f78816`: E0221 reads "An example's left side is a call of the function it belongs to: `measures(…) == …` (5.1).",
+  where "An example calls the function it belongs to, `measures`." read like a complaint about calling it; the test
+  pins the message.
+
+Left for later:
+
+- **The whole-transaction resend** (database and MCP; no phase covers it): 33.7% here, 36.7% in tickets, 18% in
+  tasks.
+- **A hint in `mismatch()`** when the content of a `Result` or `Option` would fit the expected type: bind it by a
+  statement of its own (no fix). Optional; the model coped in one step.
+- **Prompt gaps** for the round's prompt and reference: argument vs file order, CRLF, `-0`, the bounds of `n` and
+  `amount`.
+- **`std.int.parse` gives the same `None`** for not-a-number and too-large.
+- **F4 for functions with parameters** (`compose`): `generics`.
 
 ## Spec observations
 
