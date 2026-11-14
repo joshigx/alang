@@ -331,28 +331,29 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   `examples/server.alang` showing `ServeError` through it. In `decisions.md`, HTTP (`std.http`): `alang run`,
   `SendError`, `describe`, `describe_serve_error`, Bad ports, Host differences left.
 - Statements (item 21, 2026-11-14; the main session took every recommendation of `docs/plans/statements.md`, T1 to
-  T15, built without the user's review). Language changes first: T1 the propagation statement `expression else
-  return value` for a `Result<Unit, E>` or `Option<Unit>`; T2 not after an `if`, `match` or `for`, and an `else` on
-  the line of an `if`'s `then` belongs to that `if`; T3 a `let` never binds `Unit` (E0235, with a fix only when the
-  name is unused and the rest parses; patterns, parameters and `let [...]` names may still be `Unit`); T6 shared
-  cases `case A or B then`, whole patterns on one line; T7 a name is bound in a shared arm only if every pattern binds
-  it with one type, any other is hidden (E0236 at a use, E0216 if bound again, before the module's functions); T11
-  `let [a, b]: List<T> = list else return v`, exact length, names only, the list's type (E0204 with a fix for the
-  item type); T12 no list patterns in `case`. The others: T4 E0217 names the propagation statement for a discarded
-  `Result<Unit, E>`; T5 the codebase applies E0235's fix itself; T8 E0213, E0214 and E0227 per pattern, E0227's
-  `expected` one shared case; T9 `|` E0006 and `case A, B` E0101 with fixes, `Err(A or B)` E0101 without; T10 one
-  TypeScript branch per pattern; T13 `std.list.set` traps outside the list; T14 record update left to roadmap row 9
-  `records`; T15 `std.list.find_index`. Mine beyond the plan: E0235 is not held back by an E0226 inside the same
-  `let`, so submit applies both fixes in one round; E0236 is reported once per name and definition; a one-pattern case
-  keeps E0214's old message; E0235 for a block value with `else` has no `expected`; the comma fix turns only the
-  commas between `case` and `then` into `or`, and its `expected` is `or`, as for `|`; the `|` fix also turns a `||`
-  on that line into `or`; a name with the error type in any pattern of a shared case is bound with
-  the error type; a function value written in full whose short name a shared case hides is not E0226 (its fix would give E0236); the message for `?` names the propagation statement; the MCP instructions name the new `fixed`
-  entry; a `let` with an `if`, `match` or `for` value is emitted through a temporary; the plan's `main` over
-  `std.env.args()` (test 3.5) is `lines.alang`'s io test, not a second program. In `decisions.md`: Lexical (Foreign
-  forms), Syntax (Propagation statement, Taking a list apart, Shared cases), Semantics and runtime (Representation in
-  TS), Type checking (Discarded values, `Unit` bindings, Taking a list apart, Blocks, `match`), Database (`Unit`
-  bindings fixed), MCP server (Instructions), Text, numbers and lists in std (`set`, `find_index`, Stopping).
+  T15, built without the user's review). Language changes first: T1 the propagation statement `expression else return
+  value` for a `Result<Unit, E>` or `Option<Unit>`; T2 not after an `if`, `match` or `for`, and an `else` on the line
+  of an `if`'s `then` belongs to that `if`; T3 a `let` never binds `Unit` (E0235, with a fix only when the name is
+  unused and the rest parses; patterns, parameters and `let [...]` names may still be `Unit`); T6 shared cases `case A
+  or B then`, whole patterns on one line; T7 a name is bound in a shared arm only if every pattern binds it with one
+  type, any other is hidden (E0236 at a use, E0216 if bound again, before the module's functions); T11 `let [a, b]:
+  List<T> = list else return v`, exact length, names only, the list's type (E0204 with a fix for the item type); T12
+  no list patterns in `case`. The others: T4 E0217 names the propagation statement for a discarded `Result<Unit, E>`;
+  T5 the codebase applies E0235's fix itself; T8 E0213, E0214 and E0227 per pattern, E0227's `expected` one shared
+  case; T9 `|` E0006 and `case A, B` E0101 with fixes, `Err(A or B)` E0101 without; T10 one TypeScript branch per
+  pattern; T13 `std.list.set` traps outside the list; T14 record update left to roadmap row 9 `records`; T15
+  `std.list.find_index`. Mine beyond the plan: E0235 is not held back by an E0226 inside the same `let`, so submit
+  applies both fixes in one round; E0236 is reported once per name and definition; a one-pattern case keeps E0214's
+  old message; E0235 for a block value with `else` has no `expected`; the comma fix turns only the commas between
+  `case` and `then` into `or`, and its `expected` is `or`, as for `|`; the `|` fix also turns a `||` on that line into
+  `or`; a name with the error type in any pattern of a shared case is bound with the error type; a function value
+  written in full whose short name a shared case hides is not E0226 (its fix would give E0236); the message for `?`
+  names the propagation statement; the MCP instructions name the new `fixed` entry; a `let` with an `if`, `match` or
+  `for` value is emitted through a temporary; the plan's `main` over `std.env.args()` (test 3.5) is `lines.alang`'s io
+  test, not a second program. In `decisions.md`: Lexical (Foreign forms), Syntax (Propagation statement, Taking a list
+  apart, Shared cases), Semantics and runtime (Representation in TS), Type checking (Discarded values, `Unit`
+  bindings, Taking a list apart, Blocks, `match`), Database (`Unit` bindings fixed), MCP server (Instructions), Text,
+  numbers and lists in std (`set`, `find_index`, Stopping).
 
 ## Database phase: open points (2026-11-12)
 
