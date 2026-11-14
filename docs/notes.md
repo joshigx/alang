@@ -345,7 +345,8 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   `records`; T15 `std.list.find_index`. Mine beyond the plan: E0235 is not held back by an E0226 inside the same
   `let`, so submit applies both fixes in one round; E0236 is reported once per name and definition; a one-pattern case
   keeps E0214's old message; E0235 for a block value with `else` has no `expected`; the comma fix turns only the
-  commas between `case` and `then` into `or`; a name with the error type in any pattern of a shared case is bound with
+  commas between `case` and `then` into `or`, and its `expected` is `or`, as for `|`; the `|` fix also turns a `||`
+  on that line into `or`; a name with the error type in any pattern of a shared case is bound with
   the error type; a function value written in full whose short name a shared case hides is not E0226 (its fix would give E0236); the message for `?` names the propagation statement; the MCP instructions name the new `fixed`
   entry; a `let` with an `if`, `match` or `for` value is emitted through a temporary; the plan's `main` over
   `std.env.args()` (test 3.5) is `lines.alang`'s io test, not a second program. In `decisions.md`: Lexical (Foreign
