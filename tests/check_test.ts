@@ -1475,7 +1475,10 @@ Deno.test("check: contracts see the right names", () => {
 Deno.test("check: examples call their own function and compare equal types", () => {
   clean(fn("return a", { params: ["a: Int"], examples: ["f(a: 1) == 1"] }));
   one(fn("return a", { params: ["a: Int"], examples: ['f(a: 1) == "1"'] }), "E0204");
-  one(fn("return a", { params: ["a: Int"], examples: ["g() == 1"], extra: G }), "E0221");
+  assertEquals(
+    one(fn("return a", { params: ["a: Int"], examples: ["g() == 1"], extra: G }), "E0221").message,
+    "An example's left side is a call of the function it belongs to: `f(…) == …` (5.1).",
+  );
 });
 
 Deno.test("check: the std table can be given explicitly", () => {

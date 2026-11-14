@@ -477,10 +477,11 @@ class DefChecker {
         // Written by position (`twice(2) == 4`), the call gets E0107 below.
         const callee = this.resolvePath(ex.left.kind === "call" ? ex.left.path : ex.left.target.path);
         if (callee !== this.name) {
+          const own = this.written(this.name);
           this.report(
             "E0221",
             printExpr(ex, ""),
-            `An example calls the function it belongs to, \`${this.written(this.name)}\`.`,
+            `An example's left side is a call of the function it belongs to: \`${own}(…) == …\` (5.1).`,
           );
           continue;
         }
