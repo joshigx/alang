@@ -3,7 +3,7 @@
 Running log of observations, spec gaps and ideas for later. Decisions that close a gap move to
 [decisions.md](decisions.md); this file is for what is not decided or not done yet.
 
-## Current state (2026-11-13)
+## Current state (2026-11-14)
 
 Read this first when picking up the work in a new session. Update it when a phase ends.
 
@@ -13,8 +13,9 @@ phase branches are kept as they are. Start each new phase on its own branch from
 Files and program I/O (item 14) were built on `std-io` and fast-forwarded into `main` (2026-11-13), unpushed. List
 literals and pure std (item 15) were built on `list-literals` and fast-forwarded into `main` the same way. The
 language card (item 16) was built on `card` and is merged into `main`. Maps, options and more std (item 17) were built
-on `std-maps` and fast-forwarded into `main` too. The fixes after its playground round (item 18) are on
-`logstat-fixes`, branched from `main`, not merged.
+on `std-maps` and fast-forwarded into `main` too. The fixes after its playground round (item 18) were built on
+`logstat-fixes` and merged. The fixes after the `tasks` round (item 19) were built on `tasks-fixes` and fast-forwarded
+into `main` on 2026-11-14 by the main session, unpushed (the user had authorized the overnight run).
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -102,8 +103,24 @@ on `std-maps` and fast-forwarded into `main` too. The fixes after its playground
     `list` and `search` carries `signature`, its one-line signature without the doc, and the card, the MCP
     instructions and the tool descriptions say so and leave `context` for examples, the body and uses. Decision in
     `decisions.md`, MCP server, Hits.
+19. Fixes after the `tasks` round (see "From the tasks round"), on branch `tasks-fixes`, one commit each: the MCP
+    server reopens a moved or deleted `alang.db` (E0514 for a write that fails on a moved file); the card names
+    `\u{D}` for `\r`; type hits in `list` and `search` carry a one-line `signature`; the doc lines of `read_text` and
+    `read_line` state their decoding; a dangling link is `NotFound` on both hosts; a lexer error in a submit names its
+    definition. Also `scripts/playground-round.sh`, which runs a playground round headless (see Working conventions).
+    289 tests. The plan of phase `statements` (`docs/plans/statements.md`, Opus, T1 to T15) was committed on the same
+    branch.
 
-**Next:** `logstat-fixes` is merged into `main` (2026-11-13). The `tasks` playground round, from an empty codebase,
+**Next (2026-11-14, overnight run):** build `std-net` from `docs/plans/std-net.md` on branch `std-net` (fresh Opus
+agent), verify, run its playground round with `scripts/playground-round.sh` (plan section 7: adapt the setup, since
+the script starts from an empty directory and no user is present), analyze it (fresh Opus agent), fix, merge into
+`main`. Then `statements` from `docs/plans/statements.md`, the same way (its section with the round prompt; mind the
+addendum at the end). Then the roadmap rows that remain (`fn-types`, `const`, `generics`, `extern-fn`; a new row 9
+`records` from the statements plan), each planned by a fresh Opus agent first (no Fable planners until the weekly
+reset, Sunday 2026-11-15 21:00 local; the Fable advisor is fine). The user, before going to sleep on 2026-11-14:
+continue with the remaining items of the to-do list, never push, and shut the PC down when everything is finished.
+
+**Earlier next steps (kept for reference):** `logstat-fixes` is merged into `main` (2026-11-13). The `tasks` playground round, from an empty codebase,
 was started on 2026-11-14: prompt, checks and the steps after it are in `docs/plans/tasks-round.md`. When the user
 reports it done, analyze it (step 1 there), fix, then build `std-net` from `docs/plans/std-net.md` (planned by Opus
 on 2026-11-14; do not switch branches in this repo while a playground round runs, since the playground runs alang
@@ -146,6 +163,11 @@ and need their form decided.
   deleting data or settings outside the repo.
 - Usage limits: pause new agents at 95% of the 5-hour limit, stop at 98% of the weekly limit and of the Fable weekly
   limit (the user reports the Fable figure; `~/.claude/usage/latest.json` has the others).
+- Playground rounds run headless (the user asked for it, 2026-11-14): `scripts/playground-round.sh <name> <commit>
+  <prompt-file> [model]` puts an empty playground, a worktree of the commit and the results under
+  `~/coding_projects/alang-rounds/<name>/`; prompts live in `~/coding_projects/alang-rounds/prompts/`. Never touch the
+  user's `~/coding_projects/alang-playground`. Check `instructions=sent` in `done.txt`; a fresh Opus agent analyzes the
+  transcript; remove the worktree afterwards (`git worktree remove --force <name>/wt`).
 
 **Decisions awaiting the user's review.** All are recorded in `decisions.md` and were reported, but not explicitly
 confirmed. Do not build on them as if settled; raise them if a new phase depends on one.
@@ -237,6 +259,19 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   `signature` field on function hits only, the `search_type` line cut before its doc, rather than the whole line in
   place of `doc` or a form without `fn <name>`; types get none; `search_type` keeps its shape; search does not read
   the signature. In `decisions.md`, MCP server, Hits.
+- Fixes after the `tasks` round (item 19, 2026-11-14; the brief was the main session's, the details the implementer's):
+  types now get a `signature` too (`type std.fs.Error, variant: NotFound | ...`, cases joined by ` | `, the `where`
+  as written); the MCP server checks the database file's identity before each call and reopens it (history in the
+  moved file stays there), with the new code E0514 only when a write fails on a file that really moved; only `\r`
+  on the card, the other C escapes left to E0005's fix; a dangling link is `NotFound` for reading and writing on both
+  hosts and no target is created (POSIX would create it, but Deno cannot resolve a link without the read
+  permission), `create_directory` over one is `Other`, `remove` removes the link; a lexer error in an add names the
+  definition from its first line. In `decisions.md`: MCP server (Hits, the moved database), Database (Which text
+  failed), Files (Links).
+- The overnight run (2026-11-14): the main session merged `tasks-fixes` into `main` itself, and the plan of
+  `statements` (T1 to T15, all taken as recommended) will be built without the user's review. Its T3 makes a `let`
+  of type `Unit` an error (E0235): the user's playground export `tasks.alang` has two such lines and is refused on its
+  next acceptance until they change (T5 lets the codebase fix them on the next submit).
 
 ## Database phase: open points (2026-11-12)
 
@@ -764,6 +799,81 @@ Left for later:
 - **Cheaper recovery after a rejected submit.** The resend of all 13 definitions after one failing example cost about
   25% of the round's output tokens. A way to resend only the failing definitions (or to keep the accepted part of a
   transaction) would cut it.
+
+## From the tasks round (2026-11-14)
+
+The playground round after `logstat-fixes` (`docs/plans/tasks-round.md`): a fresh Opus session wrote a to-do list,
+`tasks`, through the MCP tools from an empty codebase, without the advisor. A fresh Opus agent analyzed it; its files
+(Python reference written from the prompt, an 88-case runner with results on Deno and Node.js, the call table) are in
+`~/coding_projects/alang-rounds/2026-11-14-tasks-manual/analysis/`.
+
+- **The card alone was enough.** `list("")` was empty, so there was nothing to copy. `main` with
+  `Result<Unit, String>`, the effects in table order and the card's `else return Err(...)` idiom were right the first
+  time; the cases of `std.fs.Error` came from one `context` call. No diagnostic about `main`, effects or files.
+- **std `context` calls: 2 (logstat round: 21)**, both only to learn a type's cases or fields (`std.fs.Error`,
+  `std.string.Cut`). Signatures in function hits worked: 25 std functions called, every parameter name right.
+- **`search` and `search_type` unused** for the third round in a row; discovery was eight module `list` calls (21 KB).
+- **Correct.** All specified behavior matches the reference (81 of 88 cases agree; the rest are choices the prompt
+  leaves open, plus the two alang issues below). Alignment right for 9, 10, 99 and 100 tasks; the file stays
+  byte-identical after a malformed line for every command; no trap in 88 cases.
+- **Effort.** 26 tool calls (alang 16: `card` 1, `list` 10, `context` 2, `submit` 3; Bash 7, Write 2, ToolSearch 1),
+  21 definitions with 61 examples, 49k output tokens (35.6k without the incident below), 9 min 23 s (about 4 min 43 s
+  without it). The first submit was rejected with E0005 for `\r` in an example; the fix helped, and the resend cost 18%
+  of the output tokens.
+- **The incident.** The user trashed the fresh `alang.db` 19 s after the MCP reconnect, while the server held it open.
+  The server kept answering queries from the moved file and failed every write as "internal error". The model
+  diagnosed it with 4 Bash calls, wrote two memory files into the playground's Claude memory
+  (`~/.claude/projects/-home-josua-coding-projects-alang-playground/memory/alang-readonly-db.md` and its
+  `MEMORY.md`), and waited for a reconnect. Those files load in every later playground session; removing them is the
+  user's call. Automated rounds (`scripts/playground-round.sh`) do not see them.
+- **Correction to the plan:** no `export.bak` exists; the old export files went to the Trash.
+- **Two alang issues the reference found:** a file with bytes that are not UTF-8 is read with U+FFFD and silently
+  rewritten (the doc line of `read_text` did not say so), and a dangling link gave `Other` ("Too many levels of
+  symbolic links") on Deno but `NotFound` on Node.js.
+- **The model's report** said `add write   the report` joined the spaces; the shell did that before the program ran.
+- **Still forced by the language:** two dummy `Unit` bindings, `std.string.join(parts: rest, separator: "")` to take
+  the one item out of a list, updating one task through `std.list.enumerate` with an index test, and the fourth
+  four-arm `match` on `std.fs.Error` (`tasks.file_message`; `std.fs.describe` in `std-net` removes it, and after N3 it
+  is E0213 in the user's playground export).
+
+What item 19 changed (`tasks-fixes`): the MCP server reopens a moved or deleted `alang.db` (E0514 when a write fails
+on a moved file); the card names `\u{D}` for `\r`; type hits in `list` and `search` carry a one-line `signature`
+(`type std.fs.Error, variant: NotFound | ...`); the doc lines of `read_text` and `read_line` state their decoding; a
+dangling link is `NotFound` on both hosts (writing through one creates no target, since Deno cannot resolve a link
+without the read permission); a lexer error in a submit names its definition.
+
+**Automated rerun** (the first round of `scripts/playground-round.sh`: headless Opus 5.5, no advisor,
+`--restricted`, the same prompt, against `9d88f38` on `tasks-fixes`; folder
+`~/coding_projects/alang-rounds/2026-11-14-tasks-auto/`, analysis by a fresh Opus agent):
+
+- **First submit accepted**, no diagnostic: 16 definitions, 41 examples, 24 tool calls (`card` 1, `list` 10,
+  `submit` 1, Bash 11, Read 1), 14.2k output tokens, 2 min 21 s, $0.68.
+- **std `context` calls: 0.** The four cases of `std.fs.Error` came from the new type signature in the hit.
+- **`search` and `search_type` unused** for the fourth round; ten module `list` calls (22 KB). With a std this small,
+  browsing is rational.
+- **Correct** as the manual round: 81 of 88 cases agree with the reference (wording of file messages, the documented
+  dangling-link rule, the known U+FFFD rewrite); Deno and Node.js now agree on all 88 (manual program rerun on
+  `9d88f38`: 88 too, the dangling-link fix).
+- **Not exercised:** the `\r` card line (no CR example this time, so the accepted first submit is not to its credit),
+  lexer naming, the database reopen.
+- **Harness flaw, fixed:** under `--restricted` the round's `CLAUDE.md` never reached the model (no "do not read the
+  repo" rule, no `search` nudge, no allowed-command list; one Bash call with `rm` and a shell function was denied).
+  The script now passes it with `--append-system-prompt` and records `instructions=sent` in `done.txt`.
+- **Same idiom twice:** both sessions found the first malformed line with a helper plus an identity `filter_map`;
+  `std.list.find_index` added to the `statements` plan (T15).
+- One run per condition: run-to-run variance (the missing CR example) drives part of the difference to the manual
+  round, along with no user, no CLAUDE.md, no memory files and a shorter system prompt.
+
+Left for later:
+
+- **Cheaper recovery from a mechanical rejection.** 21 definitions resent to change two characters. Either submit
+  accepts the C escapes and stores `\u{D}`, reported under `fixed` as own-module names are (by position in the lexer,
+  which avoids the `\\r` trap of text fixes), or a submit keeps its accepted part. No phase covers it.
+- **Invalid UTF-8 as an error.** A program cannot tell a decoded U+FFFD from a real one; N3 in `std-net` reopens
+  `std.fs.Error` and would be the place. A language decision; not taken.
+- **`std.list.set` (or update) and a record-update form.** No phase yet; the `statements` planner judges them.
+- **Writing to a real link loop from a write-only program** is `NotFound` on Deno and `Other` on Node.js; the one
+  host difference left in `std.fs`.
 
 ## Spec observations
 
