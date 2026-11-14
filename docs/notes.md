@@ -304,7 +304,7 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   redirect to a blocked port stays a host difference (Node.js `Failed`, Deno follows it), documented instead of
   following redirects by hand; 204, 205 and 304 responses get content `""`; the request header check shares
   `checkHeader` with the server, its message naming a request or a response header; `ServeError` keeps
-  `std.text.show`. In `decisions.md`: Files (Error type, `create_text`, `create_directory`, `describe`, Links,
+  `std.text.show` (until the round's fixes, next bullet). In `decisions.md`: Files (Error type, `create_text`, `create_directory`, `describe`, Links,
   `print`, Waiting, Synchronous, Left out) and HTTP (`std.http`).
 - Fixes after the std-net round (2026-11-14; the brief was the main session's, the details the implementer's):
   `alang run` passes SIGTERM on only if the program still runs 500 ms later (one timer at a time, armed again after
@@ -1040,8 +1040,9 @@ Left for later:
   server printed its line before `serve`, also when the port was taken); low priority.
 - **L6, `invalid URL` for a valid URL on a blocked port.** The text is decided (N4, N8); the `serve` doc line now
   warns instead.
-- **The size of `list("std.http")`,** about 4.2 KB with long doc lines; it grows with every std function in the
-  module, and the round read it whole.
+- **The size of `list("std.http")`,** about 4.2 KB with long doc lines at `7700807`, and larger since the
+  `serve` doc sentence and `describe_serve_error`; it grows with every std function in the module, and the round
+  read it whole.
 - **The runtime's own status text** (`The server answered with status 600, outside 200 to 599.`) starts in upper
   case and ends with a period, unlike the texts of `describe` and the new closed-connection text; the plan fixed it
   verbatim, so it stays until a std phase revisits the texts.

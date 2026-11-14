@@ -1376,7 +1376,8 @@ const CLOSED_UNANSWERED = /connection closed before message completed|other side
 
 // How Deno starts a failure of sending: `error sending request from
 // 127.0.0.1:55278 for http://... (127.0.0.1:35681): `, an ephemeral port
-// first (older releases: `error sending request for url (http://...): `).
+// first. The pattern also takes `error sending request for url (http://...): `,
+// a form older releases are said to use (not observed here).
 // The rest of its message stays.
 const DENO_SEND_PREFIX = /^error sending request (?:from \S+ )?for (?:url \(\S+\)|\S+(?: \(\S+\))?): /;
 
