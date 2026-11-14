@@ -716,6 +716,61 @@ Deno.test("check: a propagation statement takes a Result or Option whose content
   assertEquals(last.message.startsWith("This block ends with `… else return` and has no value"), true);
 });
 
+// A pure step whose `Ok` holds an `Int`, as in the tickets round.
+const STEP = [
+  "fn m.step",
+  '  doc: "One step."',
+  "  in:",
+  "    n: Int",
+  "  out: Result<Int, String>",
+  "  effects: none",
+  "  requires: none",
+  "  ensures: none",
+  "  examples:",
+  "    step(n: 1) == Ok(2)",
+  '    step(n: 0) == Err("zero")',
+  "  body:",
+  "    if n == 0 then",
+  '      return Err("zero")',
+  "    end if",
+  "    return Ok(n + 1)",
+  "end fn m.step",
+].join("\n");
+
+// A program with a diagnostic's `expected` in place of the line it quotes,
+// at that line's indentation, and `…` filled with the line's own else value.
+const withExpected = (source: string, d: Diagnostic, elseValue: string): string => {
+  const lines = source.split("\n");
+  const i = lines.findIndex((l) => l.trim() === d.at);
+  const indent = lines[i].slice(0, lines[i].length - lines[i].trimStart().length);
+  const replaced = d.expected!.replace("…", elseValue).split("\n").map((l) => indent + l);
+  return [...lines.slice(0, i), ...replaced, ...lines.slice(i + 1)].join("\n");
+};
+
+Deno.test("check: a propagation statement with a content to bind ending a value block is one E0217 (5.6)", () => {
+  // The shape of the tickets round: the statement as the value of a match arm.
+  const arm = fn(
+    "let value: Int = match o\n  case Some(n) then\n    step(n: n) else return Err(error)\n  case None then\n    0\nend match\nreturn Ok(value)",
+    { params: ["o: Option<Int>"], out: "Result<Int, String>", extra: STEP },
+  );
+  const d = one(arm, "E0217");
+  assertEquals(d.at, "step(n: n) else return Err(error)");
+  assertEquals(
+    d.message,
+    "The `Int` inside `Ok` is discarded, and `… else return` has no value: bind it, `let name: Int = … else return …`, and end the block with `name`.",
+  );
+  assertEquals(d.expected, "let name: Int = step(n: n) else return …\nname");
+  clean(withExpected(arm, d, "Err(error)"));
+  // An `Option` in an `if` branch.
+  const branch = fn(
+    'let n: Int = if w > 0 then\n  std.int.parse(text: "1") else return Err("no")\nelse\n  1\nend if\nreturn Ok(n)',
+    { params: ["w: Int"], out: "Result<Int, String>" },
+  );
+  const option = one(branch, "E0217");
+  assertEquals(option.message.startsWith("The `Int` inside `Some` is discarded, and `… else return` has no"), true);
+  clean(withExpected(branch, option, 'Err("no")'));
+});
+
 Deno.test("check: a let binds no Unit (E0235)", () => {
   const write = 'std.fs.write_text(path: "a", text: "b") else return Err(std.fs.describe(error: error))';
   const io = { out: "Result<Unit, String>", effects: "fs.write" };

@@ -544,10 +544,14 @@ class DefChecker {
           if (this.let(s, scope)) unitLets.push(s);
           result = this.noValue(s, last, mode, "`let`");
           break;
-        case "propagate":
-          this.propagate(s, scope);
-          result = this.noValue(s, last, mode, "`… else return`");
+        case "propagate": {
+          // At the end of a value block, a content to bind is one cause: the
+          // value the block lacks is that content (5.6).
+          const ends = last && !mode.discard && mode.expected !== null && !fits(UNIT, mode.expected);
+          if (this.propagate(s, scope, ends) && ends) result = ERROR;
+          else result = this.noValue(s, last, mode, "`… else return`");
           break;
+        }
         case "destructure":
           this.destructure(s, scope);
           result = this.noValue(s, last, mode, "`let`");
@@ -617,24 +621,32 @@ class DefChecker {
 
   // `expression else return value` (T1): a `Result` or an `Option` whose
   // content is `Unit`, propagated as by `let ... else` but with nothing to
-  // bind. `error` is the `Err` value, or `Unit` for `None`.
-  private propagate(s: Extract<Stmt, { kind: "propagate" }>, scope: Scope): void {
+  // bind. `error` is the `Err` value, or `Unit` for `None`. When the
+  // statement `ends` a block that needs a value, a content to bind gets one
+  // E0217 whose `expected` also ends the block with the bound name, since
+  // the `let` alone would have no value either (E0204); returns whether
+  // E0217 was reported.
+  private propagate(s: Extract<Stmt, { kind: "propagate" }>, scope: Scope, ends: boolean): boolean {
     const v = this.expr(s.value, scope, null);
     let error: Type = ERROR;
+    let reported = false;
     if (isCon(v, "Option") || isCon(v, "Result")) {
       const option = isCon(v, "Option");
       error = option ? UNIT : v.args[1];
       const content = v.args[0];
       if (!isBottom(content) && !containsError(content) && !typeEquals(content, UNIT)) {
         const shown = this.show(content);
+        const inside = `The \`${shown}\` inside \`${option ? "Some" : "Ok"}\` is discarded`;
+        const bound = `let name: ${shown} = ${firstLine(printExpr(s.value, ""))} else return …`;
         this.report(
           "E0217",
           firstLine(printStmts([s], "")),
-          `The \`${shown}\` inside \`${
-            option ? "Some" : "Ok"
-          }\` is discarded; bind it: \`let name: ${shown} = … else return …\`.`,
-          { expected: `let name: ${shown} = ${firstLine(printExpr(s.value, ""))} else return …` },
+          ends
+            ? `${inside}, and \`… else return\` has no value: bind it, \`let name: ${shown} = … else return …\`, and end the block with \`name\`.`
+            : `${inside}; bind it: \`let name: ${shown} = … else return …\`.`,
+          { expected: ends ? `${bound}\nname` : bound },
         );
+        reported = true;
       }
     } else if (!isBottom(v) && !containsError(v)) {
       this.report(
@@ -648,6 +660,7 @@ class DefChecker {
     const elseScope = scope.child();
     elseScope.define("error", error);
     this.ret(s.elseReturn, elseScope);
+    return reported;
   }
 
   // `let [a, b]: List<T> = list else return value` (T11): binds the items of
