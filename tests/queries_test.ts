@@ -257,7 +257,7 @@ Deno.test("queries: std names are read like definitions, without a hash, and can
   const typeLine = (name: string) => stdHits.find((h) => h.name === name)!.signature;
   assertEquals(
     typeLine("std.fs.Error"),
-    "type std.fs.Error, variant: NotFound | PermissionDenied | IsADirectory | Other: String",
+    "type std.fs.Error, variant: NotFound | PermissionDenied | IsADirectory | AlreadyExists | Other: String",
   );
   assertEquals(typeLine("std.string.Cut"), "type std.string.Cut, record: before: String, after: String");
   // Own-module types in full; the where as written.
@@ -304,6 +304,8 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
     ["std.fs.Error", true],
     ["std.fs.Kind", true],
     ["std.fs.append_text", true],
+    ["std.fs.create_directory", true],
+    ["std.fs.create_text", true],
     ["std.fs.kind", true],
     ["std.fs.read_text", true],
     ["std.fs.remove", true],

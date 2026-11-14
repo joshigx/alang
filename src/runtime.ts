@@ -486,7 +486,7 @@ export function std$env$get(name: string): Option<string> {
 
 type DenoFs = {
   readTextFileSync(path: string): string;
-  writeTextFileSync(path: string, text: string, options?: { append: boolean }): void;
+  writeTextFileSync(path: string, text: string, options?: { append?: boolean; createNew?: boolean }): void;
   readDirSync(path: string): Iterable<{ readonly name: string }>;
   statSync(path: string): { readonly isDirectory: boolean };
   lstatSync(path: string): { readonly isSymlink: boolean };
@@ -496,7 +496,7 @@ type DenoFs = {
 
 type NodeFs = {
   readFileSync(path: string, encoding: "utf8"): string;
-  writeFileSync(path: string, text: string): void;
+  writeFileSync(path: string, text: string, options?: { flag: string }): void;
   appendFileSync(path: string, text: string): void;
   readdirSync(path: string): string[];
   statSync(path: string): { isDirectory(): boolean };
@@ -512,6 +512,7 @@ export type std$fs$Error =
   | { readonly tag: "NotFound" }
   | { readonly tag: "PermissionDenied" }
   | { readonly tag: "IsADirectory" }
+  | { readonly tag: "AlreadyExists" }
   | { readonly tag: "Other"; readonly value: string };
 
 export type std$fs$Kind = { readonly tag: "File" } | { readonly tag: "Directory" };
@@ -528,10 +529,13 @@ const NEEDS = {
 // permission cannot even look at it, so it can neither follow the link nor
 // tell it from a loop. Hence one rule for both: reading, writing and
 // appending through a dangling link are `NotFound`, as are `kind` and
-// `list_directory`; `create_directory` is `Other`, as for a file in the way
-// (`mkdir -p` says "File exists"); `remove` removes the link. A real loop is
-// `Other`, except that a program with `fs.write` and without `fs.read` gets
-// `NotFound` when writing on Deno, which cannot tell the two apart.
+// `list_directory`. Creating finds something there, `AlreadyExists`, as for
+// a file: `create_text` a link at the path (it never follows one), and
+// `create_directory` a link at the path or on the way (`mkdir -p` says "File
+// exists"); `create_text` through a link on the way finds no parent,
+// `NotFound`. `remove` removes the link. A real loop is `Other`, except that
+// a program with `fs.write` and without `fs.read` gets `NotFound` when
+// writing on Deno, which cannot tell the two apart.
 
 const codeOf = (e: unknown): string | undefined => (e as { code?: string } | null)?.code;
 
@@ -603,6 +607,9 @@ function onFiles<T>(
     if (err.code === "ENOENT" || path === "") return Err<std$fs$Error>({ tag: "NotFound" });
     // Deno's answer for a dangling link; a real loop stays `Other`.
     if (err.code === "ELOOP" && throughDanglingLink(path) !== false) return Err<std$fs$Error>({ tag: "NotFound" });
+    // Something is where a function creates one: a file, a directory or a
+    // link. Both hosts say EEXIST; every fs function maps it alike.
+    if (err.code === "EEXIST") return Err<std$fs$Error>({ tag: "AlreadyExists" });
     if (err.code === "EACCES" || err.code === "EPERM") return Err<std$fs$Error>({ tag: "PermissionDenied" });
     if (err.code === "EISDIR") return Err<std$fs$Error>({ tag: "IsADirectory" });
     return Err<std$fs$Error>({ tag: "Other", value: String(err.message ?? e) });
@@ -646,6 +653,19 @@ export function std$fs$append_text(path: string, text: string): Result<Unit, std
   });
 }
 
+// Exclusive create (O_CREAT | O_EXCL): anything at the path, a link too,
+// even one whose target is missing, fails with EEXIST and stays as it is.
+// Testing and creating are one step, so no other program comes between.
+export function std$fs$create_text(path: string, text: string): Result<Unit, std$fs$Error> {
+  return onFiles("std.fs.create_text", "fs.write", path, (deno) => {
+    deno.writeTextFileSync(path, text, { createNew: true });
+    return Unit;
+  }, (fs) => {
+    fs.writeFileSync(path, text, { flag: "wx" });
+    return Unit;
+  });
+}
+
 // Sorted, so that every host gives the same order (3.7); hidden entries
 // included, `.` and `..` not.
 export function std$fs$list_directory(path: string): Result<readonly string[], std$fs$Error> {
@@ -671,8 +691,8 @@ export function std$fs$kind(path: string): Result<std$fs$Kind, std$fs$Error> {
   );
 }
 
-// A dangling link at the path or on the way is in the way, as a file is:
-// Deno says EEXIST, Node.js ENOENT.
+// A file at the path is `AlreadyExists`, and so is a dangling link at the
+// path or on the way: Deno says EEXIST, Node.js ENOENT for the link.
 export function std$fs$create_directory(path: string): Result<Unit, std$fs$Error> {
   return onFiles("std.fs.create_directory", "fs.write", path, (deno) => {
     deno.mkdirSync(path, { recursive: true });

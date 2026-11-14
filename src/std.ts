@@ -31,6 +31,7 @@ export const STD_TYPES_SOURCE = `type std.fs.Error
     NotFound
     PermissionDenied
     IsADirectory
+    AlreadyExists
     Other: String
   where: none
 end type std.fs.Error
@@ -168,6 +169,14 @@ export const STD: readonly Signature[] = [
     ["fs.write"],
   ),
   sig(
+    "std.fs.create_text",
+    "Creates a file holding the text as UTF-8, only if nothing is at the path yet, so it never overwrites: `Err(AlreadyExists)` if a file, a directory or a link (even one whose target is missing) is there, which stays unchanged. Testing and creating are one step, so of two programs creating the same path exactly one succeeds.",
+    [],
+    [["path", STRING], ["text", STRING]],
+    result(UNIT, con("std.fs.Error")),
+    ["fs.write"],
+  ),
+  sig(
     "std.fs.list_directory",
     "The names of a directory's entries, in the order of `std.string.compare`; names, not paths.",
     [],
@@ -185,7 +194,7 @@ export const STD: readonly Signature[] = [
   ),
   sig(
     "std.fs.create_directory",
-    "Creates a directory and its missing parents; `Ok` if it already exists.",
+    "Creates a directory and its missing parents; `Ok` if it already exists, `Err(AlreadyExists)` if a file is there, or a link whose target is missing is there or on the way.",
     [],
     [["path", STRING]],
     result(UNIT, con("std.fs.Error")),

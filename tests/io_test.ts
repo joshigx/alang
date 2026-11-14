@@ -13,6 +13,7 @@ import {
   std$env$get,
   std$fs$append_text,
   std$fs$create_directory,
+  std$fs$create_text,
   type std$fs$Error,
   std$fs$kind,
   std$fs$list_directory,
@@ -48,6 +49,7 @@ const MODES = LINUX && await (async () => {
 const NOT_FOUND = Err<std$fs$Error>({ tag: "NotFound" });
 const DENIED = Err<std$fs$Error>({ tag: "PermissionDenied" });
 const IS_A_DIRECTORY = Err<std$fs$Error>({ tag: "IsADirectory" });
+const ALREADY_EXISTS = Err<std$fs$Error>({ tag: "AlreadyExists" });
 
 // The tag of an `Other`, whose host message differs between runtimes.
 function other(r: { tag: string; value?: unknown }): string {
@@ -132,6 +134,33 @@ Deno.test("io: append_text adds to the end, creating a missing file", async () =
   });
 });
 
+Deno.test("io: create_text creates a file only if nothing is at the path", async () => {
+  await inTemp(async (dir) => {
+    const file = join(dir, "a.txt");
+    assertEquals(std$fs$create_text(file, "ä\n😀"), Ok(Unit));
+    assertEquals(await Deno.readFile(file), new TextEncoder().encode("ä\n😀"));
+    // Never overwrites: the second call finds the file, which stays.
+    assertEquals(std$fs$create_text(file, "again"), ALREADY_EXISTS);
+    assertEquals(await Deno.readTextFile(file), "ä\n😀");
+    assertEquals(std$fs$create_text(dir, "x"), ALREADY_EXISTS);
+    assertEquals(std$fs$create_text(join(dir, "missing", "a.txt"), "x"), NOT_FOUND);
+    assertEquals(std$fs$create_text("", "x"), NOT_FOUND);
+    assertEquals(other(std$fs$create_text(join(file, "x"), "x")), "Other");
+    if (MODES) await withMode(dir, 0o555, () => assertEquals(std$fs$create_text(join(dir, "b.txt"), "x"), DENIED));
+    if (LINUX) {
+      // A link is something at the path, followed or not; it stays.
+      await Deno.symlink(file, join(dir, "link"));
+      await Deno.symlink(join(dir, "nothing"), join(dir, "broken"));
+      for (const link of ["link", "broken"]) {
+        assertEquals(std$fs$create_text(join(dir, link), "x"), ALREADY_EXISTS, link);
+        assert_((await Deno.lstat(join(dir, link))).isSymlink, link);
+      }
+      assertEquals(await Deno.readTextFile(file), "ä\n😀");
+      assertEquals(std$fs$list_directory(dir), Ok(["a.txt", "broken", "link"]));
+    }
+  });
+});
+
 Deno.test("io: list_directory gives the names in the order of std.string.compare", async () => {
   await inTemp(async (dir) => {
     // Created out of order. U+FF5A sorts before the emoji by scalar value,
@@ -178,7 +207,8 @@ Deno.test("io: create_directory creates the missing parents and accepts an exist
     assert_((await Deno.stat(deep)).isDirectory);
     assertEquals(std$fs$create_directory(deep), Ok(Unit));
     await Deno.writeTextFile(join(dir, "file"), "");
-    assertEquals(other(std$fs$create_directory(join(dir, "file"))), "Other");
+    // A file at the path is already there; a file as a parent is in the way.
+    assertEquals(std$fs$create_directory(join(dir, "file")), ALREADY_EXISTS);
     assertEquals(other(std$fs$create_directory(join(dir, "file", "sub"))), "Other");
     assertEquals(std$fs$create_directory(""), NOT_FOUND);
     if (MODES) await withMode(dir, 0o555, () => assertEquals(std$fs$create_directory(join(dir, "new")), DENIED));
@@ -213,7 +243,7 @@ Deno.test("io: remove takes a file, a link or an empty directory", async () => {
 // A link whose target is missing names nothing, alike on every host and
 // with every permission (the tasks round, 2026-11-14: on Deno it was `Other`,
 // "Too many levels of symbolic links"; on Node.js a write created the target).
-Deno.test("io: a dangling link is NotFound, but in the way of create_directory; remove takes the link", async () => {
+Deno.test("io: a dangling link is NotFound, but already there for creating; remove takes the link", async () => {
   if (!LINUX) return;
   await inTemp(async (dir) => {
     const at = (name: string) => join(dir, name);
@@ -229,10 +259,15 @@ Deno.test("io: a dangling link is NotFound, but in the way of create_directory; 
       assertEquals(std$fs$append_text(path, "x"), NOT_FOUND, path);
       assertEquals(std$fs$kind(path), NOT_FOUND, path);
       assertEquals(std$fs$list_directory(path), NOT_FOUND, path);
-      // As a file in the way would be (`mkdir -p` says "File exists").
-      assertEquals(other(std$fs$create_directory(path)), "Other", path);
+      // At the path or on the way, as `mkdir -p` says "File exists".
+      assertEquals(std$fs$create_directory(path), ALREADY_EXISTS, path);
     }
-    assertEquals(other(std$fs$create_directory(join(at("nowhere"), "sub"))), "Other");
+    assertEquals(std$fs$create_directory(join(at("nowhere"), "sub")), ALREADY_EXISTS);
+    // create_text never follows a link: one at the path is there; through
+    // one on the way there is no parent.
+    assertEquals(std$fs$create_text(at("dangling"), "x"), ALREADY_EXISTS);
+    assertEquals(std$fs$create_text(at("chain"), "x"), ALREADY_EXISTS);
+    assertEquals(std$fs$create_text(join(at("nowhere"), "a.txt"), "x"), NOT_FOUND);
     assertEquals(std$fs$list_directory(dir), Ok(["chain", "dangling", "loop", "loop2", "nowhere"]));
     // A loop is not missing: Other, whatever the operation.
     assertEquals(other(std$fs$read_text(at("loop"))), "Other");
@@ -351,6 +386,7 @@ const NEEDING: [string, string, string, string][] = [
   ["std.fs.read_text", "fs.read", "Result<String, std.fs.Error>", 'std.fs.read_text(path: "a.txt")'],
   ["std.fs.write_text", "fs.write", UNIT_RESULT, 'std.fs.write_text(path: "a.txt", text: "x")'],
   ["std.fs.append_text", "fs.write", UNIT_RESULT, 'std.fs.append_text(path: "a.txt", text: "x")'],
+  ["std.fs.create_text", "fs.write", UNIT_RESULT, 'std.fs.create_text(path: "a.txt", text: "x")'],
   ["std.fs.create_directory", "fs.write", UNIT_RESULT, 'std.fs.create_directory(path: "a")'],
   ["std.fs.remove", "fs.write", UNIT_RESULT, 'std.fs.remove(path: "a.txt")'],
   ["std.fs.list_directory", "fs.read", "Result<List<String>, std.fs.Error>", 'std.fs.list_directory(path: ".")'],
@@ -394,16 +430,19 @@ Deno.test("io: fs.write alone creates, writes, appends and removes", async () =>
     'let made: Result<Unit, std.fs.Error> = std.fs.create_directory(path: "d/e")',
     'let written: Result<Unit, std.fs.Error> = std.fs.write_text(path: "d/e/f.txt", text: "a")',
     'let appended: Result<Unit, std.fs.Error> = std.fs.append_text(path: "d/e/f.txt", text: "b")',
+    'let created: Result<Unit, std.fs.Error> = std.fs.create_text(path: "d/e/h.txt", text: "c")',
     'let spare: Result<Unit, std.fs.Error> = std.fs.write_text(path: "d/e/g.txt", text: "x")',
     'let removed: Result<Unit, std.fs.Error> = std.fs.remove(path: "d/e/g.txt")',
-    "let all: List<Result<Unit, std.fs.Error>> = std.list.append(list: std.list.append(list: std.list.append(list: std.list.append(list: std.list.append(list: std.list.empty<Result<Unit, std.fs.Error>>(), item: made), item: written), item: appended), item: spare), item: removed)",
+    "let all: List<Result<Unit, std.fs.Error>> = [made, written, appended, created, spare, removed]",
     "std.console.print_line(text: std.text.show(value: all))",
     "return Unit",
   ];
   const r = await runIn(await program(mainWith("writer", "fs.write, console", body)));
-  assertEquals([r.code, r.stdout, r.stderr], [0, "[Ok(Unit), Ok(Unit), Ok(Unit), Ok(Unit), Ok(Unit)]\n", ""]);
+  assertEquals([r.code, r.stdout, r.stderr], [0, "[Ok(Unit), Ok(Unit), Ok(Unit), Ok(Unit), Ok(Unit), Ok(Unit)]\n", ""]);
   assertEquals(await Deno.readTextFile(join(r.cwd, "d", "e", "f.txt")), "ab");
-  assertEquals((await Array.fromAsync(Deno.readDir(join(r.cwd, "d", "e")))).map((e) => e.name), ["f.txt"]);
+  assertEquals(await Deno.readTextFile(join(r.cwd, "d", "e", "h.txt")), "c");
+  const names = (await Array.fromAsync(Deno.readDir(join(r.cwd, "d", "e")))).map((e) => e.name).sort();
+  assertEquals(names, ["f.txt", "h.txt"]);
   await Deno.remove(r.cwd, { recursive: true });
 });
 
@@ -507,6 +546,9 @@ const LINK_CALLS = [
   'std.fs.read_text(path: "loop")',
   'std.fs.write_text(path: "loop", text: "x")',
   'std.fs.write_text(path: "good", text: "through the link")',
+  'std.fs.create_text(path: "dangling", text: "x")',
+  'std.fs.create_text(path: "nowhere/a.txt", text: "x")',
+  'std.fs.create_text(path: "good", text: "x")',
   'std.fs.remove(path: "dangling")',
 ];
 const linksMain = (name: string, effects: string, calls: string[]) =>
@@ -520,13 +562,16 @@ const LINK_RESULTS = [
   "Err(NotFound)",
   "Err(NotFound)",
   "Err(NotFound)",
-  "Err(Other)",
+  "Err(AlreadyExists)",
   "Err(NotFound)",
   "Err(NotFound)",
-  "Err(Other)",
+  "Err(AlreadyExists)",
   "Err(Other)",
   "Err(Other)",
   "Ok(Unit)",
+  "Err(AlreadyExists)",
+  "Err(NotFound)",
+  "Err(AlreadyExists)",
   "Ok(Unit)",
 ];
 
@@ -535,7 +580,7 @@ for (const host of ["deno", "node"] as const) {
     if (!LINUX || (host === "node" && !(await hasNode()))) return;
     // Without fs.read only writing is possible: those calls.
     const writing = LINK_CALLS.flatMap((call, i) =>
-      /write_text|append_text|create_directory|remove/.test(call) ? [i] : []
+      /write_text|append_text|create_text|create_directory|remove/.test(call) ? [i] : []
     );
     const built = await program(
       linksMain("links", "fs.read, fs.write, console", LINK_CALLS),

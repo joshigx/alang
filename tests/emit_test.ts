@@ -320,6 +320,8 @@ fn app.main
         "port.txt is unreadable"
       case Err(config.FileUnreadable(std.fs.IsADirectory)) then
         "port.txt is unreadable"
+      case Err(config.FileUnreadable(std.fs.AlreadyExists)) then
+        "port.txt is unreadable"
       case Err(config.FileUnreadable(std.fs.Other(reason))) then
         "port.txt is unreadable"
       case Err(config.InvalidPort(reason)) then

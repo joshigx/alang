@@ -344,7 +344,13 @@ Deno.test("check: a local built from a case is matched on every case, also of a 
   clean(fn("let s: Shape = Dot\n" + match("s", ["Circle(v)", "Square(v)", "Dot"]), { extra: SHAPE }));
   clean(fn(
     'let e: std.fs.Error = std.fs.Other("disk")\n' +
-      match("e", ["std.fs.NotFound", "std.fs.PermissionDenied", "std.fs.IsADirectory", "std.fs.Other(why)"]),
+      match("e", [
+        "std.fs.NotFound",
+        "std.fs.PermissionDenied",
+        "std.fs.IsADirectory",
+        "std.fs.AlreadyExists",
+        "std.fs.Other(why)",
+      ]),
   ));
 });
 
@@ -873,6 +879,7 @@ const EFFECTFUL: [string, string][] = [
   ['let r: Result<String, std.fs.Error> = std.fs.read_text(path: "x")', "fs.read"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.write_text(path: "x", text: "y")', "fs.write"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.append_text(path: "x", text: "y")', "fs.write"],
+  ['let r: Result<Unit, std.fs.Error> = std.fs.create_text(path: "x", text: "y")', "fs.write"],
   ['let r: Result<List<String>, std.fs.Error> = std.fs.list_directory(path: "x")', "fs.read"],
   ['let r: Result<std.fs.Kind, std.fs.Error> = std.fs.kind(path: "x")', "fs.read"],
   ['let r: Result<Unit, std.fs.Error> = std.fs.create_directory(path: "x")', "fs.write"],
