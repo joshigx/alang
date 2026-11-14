@@ -89,7 +89,8 @@ context: the rules every definition needs and a complete accepted program. The s
 cases) and doc, enough to use it.${SPEC_LINE}
 
 An alang codebase, stored as a database of definitions (spec section 6). \
-Read and change definitions only through these tools, never by editing files. export/*.alang is the database's \
+Read and change definitions only through these tools, never by editing files; the TypeScript module an \`extern fn\` \
+names is the one file you write. export/*.alang is the database's \
 copy for Git, one file per module, kept in step in both directions without your help: every change is written there \
 at once, and what Git or a person changes there is read back before the next tool call. You never export or import \
 anything yourself. \
