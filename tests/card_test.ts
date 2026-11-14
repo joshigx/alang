@@ -155,5 +155,8 @@ Deno.test("card: it stays a card", () => {
   const r = assertThrows(() => parseExpression('"a\\rb"'), AlangError).diagnostic;
   assertEquals([r.code, r.fix], ["E0005", { replace: "\\r", with: "\\u{D}" }]);
   assert_(CARD.includes(`\`${r.fix!.replace}\` is \`${r.fix!.with}\``));
+  // G2b (the shop round): without it, a model unwrapped `Option<T>` through
+  // `std.option.map` to test for `None`.
+  assert_(CARD.includes("`option == None`"));
   assert_(!CARD.includes("${"));
 });

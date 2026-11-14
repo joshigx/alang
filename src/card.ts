@@ -38,7 +38,7 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 - \`const\`: \`doc\`, \`out: Type\`, \`body:\` ending in \`return\`, then \`end const <full name>\`. A named value for a table
   or a limit: pure, no examples, used as \`limit\` (not \`limit()\`), not a pure \`fn\` with \`in: none\`.
 - Generic: \`fn util.last<T>\`, \`type util.Pair<A, B>\`, one capital letter each, \`end fn util.last\`.
-  A \`T\` has no \`==\` (E0222).
+  A \`T\` has no \`==\` (E0222), except against literals and cases: \`option == None\`.
 - Names of the own module are short (\`Problem\`, \`fahrenheit\`, \`NotANumber\` in \`temp\`). All others are in full, std
   included, and enclosing or nested modules count as others. A case's full name is \`module.Case\`
   (\`std.fs.NotFound\`), so case names are unique per module. Built-ins are always short: \`Int Float Bool String
