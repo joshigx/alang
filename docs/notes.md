@@ -15,7 +15,11 @@ literals and pure std (item 15) were built on `list-literals` and fast-forwarded
 language card (item 16) was built on `card` and is merged into `main`. Maps, options and more std (item 17) were built
 on `std-maps` and fast-forwarded into `main` too. The fixes after its playground round (item 18) were built on
 `logstat-fixes` and merged. The fixes after the `tasks` round (item 19) were built on `tasks-fixes` and fast-forwarded
-into `main` on 2026-11-14 by the main session, unpushed (the user had authorized the overnight run).
+into `main` on 2026-11-14 by the main session, unpushed (the user had authorized the overnight run). In the overnight run of
+2026-11-14 the main session fast-forwarded six more phase branches into `main`, in this order, all unpushed:
+`std-net` (item 20), `statements` (21), `fn-types` (22), `const` (23), `generics` (24) and `extern-fn` (25); each branch
+also holds the fixes after its playground round. The plans of all of them and of row 9 (`docs/plans/records.md`) are
+committed. The phase branches are kept.
 
 **Done** (phases from CLAUDE.md, in order):
 
@@ -213,15 +217,28 @@ into `main` on 2026-11-14 by the main session, unpushed (the user had authorized
     (7.3), accepted with their examples, and section 7.12. Decisions in `decisions.md`, rows listed in the review list
     below. 480 tests after the query round's fixes. See "From extern-fn" and "From the query round".
 
-**Next (2026-11-14, overnight run, updated by the main session at ~07:20):** `std-net` (item 20), `statements`
-(item 21), `fn-types` (item 22), `const` (item 23, with R7 of `docs/plans/records.md`) and `generics` (item 24, generic
-types included) are built, their rounds analyzed and fixed, and fast-forwarded into `main` (unpushed). Next:
-`extern-fn` from `docs/plans/extern-fn.md` on branch `extern-fn` (fresh Opus agent), its round `query` (prompt in the
-plan, reference `~/coding_projects/alang-rounds/prompts/query-reference.mjs`). The user's playground MCP registration
-needs `--allow-run` once a codebase holds an extern (that plan's E11); no agent changes it. Row 9 `records` is not
-built (R1 of its plan; run its evidence round `fleet` before row 9's turn). No Fable planners until the weekly reset
-(Sunday 2026-11-15 21:00 local); the Fable advisor is fine. The user, before going to sleep on 2026-11-14: continue
-with the remaining items of the to-do list, never push, and shut the PC down when everything is finished.
+**Next (2026-11-14, end of the overnight run, ~08:20):** the roadmap of `docs/plans/list-literals.md` is done:
+rows 3 to 8 are built and merged (items 20 to 25), and row 9, `records`, was planned and deliberately not built (R1
+of its plan; its evidence round `fleet` did not fire the trigger, see "From the fleet round"); R7 of that plan (record
+names for `std.text.show`) was built with `const`. Every phase was checked by `deno task test` (480 tests), `deno
+lint`, `deno fmt --check`, an automated playground round and its analysis by a fresh Opus agent, and the cheap
+findings were fixed before the merge. Waiting for the user:
+
+1. **Review the decisions** in the list below, above all the language changes of items 20 to 25 (each listed first in
+   its bullet), all taken as the planners recommended without the user. Each phase is a branch of small commits, so a
+   decision can be reverted on its own.
+2. **Push** `main` and the phase branches if wanted (never done by an agent).
+3. **The user's playground** (`~/coding_projects/alang-playground`, untouched): its export no longer checks after N3
+   (every four-arm `match` over `std.fs.Error` is now E0213) and T3 (`let x: Unit` is E0235; the codebase fixes those
+   itself on the next submit); its MCP registration lacks `--allow-run`, which a codebase with an `extern fn` needs
+   (E0408; see item 25); restart its MCP server to pick up the new `main`.
+4. **Choose the next work.** Open candidates from the rounds' "later" lists: the whole-transaction resend after a
+   rejected submit (the largest single cost in five rounds; a database/MCP decision); percent-encoding in std (the
+   `std-net` round; the `query` round did it with an extern); `std.list.try_map` or another answer to the recurring
+   check-then-unwrap-with-a-dummy-default pattern; rounds that exercise the codes no round has reached yet (E0250,
+   E0247 to E0249, E0404, E0260, E0261, E0406 to E0408) and the stale-extern case; C6/E0405 (rejecting pure `in: none`
+   functions); the card has about 2 lines and 330 bytes left. The earlier long-term order (spec served by the MCP
+   server, the plan/build/test loop, shipping, self-hosting) still stands.
 
 **Earlier next steps (kept for reference):** `logstat-fixes` is merged into `main` (2026-11-13). The `tasks` playground round, from an empty codebase,
 was started on 2026-11-14: prompt, checks and the steps after it are in `docs/plans/tasks-round.md`. When the user
