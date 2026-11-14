@@ -33,7 +33,7 @@ Arguments for the program go after `--`: `alang db run <module>.main -- in.txt o
 
 Shell commands allowed in this session: `alang ...`, `cat`, `ls`, `printf`, `echo`, `mkdir` and `cd`, one command per call or several joined with `;`. Others (`rm`, loops such as `for`, shell functions, scripts) are refused; use the file tools instead.
 
-Redirections (`>`, `2>`) are refused too: stdout and stderr arrive together, and `echo $?` after a run gives its exit code.
+Redirections (`>`, `>>`, `2>`) are refused too: stdout and stderr arrive together, and `echo $?` after a run gives its exit code; to create or extend a file, use the file tools (Write, Edit).
 EOF
 cat >"$work/bin/alang" <<EOF
 #!/bin/sh
