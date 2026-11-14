@@ -302,6 +302,7 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
     "net.port.Port",
     "net.port.parse",
     "std.http.SendError",
+    "std.http.serve",
   ]);
   assertEquals(cb.searchText("file").map((h) => [h.name, h.hash === null]), [
     ["config.load_port", false],

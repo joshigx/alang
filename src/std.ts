@@ -236,7 +236,7 @@ export const STD: readonly Signature[] = [
 
   sig(
     "std.http.serve",
-    "Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them.",
+    "Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them. Clients built on fetch, `std.http.send` among them, refuse the ports the Fetch standard blocks, such as 6000 and 6665 to 6669: serve on another.",
     [],
     [["host", STRING], ["port", INT], [
       "handler",
