@@ -42,7 +42,7 @@ EOF
 chmod +x "$work/bin/alang"
 cat >"$base/mcp.json" <<EOF
 {"mcpServers": {"alang": {"type": "stdio", "command": "deno",
-  "args": ["run", "--allow-read", "--allow-write", "$wt/src/cli.ts", "mcp", "--dir", "$work"]}}}
+  "args": ["run", "--allow-read", "--allow-write", "--allow-run", "$wt/src/cli.ts", "mcp", "--dir", "$work"]}}}
 EOF
 session=$(python3 -I -c 'import uuid; print(uuid.uuid4())')
 echo "$session" >"$base/session.txt"

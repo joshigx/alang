@@ -21,6 +21,7 @@
 // Every command but fmt and test refuses a program that is not accepted:
 // a definition that fails its checks does not exist (5).
 
+import { dirname, resolve } from "node:path";
 import { dbMain } from "./db_cli.ts";
 import { AlangError } from "./diagnostic.ts";
 import { mcpMain } from "./mcp.ts";
@@ -60,6 +61,8 @@ async function main(args: string[]): Promise<number> {
   const source = await Deno.readTextFile(file);
   const outFlag = rest.indexOf("-o");
   const outPath = outFlag >= 0 ? rest[outFlag + 1] : defaultOutPath(file);
+  // The targets of its externs are relative to the file's directory (2.2).
+  const base = dirname(resolve(file));
 
   switch (command) {
     case "fmt": {
@@ -69,18 +72,18 @@ async function main(args: string[]): Promise<number> {
       return 0;
     }
     case "check":
-      await accept(source, outPath);
+      await accept(source, outPath, { base });
       console.log("ok");
       return 0;
     case "ts":
-      await accept(source, outPath);
+      await accept(source, outPath, { base });
       console.log(compile(source, "./runtime.ts").ts);
       return 0;
     case "build":
-      console.log((await accept(source, outPath)).built.outPath);
+      console.log((await accept(source, outPath, { base })).built.outPath);
       return 0;
     case "test": {
-      const results = await testExamples(await build(source, outPath));
+      const results = await testExamples(await build(source, outPath, { base }));
       for (const r of results) {
         const status = r.passed ? "ok  " : "FAIL";
         const why = r.passed ? "" : r.trap ? `  (trap: ${r.trap.message})` : `  (actual: ${r.actual})`;
@@ -91,7 +94,7 @@ async function main(args: string[]): Promise<number> {
       return failed === 0 ? 0 : 1;
     }
     case "run":
-      return (await run((await accept(source, outPath)).built, { args: programArgs })).code;
+      return (await run((await accept(source, outPath, { base })).built, { args: programArgs })).code;
     default:
       return usage();
   }

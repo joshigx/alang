@@ -76,6 +76,7 @@ export function emitProgram(defs: readonly Definition[], info: CheckInfo, option
   ];
   const examples: string[] = [];
   const constants: string[] = [];
+  const externs: string[] = [];
   for (const def of defs) {
     const e = new DefinitionEmitter(def, info);
     out.push(...(def.kind === "fn" ? e.fn(def) : def.kind === "const" ? e.constant(def) : e.type(def)), "");
@@ -88,6 +89,9 @@ export function emitProgram(defs: readonly Definition[], info: CheckInfo, option
   // After every binding, so the list can name them; acceptance evaluates
   // each before the examples run (C4).
   out.push(`export const $constants: readonly ${RT}.Constant[] = [`, ...constants.map((c) => `  ${c},`), "];", "");
+  // For acceptance in a separate process, which first checks that each
+  // module exports its function (E10); emitted even when empty.
+  out.push(`export const $externs: readonly ${RT}.Extern[] = [`, ...externs.map((x) => `  ${x},`), "];", "");
   return out.join("\n");
 }
 

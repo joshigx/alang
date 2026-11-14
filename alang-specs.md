@@ -460,10 +460,11 @@ Recommended for the prototype is the export in Git. Rule 6.2 then describes the 
 
 ## Toolchain
 
-The transpiler is written in TypeScript and runs on Deno. Target language and tool language are thereby the same, so examples run in the same process as the checker and on the real target semantics.
+The transpiler is written in TypeScript and runs on Deno. Target language and tool language are thereby the same, so examples run on the real target semantics: in the same process as the checker, or, for a program with an `extern fn`, in a process of their own (below).
 
 - **One runtime library.** `std.*`, the overflow check for `Int` and the NaN check exist once and are shared by the checker and by generated programs.
 - **Effects enforced at runtime.** A program is started with exactly the Deno permissions that its `main` declares as effects (table below). This also catches an `extern fn` whose TypeScript code does more than its declared effects (rule 2.5).
+- **Foreign code in its own process.** A program with an `extern fn` runs its constants and examples in a separate Deno process without any permission, without remote modules and with a time limit, so that the TypeScript of an extern cannot read or write files, use the network or the environment, or start processes while it is tested (only the modules it imports are read as it loads), and every acceptance loads its current code. The tool therefore needs the permission to start processes (`--allow-run`).
 - **Checked output.** The test suite type-checks the generated TypeScript, to verify that whatever the checker accepts is never rejected by TypeScript.
 - **Runtime-neutral output.** Generated code does not depend on Deno, so alang programs also run on Node.js and Bun.
 
@@ -1085,4 +1086,5 @@ Every diagnostic has the fields of 5.5: `code`, `definition`, `section`, `at` (t
 | E0260, E0261 | `extern fn`: a target that is not `./path.ts#name`, a function value in its signature |
 | E0301 to E0305 | Code generation and `main` |
 | E0401 to E0404 | Missing, failing and trapping examples, and constants that trap |
+| E0406 to E0408 | Foreign code at acceptance: a module that cannot be loaded, a time limit, a tool without `--allow-run` |
 | E0501 to E0514 | Codebase operations |

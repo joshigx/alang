@@ -304,6 +304,26 @@ Deno.test("accept: actual values print as alang text written from the example's 
   await accepted(fixed);
 });
 
+Deno.test("accept: a separate process gives the same results as this one (E10)", async () => {
+  // Infinities, escapes, nested cases, records, maps in key order; and a
+  // map holding `-0.0` in an option.
+  const source = VALUES + "\n\n" + fn("vals.zero_map", {
+    params: ["n: Int"],
+    out: "Map<String, Option<Float>>",
+    examples: ['zero_map(n: 1) == ["a": None]'],
+    body: 'return ["a": Some(std.int.to_float(value: n - 1) * -1.0)]',
+  });
+  const here = await testExamples(await build(source, outPath()));
+  const out = outPath();
+  const there = await testExamples(await build(source, out), { isolate: true });
+  assertEquals(there, here);
+  assertEquals(there.find((o) => o.definition === "vals.zero_map")?.actual, '["a": Some(0.0)]');
+  const ds = await diagnostics(source);
+  const isolated = await accept(source, out, { isolate: true }).then(() => [], (e: AlangError) => [...e.diagnostics]);
+  assertEquals(isolated, ds);
+  assertEquals([...Deno.readDirSync(OUT)].filter((e) => e.name.endsWith(".check.ts")), []);
+});
+
 Deno.test("accept: values without a failing example print canonically too", () => {
   const shapes = new Map();
   assertEquals(showValue(null, UNIT, shapes, "m"), "Unit");

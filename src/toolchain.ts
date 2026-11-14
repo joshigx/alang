@@ -13,12 +13,15 @@ import {
   describeResults,
   exampleDiagnostics,
   type ExampleOutcome,
+  isolationDiagnostics,
+  type IsolationFailure,
   missingExamples,
+  noRunPermission,
 } from "./examples.ts";
 import { parseProgram } from "./parser.ts";
 import { printTypeRef } from "./printer.ts";
-import type { Constant, ConstantResult, Example } from "./runtime.ts";
-import { runConstants, runExamples } from "./runtime.ts";
+import type { Constant, ConstantResult, Example, ExampleResult, TrapInfo } from "./runtime.ts";
+import { decode_value, runConstants, runExamples } from "./runtime.ts";
 
 const RUNTIME_PATH = fileURLToPath(new URL("./runtime.ts", import.meta.url));
 
@@ -26,7 +29,22 @@ export interface Built {
   readonly defs: Definition[];
   readonly info: CheckInfo;
   readonly outPath: string;
+  // The absolute directory the targets of its externs are relative to (2.2).
+  readonly base: string;
 }
+
+export interface AcceptOptions {
+  // The directory a target is relative to (2.2): the codebase's, or the
+  // file's. Default: the current directory.
+  readonly base?: string;
+  // How long the separate process may run; tests shorten it. Default: 30 s.
+  readonly limitMs?: number;
+  // Run in a separate process although there is no extern; for tests of the
+  // process alone.
+  readonly isolate?: boolean;
+}
+
+const LIMIT_MS = 30_000;
 
 // Parses and type-checks `source`; throws an AlangError with all
 // diagnostics if it does not check.
@@ -43,20 +61,27 @@ export function compile(source: string, runtimeImport: string): { defs: Definiti
   return { defs, ts: emitProgram(defs, info, { runtimeImport }) };
 }
 
-async function emitTo(defs: Definition[], info: CheckInfo, outPath: string): Promise<Built> {
+// A module specifier for `path` in a file of the directory `from`: relative,
+// with `/`, starting with `.`.
+function specifier(from: string, path: string): string {
+  const r = relative(from, path).replaceAll("\\", "/");
+  return r.startsWith(".") ? r : `./${r}`;
+}
+
+async function emitTo(defs: Definition[], info: CheckInfo, outPath: string, options: AcceptOptions): Promise<Built> {
   const absOut = resolve(outPath);
-  let runtimeImport = relative(dirname(absOut), RUNTIME_PATH).replaceAll("\\", "/");
-  if (!runtimeImport.startsWith(".")) runtimeImport = `./${runtimeImport}`;
+  const base = resolve(options.base ?? ".");
+  const runtimeImport = specifier(dirname(absOut), RUNTIME_PATH);
   await Deno.mkdir(dirname(absOut), { recursive: true });
   await Deno.writeTextFile(absOut, emitProgram(defs, info, { runtimeImport }));
-  return { defs, info, outPath: absOut };
+  return { defs, info, outPath: absOut, base };
 }
 
 // Compiles `source` and writes the generated TypeScript to `outPath`,
 // without running its examples (see `accept`).
-export async function build(source: string, outPath: string): Promise<Built> {
+export async function build(source: string, outPath: string, options: AcceptOptions = {}): Promise<Built> {
   const { defs, info } = parseAndCheck(source);
-  return await emitTo(defs, info, outPath);
+  return await emitTo(defs, info, outPath, options);
 }
 
 export interface Accepted {
@@ -68,8 +93,8 @@ export interface Accepted {
 // (5.1), then the examples themselves. Throws an AlangError with every
 // diagnostic if a step fails. The static diagnostics come in one round;
 // examples run only once the program checks, since they need its code.
-export async function accept(source: string, outPath: string): Promise<Accepted> {
-  return await acceptDefinitions(parseProgram(source), outPath);
+export async function accept(source: string, outPath: string, options: AcceptOptions = {}): Promise<Accepted> {
+  return await acceptDefinitions(parseProgram(source), outPath, undefined, options);
 }
 
 // `accept` for definitions that are already parsed, e.g. from the database.
@@ -78,6 +103,7 @@ export async function acceptDefinitions(
   defs: Definition[],
   outPath: string,
   checked: CheckResult = checkProgram(defs),
+  options: AcceptOptions = {},
 ): Promise<Accepted> {
   const { diagnostics, info } = checked;
   // A function that E0237 turns into a constant (its `expected`) needs no
@@ -86,8 +112,8 @@ export async function acceptDefinitions(
   const missing = missingExamples(defs).filter((d) => !toConst.has(d.definition));
   const all = byDefinition(defs, [...diagnostics, ...missing]);
   if (all.length > 0) throw new AlangError(all);
-  const built = await emitTo(defs, info, outPath);
-  const { constants, examples } = await testProgram(built);
+  const built = await emitTo(defs, info, outPath, options);
+  const { constants, examples } = await testProgram(built, options);
   // An example that traps inside a trapping constant has its cause reported
   // already (5.6); without an E0404 every constant was evaluated, so no
   // example can trap inside one.
@@ -107,6 +133,9 @@ function byDefinition(defs: readonly Definition[], diagnostics: readonly Diagnos
 
 let loads = 0;
 
+// Imports a built program into the tool's own process. Never for a program
+// with an `extern fn`: its modules are foreign code, which would run with
+// the tool's permissions (E10, `testProgram`).
 // deno-lint-ignore no-explicit-any
 async function load(outPath: string): Promise<Record<string, any>> {
   // A fresh query string defeats the module cache when a file is rebuilt. A
@@ -115,20 +144,201 @@ async function load(outPath: string): Promise<Record<string, any>> {
   return await import(`${pathToFileURL(outPath).href}?v=${++loads}`);
 }
 
-// Evaluates every constant of a built program, then runs every example, in
-// this process and from one load of its module (spec, Toolchain; C4).
+interface Results {
+  readonly constants: ConstantResult[];
+  readonly examples: ExampleResult[];
+}
+
+const hasExtern = (defs: readonly Definition[]) => defs.some((d) => d.kind === "fn" && d.target !== null);
+
+// Evaluates every constant of a built program, then runs every example,
+// from one load of its module (spec, Toolchain; C4): in this process, or,
+// for a program with an `extern fn`, in a separate one without permissions
+// (E10). Throws an AlangError (E0406 to E0408) if that process gives no
+// results.
 export async function testProgram(
   built: Built,
+  options: AcceptOptions = {},
 ): Promise<{ constants: ConstantResult[]; examples: ExampleOutcome[] }> {
+  const { constants, examples } = options.isolate === true || hasExtern(built.defs)
+    ? await runIsolated(built, options.limitMs ?? LIMIT_MS)
+    : await runHere(built);
+  return { constants, examples: describeResults(built.defs, built.info, examples) };
+}
+
+async function runHere(built: Built): Promise<Results> {
   const mod = await load(built.outPath);
   const constants = runConstants(mod.$constants as readonly Constant[]);
-  const examples = describeResults(built.defs, built.info, runExamples(mod.$examples as readonly Example[]));
+  const examples = runExamples(mod.$examples as readonly Example[]);
   return { constants, examples };
 }
 
 // Runs every example of a built program, its constants evaluated first.
-export async function testExamples(built: Built): Promise<ExampleOutcome[]> {
-  return (await testProgram(built)).examples;
+export async function testExamples(built: Built, options: AcceptOptions = {}): Promise<ExampleOutcome[]> {
+  return (await testProgram(built, options)).examples;
+}
+
+// ---- foreign code at acceptance (E10, E11) ----
+
+// The flags of the separate process: no `--allow-*` at all; no project
+// configuration; nothing fetched while the modules load (a remote import is
+// refused, a package comes only from Deno's cache).
+const ISOLATED_FLAGS = ["--no-prompt", "--no-config", "--no-lock", "--no-remote", "--cached-only", "--quiet"];
+
+// Runs the constants and examples of `built` in a Deno process without
+// permissions, which reports over stdout through `run_isolated` (runtime.ts).
+// The process is stopped after `limitMs`. Every acceptance loads the
+// modules afresh, so a changed target module is tested as it is now.
+async function runIsolated(built: Built, limitMs: number): Promise<Results> {
+  const context = { defs: built.defs, base: built.base, limitMs };
+  // Never a fallback to this process, which has the tool's permissions.
+  if (Deno.permissions.querySync({ name: "run", command: Deno.execPath() }).state !== "granted") {
+    throw new AlangError([noRunPermission(built.defs)]);
+  }
+  const entry = built.outPath.replace(/\.ts$/, ".check.ts");
+  // Written into the entry only: foreign code, which cannot read files, cannot
+  // learn it, so it cannot forge a report.
+  const marker = crypto.randomUUID();
+  const program = basename(built.outPath);
+  await Deno.writeTextFile(
+    entry,
+    [
+      `// Generated by alang: runs the externs' checks, the constants and the examples of ${program} without permissions.`,
+      `import { run_isolated } from ${JSON.stringify(specifier(dirname(entry), RUNTIME_PATH))};`,
+      `import { $constants, $examples, $externs } from ${JSON.stringify(`./${program}`)};`,
+      "",
+      `run_isolated($externs, $constants, $examples, ${JSON.stringify(marker)});`,
+      // A module may leave a timer running; the report is complete.
+      "Deno.exit(0);",
+      "",
+    ].join("\n"),
+  );
+  try {
+    const child = new Deno.Command(Deno.execPath(), {
+      args: ["run", ...ISOLATED_FLAGS, entry],
+      cwd: dirname(entry),
+      stdin: "null",
+      // Never the tool's own stdout, which is the MCP channel.
+      stdout: "piped",
+      stderr: "piped",
+      env: { NO_COLOR: "1" },
+    }).spawn();
+    let killed = false;
+    const timer = setTimeout(() => {
+      killed = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // It has ended meanwhile.
+      }
+    }, limitMs);
+    let output: Deno.CommandOutput;
+    try {
+      output = await child.output();
+    } finally {
+      clearTimeout(timer);
+    }
+    const report = readReport(new TextDecoder().decode(output.stdout), marker);
+    const stderr = new TextDecoder().decode(output.stderr);
+    if (report.done !== null) {
+      const results = parseResults(report.done, built.defs);
+      if (results === null) {
+        throw new AlangError(isolationDiagnostics({ kind: "failed", code: output.code, stderr: MALFORMED }, context));
+      }
+      if (results.kind === "missing") throw new AlangError(isolationDiagnostics(results, context));
+      return results;
+    }
+    const failure: IsolationFailure = killed
+      ? { kind: "killed", last: report.last }
+      : { kind: "failed", code: output.code, stderr };
+    throw new AlangError(isolationDiagnostics(failure, context));
+  } finally {
+    await Deno.remove(entry).catch((e) => {
+      if (!(e instanceof Deno.errors.NotFound)) throw e;
+    });
+  }
+}
+
+const MALFORMED = "its report was malformed";
+
+// The lines of the process's report, found by its marker anywhere in a line
+// (a module may print without a line break before it).
+export function readReport(stdout: string, marker: string): {
+  last: { kind: "constant" | "example"; index: number } | null;
+  done: string | null;
+} {
+  let last: { kind: "constant" | "example"; index: number } | null = null;
+  let done: string | null = null;
+  for (const line of stdout.split("\n")) {
+    const i = line.indexOf(`${marker} `);
+    if (i < 0) continue;
+    const said = line.slice(i + marker.length + 1);
+    const start = /^start (constant|example) (\d+)$/.exec(said);
+    if (start) last = { kind: start[1] as "constant" | "example", index: Number(start[2]) };
+    else if (said.startsWith("done ")) done = said.slice("done ".length);
+  }
+  return { last, done };
+}
+
+// The results in a `done` line, checked against the program: the report
+// crosses from foreign code, so anything unexpected is no result (null).
+function parseResults(
+  done: string,
+  defs: readonly Definition[],
+): (Results & { kind: "results" }) | Extract<IsolationFailure, { kind: "missing" }> | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(done);
+  } catch {
+    return null;
+  }
+  const isString = (x: unknown): x is string => typeof x === "string";
+  const isTrap = (x: unknown): x is TrapInfo => {
+    if (x === null || typeof x !== "object") return false;
+    const t = x as Record<string, unknown>;
+    return isString(t.kind) && (t.definition === null || isString(t.definition)) && isString(t.at) &&
+      isString(t.message) && (t.origin === undefined || isString(t.origin));
+  };
+  if (json === null || typeof json !== "object") return null;
+  const { missing, constants, examples } = json as Record<string, unknown>;
+  if (!Array.isArray(missing) || !Array.isArray(constants) || !Array.isArray(examples)) return null;
+  if (missing.length > 0) {
+    const externs = new Map(
+      defs.flatMap((d) => (d.kind === "fn" && d.target !== null ? [[pathText(d.path), d.target] as const] : [])),
+    );
+    const valid = missing.every((m) =>
+      m !== null && typeof m === "object" && externs.get(m.definition) === m.target &&
+      Array.isArray(m.functions) && m.functions.every(isString)
+    );
+    return valid ? { kind: "missing", missing } : null;
+  }
+  const constantCount = defs.filter((d) => d.kind === "const").length;
+  const exampleCount = defs.reduce((n, d) => n + (d.kind === "fn" ? d.examples.length : 0), 0);
+  if (constants.length !== constantCount || examples.length !== exampleCount) return null;
+  const fields = (x: unknown): Record<string, unknown> =>
+    x !== null && typeof x === "object" ? x as Record<string, unknown> : {};
+  const validConstant = (x: unknown) => {
+    const c = fields(x);
+    return isString(c.definition) && (c.trap === null || isTrap(c.trap)) &&
+      (c.origin === null || isString(c.origin)) &&
+      (c.cycle === null || (Array.isArray(c.cycle) && c.cycle.every(isString)));
+  };
+  const validExample = (x: unknown) => {
+    const e = fields(x);
+    return isString(e.definition) && isString(e.text) && typeof e.passed === "boolean" &&
+      (e.trap === null || isTrap(e.trap));
+  };
+  if (!constants.every(validConstant) || !examples.every(validExample)) return null;
+  try {
+    return {
+      kind: "results",
+      constants: constants as ConstantResult[],
+      examples: (examples as ExampleResult[]).map((e) => ({ ...e, actual: decode_value(e.actual) })),
+    };
+  } catch {
+    // A map with a key twice.
+    return null;
+  }
 }
 
 // The function a program starts at (spec, section 1): a function named
@@ -204,8 +414,7 @@ export async function writeEntry(built: Built, name?: string): Promise<string> {
   const main = findMain(built.defs, name);
   const entry = built.outPath.replace(/\.ts$/, ".run.ts");
   const fn = main.path.join("$");
-  let runtimeImport = relative(dirname(entry), RUNTIME_PATH).replaceAll("\\", "/");
-  if (!runtimeImport.startsWith(".")) runtimeImport = `./${runtimeImport}`;
+  const runtimeImport = specifier(dirname(entry), RUNTIME_PATH);
   // A main with effects is async (see emit.ts); awaiting a plain value is
   // harmless, so one call fits both. A `Result` main is read: `.tag` on a
   // `Unit` main would not type-check, so the two forms differ.

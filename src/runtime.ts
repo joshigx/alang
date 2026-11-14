@@ -334,8 +334,11 @@ function isStackOverflow(e: unknown): boolean {
   return e instanceof RangeError && /call stack/i.test(e.message);
 }
 
-export function runExamples(examples: readonly Example[]): ExampleResult[] {
-  return examples.map((ex) => {
+// `before(i)` is called before example `i` runs: a separate process reports
+// its progress so (E10).
+export function runExamples(examples: readonly Example[], before?: (i: number) => void): ExampleResult[] {
+  return examples.map((ex, i) => {
+    before?.(i);
     const result = (actual: unknown, passed: boolean, trap: TrapInfo | null): ExampleResult => ({
       definition: ex.definition,
       text: ex.text,
@@ -427,8 +430,9 @@ export interface ConstantResult {
 
 // Evaluates every constant in the given order, as acceptance does before the
 // examples run; a value evaluated here is kept for the examples.
-export function runConstants(constants: readonly Constant[]): ConstantResult[] {
-  return constants.map((c) => {
+export function runConstants(constants: readonly Constant[], before?: (i: number) => void): ConstantResult[] {
+  return constants.map((c, i) => {
+    before?.(i);
     try {
       c.value();
       return { definition: c.definition, trap: null, origin: null, cycle: null };
@@ -439,6 +443,84 @@ export function runConstants(constants: readonly Constant[]): ConstantResult[] {
       return { definition: c.definition, trap, origin: trapOrigin(e) ?? c.definition, cycle };
     }
   });
+}
+
+// ---- acceptance in a separate process (E10) ----
+// A program with an `extern fn` runs its constants and examples in a Deno
+// process without permissions (toolchain.ts). Its entry calls `run_isolated`,
+// which reports over stdout: only lines that start with the entry's marker
+// count, so a module's own output is ignored.
+
+// An `extern fn` of the program: its target and the module it names, for
+// the check that the module exports the function.
+export interface Extern {
+  readonly definition: string;
+  readonly target: string;
+  readonly module: object;
+  readonly name: string;
+}
+
+// Taken when the runtime loads, which is before any target module does (the
+// runtime is the first import of the entry and of the program), so that a
+// module that replaces them cannot change the report.
+const writeLine: (line: string) => void = console.log.bind(console);
+const toJson = JSON.stringify;
+
+export function run_isolated(
+  externs: readonly Extern[],
+  constants: readonly Constant[],
+  examples: readonly Example[],
+  marker: string,
+): void {
+  const say = (line: string) => writeLine(`${marker} ${line}`);
+  const missing = externs.filter((e) => typeof (e.module as Record<string, unknown>)[e.name] !== "function");
+  if (missing.length > 0) {
+    const functions = (m: object) =>
+      Object.keys(m).filter((k) => typeof (m as Record<string, unknown>)[k] === "function").sort();
+    const report = missing.map((e) => ({ definition: e.definition, target: e.target, functions: functions(e.module) }));
+    say(`done ${toJson({ missing: report, constants: [], examples: [] })}`);
+    return;
+  }
+  const constantResults = runConstants(constants, (i) => say(`start constant ${i}`));
+  const exampleResults = runExamples(examples, (i) => say(`start example ${i}`));
+  const encoded = exampleResults.map((r) => ({ ...r, actual: encode_value(r.actual) }));
+  say(`done ${toJson({ missing: [], constants: constantResults, examples: encoded })}`);
+}
+
+// An alang value as JSON (O7): JSON itself, except `-0` and the infinities,
+// which become `{ "$float": "-0" }`, and a `Map`, which becomes `{ "$map":
+// [[key, value], ...] }` in key order. Field names are snake_case and tags
+// PascalCase, so `$float` and `$map` collide with nothing. `undefined`, the
+// actual value of a trapped example, is `null`.
+export function encode_value(value: unknown): unknown {
+  if (value === undefined) return null;
+  if (typeof value === "number") {
+    if (Object.is(value, -0)) return { $float: "-0" };
+    if (value === Infinity) return { $float: "Infinity" };
+    if (value === -Infinity) return { $float: "-Infinity" };
+    return value;
+  }
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(encode_value);
+  if (value instanceof SortedMap) {
+    return { $map: map_entries(value).map(([k, v]) => [encode_value(k), encode_value(v)]) };
+  }
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, encode_value(v)]));
+}
+
+// The inverse of `encode_value`. A record comes back without its type name,
+// which only `std.text.show` reads; actual values are shown by their type.
+export function decode_value(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(decode_value);
+  const o = value as Record<string, unknown>;
+  const keys = Object.keys(o);
+  if (keys.length === 1 && keys[0] === "$float" && typeof o.$float === "string") return Number(o.$float);
+  if (keys.length === 1 && keys[0] === "$map" && Array.isArray(o.$map)) {
+    const entries = (o.$map as unknown[][]).map(([k, v]) => [decode_value(k), decode_value(v)] as const);
+    return map_literal(entries, "decode_value");
+  }
+  return Object.fromEntries(keys.map((k) => [k, decode_value(o[k])]));
 }
 
 // ---- std ----

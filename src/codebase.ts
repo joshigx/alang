@@ -552,22 +552,26 @@ export class Codebase {
   // directory never run each other's program. It exists only while an
   // acceptance runs (they run one at a time, through the queue): a process
   // that is killed, as MCP clients end their servers, leaves nothing behind
-  // unless it dies during one.
+  // unless it dies during one. A program with an `extern fn` adds the entry
+  // of its separate process beside it, `accept-…check.ts` (E10).
   private readonly acceptPath: string;
 
+  // Targets are relative to the codebase's directory (2.2).
   private async acceptHere(defs: Definition[], checked: CheckResult): Promise<Accepted> {
     try {
-      return await acceptDefinitions(defs, this.acceptPath, checked);
+      return await acceptDefinitions(defs, this.acceptPath, checked, { base: this.dir });
     } finally {
       this.removeAcceptFile();
     }
   }
 
   private removeAcceptFile(): void {
-    try {
-      Deno.removeSync(this.acceptPath);
-    } catch (e) {
-      if (!(e instanceof Deno.errors.NotFound)) throw e;
+    for (const path of [this.acceptPath, this.acceptPath.replace(/\.ts$/, ".check.ts")]) {
+      try {
+        Deno.removeSync(path);
+      } catch (e) {
+        if (!(e instanceof Deno.errors.NotFound)) throw e;
+      }
     }
   }
 
@@ -862,7 +866,7 @@ export class Codebase {
     if (name !== undefined && !this.names().has(name)) throw new AlangError(this.unknownName(name, `run(${name})`));
     const defs = [...this.snapshot().values()].map((c) => c.def);
     const main = pathText(findMain(defs, name).path);
-    const { built } = await acceptDefinitions(defs, join(this.dir, "out", `${main}.ts`));
+    const { built } = await acceptDefinitions(defs, join(this.dir, "out", `${main}.ts`), undefined, { base: this.dir });
     return await runBuilt(built, { ...options, main });
   }
 

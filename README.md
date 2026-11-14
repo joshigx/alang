@@ -53,11 +53,12 @@ LLM reads and changes a codebase the way the spec intends. Its tool `card` retur
 use it from Claude Code, register it with absolute paths:
 
 ```sh
-claude mcp add alang -- deno run --allow-read --allow-write /path/to/alang/src/cli.ts mcp --dir /path/to/project
+claude mcp add alang -- deno run --allow-read --allow-write --allow-run /path/to/alang/src/cli.ts mcp --dir /path/to/project
 ```
 
-The project directory holds `alang.db`, `export/` (one canonical file per module, for Git) and `out/`; it is created
-if missing.
+`--allow-run` lets acceptance run the examples of a program with an `extern fn` in a separate process without
+permissions. The project directory holds `alang.db`, `export/` (one canonical file per module, for Git) and `out/`;
+it is created if missing.
 
 ## Layout
 

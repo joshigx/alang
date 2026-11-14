@@ -11,7 +11,7 @@ import { lex } from "../src/lexer.ts";
 import { printProgram, printSignature } from "../src/printer.ts";
 import { applyOwnFixes, dependencies, mapReferences, references } from "../src/refs.ts";
 import * as rt from "../src/runtime.ts";
-import { accept, build } from "../src/toolchain.ts";
+import { accept, type AcceptOptions, build } from "../src/toolchain.ts";
 
 const OUT = new URL("../out/test/const/", import.meta.url).pathname;
 
@@ -150,9 +150,9 @@ function parseError(source: string): Diagnostic {
 }
 
 let counter = 0;
-async function acceptance(source: string): Promise<Diagnostic[]> {
+async function acceptance(source: string, options: AcceptOptions = {}): Promise<Diagnostic[]> {
   try {
-    await accept(source, `${OUT}accept_${counter++}.ts`);
+    await accept(source, `${OUT}accept_${counter++}.ts`, options);
     return [];
   } catch (e) {
     if (e instanceof AlangError) return [...e.diagnostics];
@@ -447,6 +447,19 @@ Deno.test("const: a trap is reported at its constant; the other examples still r
     "Evaluating the constant ends in a trap (`overflow`). Int overflow (at `9007199254740991 + 1`).",
   );
   assertEquals(ds[1].message, "The example does not hold: `f(x: 1)` is `1`.");
+});
+
+Deno.test("const: in a separate process, constants trap alike (E10)", async () => {
+  const big = [
+    constant("big.m", "Int", "return n * 2"),
+    constant("big.n", "Int", "return 9_007_199_254_740_991 + 1"),
+    fn("big.f", "x: Int", "Int", "f(x: 1) == 2", "return x"),
+  ].join("\n\n");
+  assertEquals(await acceptance(big, { isolate: true }), await acceptance(big));
+  const loop = constant("loop.a", "Int", "return b + 1") + "\n\n" + constant("loop.b", "Int", "return a + 1");
+  const ds = await acceptance(loop, { isolate: true });
+  assertEquals(ds, await acceptance(loop));
+  assertEquals(ds.map((d) => [d.code, d.definition]), [["E0404", "loop.a"]]);
 });
 
 // ---- habits around constants (C12, 3.1 to 3.6) ----

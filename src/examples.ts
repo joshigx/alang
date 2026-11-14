@@ -7,12 +7,14 @@
 // is deliberately no fix: replacing the expected value with the actual one
 // would write a bug into the example.
 
+import { relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Definition, Expr, FnDef, MapEntry, Path } from "./ast.ts";
 import { moduleOf, pathText } from "./ast.ts";
 import type { CheckInfo, TypeShape } from "./check.ts";
 import { toTypeRef, writable } from "./check.ts";
 import { type Diagnostic, diagnostic } from "./diagnostic.ts";
-import { printConst, printExpr, printTypeRef } from "./printer.ts";
+import { printConst, printExpr, printString, printTypeRef } from "./printer.ts";
 import {
   type ConstantResult,
   type ExampleResult,
@@ -151,6 +153,162 @@ export function constantDiagnostics(results: readonly ConstantResult[]): Diagnos
     }));
   }
   return out;
+}
+
+// ---- foreign code at acceptance (E10) ----
+
+// How the separate process that ran a program's constants and examples
+// ended (toolchain.ts, `runIsolated`), when it gave no usable results.
+export type IsolationFailure =
+  // An `extern fn`'s module exports no function of its name.
+  | {
+    readonly kind: "missing";
+    readonly missing: readonly { readonly definition: string; readonly target: string; readonly functions: string[] }[];
+  }
+  // Stopped at the time limit, during the item it last started (null: while
+  // loading its modules).
+  | { readonly kind: "killed"; readonly last: { readonly kind: "constant" | "example"; readonly index: number } | null }
+  // Ended without a result: a module did not load, or ended the process.
+  | { readonly kind: "failed"; readonly code: number; readonly stderr: string };
+
+export interface IsolationContext {
+  readonly defs: readonly Definition[];
+  // The directory targets are relative to (2.2).
+  readonly base: string;
+  readonly limitMs: number;
+}
+
+// The externs of a program by their target module (`./text.ts`), in the order
+// of their first extern; each list in definition order.
+export function externsByModule(defs: readonly Definition[]): Map<string, FnDef[]> {
+  const modules = new Map<string, FnDef[]>();
+  for (const d of defs) {
+    if (d.kind !== "fn" || d.target === null) continue;
+    const module = d.target.slice(0, d.target.indexOf("#"));
+    modules.set(module, [...(modules.get(module) ?? []), d]);
+  }
+  return modules;
+}
+
+const names = (defs: readonly FnDef[]) => {
+  const all = defs.map((d) => `\`${pathText(d.path)}\``);
+  return all.length === 1 ? all[0] : `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
+};
+
+const targetDiagnostic = (def: FnDef, message: string): Diagnostic =>
+  diagnostic({
+    code: "E0406",
+    definition: pathText(def.path),
+    section: "target",
+    at: `target: ${printString(def.target!)}`,
+    message,
+  });
+
+// E0406 for a target module that is not there: once per module, at its
+// first extern. `path` is where it was looked for.
+export function missingModuleDiagnostic(module: string, defs: readonly FnDef[], path: string): Diagnostic {
+  return targetDiagnostic(
+    defs[0],
+    `The module \`${module}\` of ${names(defs)} does not exist: write it at \`${path}\`.`,
+  );
+}
+
+// E0408: the tool may not start the separate process. Never a fallback to
+// running the foreign code in the tool's own process.
+export function noRunPermission(defs: readonly Definition[]): Diagnostic {
+  const first = defs.find((d): d is FnDef => d.kind === "fn" && d.target !== null);
+  return diagnostic({
+    code: "E0408",
+    definition: first ? pathText(first.path) : null,
+    at: first ? `extern fn ${pathText(first.path)}` : "<program>",
+    message: "A program with an `extern fn` runs its examples in a separate process without permissions, and this " +
+      "tool may not start one. Start it with `--allow-run`; for the MCP server: `deno run --allow-read " +
+      "--allow-write --allow-run <path>/src/cli.ts mcp --dir <dir>` (README).",
+  });
+}
+
+const seconds = (ms: number) => `${ms / 1000} seconds`;
+
+// E0406 and E0407: what a separate process that gave no results means for the
+// program (5.6: one diagnostic per cause).
+export function isolationDiagnostics(failure: IsolationFailure, context: IsolationContext): Diagnostic[] {
+  const { defs, base, limitMs } = context;
+  switch (failure.kind) {
+    case "missing":
+      return failure.missing.map((m) => {
+        const def = defs.find((d): d is FnDef => d.kind === "fn" && pathText(d.path) === m.definition)!;
+        const [module, name] = m.target.split("#");
+        const known = m.functions.length > 0
+          ? `its functions are ${m.functions.map((f) => `\`${f}\``).join(", ")}`
+          : "it exports no function";
+        return targetDiagnostic(def, `\`${module}\` exports no function \`${name}\`; ${known}.`);
+      });
+    case "killed": {
+      const last = failure.last;
+      if (last === null) {
+        return [diagnostic({
+          code: "E0407",
+          definition: null,
+          at: "<program>",
+          message: `Loading the program's modules did not end within ${seconds(limitMs)}.`,
+        })];
+      }
+      if (last.kind === "constant") {
+        const constant = defs.filter((d) => d.kind === "const")[last.index];
+        const name = pathText(constant.path);
+        return [diagnostic({
+          code: "E0407",
+          definition: name,
+          section: "body",
+          at: `const ${name}`,
+          message: `Evaluating the constant did not end within ${seconds(limitMs)}, so its process was stopped.`,
+        })];
+      }
+      const example = defs.flatMap((d) => (d.kind === "fn" ? d.examples.map((ex) => ({ d, ex })) : []))[last.index];
+      return [diagnostic({
+        code: "E0407",
+        definition: pathText(example.d.path),
+        section: "examples",
+        at: printExpr(example.ex, ""),
+        message: `The example did not end within ${seconds(limitMs)}, so its process was stopped: foreign code ` +
+          "that never returns, or a recursion too slow for an example.",
+      })];
+    }
+    case "failed": {
+      const modules = externsByModule(defs);
+      // The module whose URL the host names first is the one that failed.
+      let blamed: [string, FnDef[]] | null = null;
+      let at = Infinity;
+      for (const [module, users] of modules) {
+        const i = failure.stderr.indexOf(pathToFileURL(resolve(base, module)).href);
+        if (i >= 0 && i < at) [blamed, at] = [[module, users], i];
+      }
+      const lines = failure.stderr.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+      if (blamed === null) {
+        return [diagnostic({
+          code: "E0406",
+          definition: null,
+          at: "<program>",
+          message: `The examples' process ended without a result (exit code ${failure.code}): ${
+            lines[0] ?? "no output"
+          }.`.replace(/\.\.$/, "."),
+        })];
+      }
+      const [module, users] = blamed;
+      const cause = (lines[0] ?? "").replace(/^error: /, "").replace(/\.$/, "");
+      const where = /at (file:\/\/\S+?):(\d+):(\d+)/.exec(failure.stderr);
+      const located = where ? ` (at \`${relativeTo(base, fileURLToPath(where[1]))}:${where[2]}:${where[3]}\`)` : "";
+      return [
+        targetDiagnostic(users[0], `The module \`${module}\` of ${names(users)} cannot be loaded: ${cause}${located}.`),
+      ];
+    }
+  }
+}
+
+// A path as a target writes it: from `base`, starting `./`.
+function relativeTo(base: string, path: string): string {
+  const r = relative(base, path).replaceAll("\\", "/");
+  return r.startsWith(".") ? r : `./${r}`;
 }
 
 // ---- values as alang text ----

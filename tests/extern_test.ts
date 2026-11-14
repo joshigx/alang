@@ -7,7 +7,8 @@ import { checkProgram } from "../src/check.ts";
 import { AlangError, type Diagnostic } from "../src/diagnostic.ts";
 import { parseProgram } from "../src/parser.ts";
 import { printProgram, printSignature } from "../src/printer.ts";
-import { accept } from "../src/toolchain.ts";
+import { accept, type AcceptOptions, readReport } from "../src/toolchain.ts";
+import * as rt from "../src/runtime.ts";
 import { TEXT } from "./extern_fixtures.ts";
 
 const OUT = new URL("../out/test/extern/", import.meta.url).pathname;
@@ -33,9 +34,9 @@ function parseError(source: string): Diagnostic {
 }
 
 let counter = 0;
-async function acceptance(source: string): Promise<Diagnostic[]> {
+async function acceptance(source: string, options: AcceptOptions = {}): Promise<Diagnostic[]> {
   try {
-    await accept(source, `${OUT}accept_${counter++}.ts`);
+    await accept(source, `${OUT}accept_${counter++}.ts`, options);
     return [];
   } catch (e) {
     if (e instanceof AlangError) return [...e.diagnostics];
@@ -273,6 +274,86 @@ Deno.test("extern: examples, effects and callers are those of a `fn`", async () 
 
 Deno.test("extern: TEXT checks clean", () => {
   clean(TEXT);
+});
+
+// ---- the separate process (4.2) ----
+
+const FIB = `fn slow.fib
+  doc: "The nth Fibonacci number, the slow way."
+  in:
+    n: Int
+  out: Int
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    fib(n: 60) == 0
+  body:
+    if n < 2 then
+      return n
+    end if
+    return fib(n: n - 1) + fib(n: n - 2)
+end fn slow.fib
+`;
+
+const checkFiles = () => [...Deno.readDirSync(OUT)].filter((e) => e.name.endsWith(".check.ts")).map((e) => e.name);
+
+Deno.test("extern: a separate process is stopped at its time limit (E0407)", async () => {
+  // 3 s covers a cold start (O6 was measured warm).
+  const ds = await acceptance(FIB, { isolate: true, limitMs: 3_000 });
+  assertEquals(ds.map((d) => [d.code, d.definition, d.section, d.at, d.message]), [[
+    "E0407",
+    "slow.fib",
+    "examples",
+    "fib(n: 60) == 0",
+    "The example did not end within 3 seconds, so its process was stopped: foreign code that never returns, or a recursion too slow for an example.",
+  ]]);
+  const constant = FIB +
+    '\nconst slow.big\n  doc: "Big."\n  out: Int\n  body:\n    return fib(n: 60)\nend const slow.big\n';
+  const slow = await acceptance(constant.replace("fib(n: 60) == 0", "fib(n: 2) == 1"), {
+    isolate: true,
+    limitMs: 3_000,
+  });
+  assertEquals(slow.map((d) => [d.code, d.definition, d.section, d.at, d.message]), [[
+    "E0407",
+    "slow.big",
+    "body",
+    "const slow.big",
+    "Evaluating the constant did not end within 3 seconds, so its process was stopped.",
+  ]]);
+  assertEquals(checkFiles(), []);
+});
+
+Deno.test("extern: values cross the report as tagged JSON (O7)", () => {
+  const map = rt.map_literal<string, unknown>([["b", -0], ["a", rt.Some(Infinity)]], "test");
+  const value = [-0, Infinity, -Infinity, 1.5, 'q"é😀', null, map, { tag: "Node", value: { left: rt.None } }];
+  const copy = rt.decode_value(JSON.parse(JSON.stringify(rt.encode_value(value)))) as unknown[];
+  assertEquals(rt.eq(copy, value), true);
+  assertEquals(Object.is(copy[0], -0), true);
+  assertEquals(Object.is(rt.map_entries(copy[6] as rt.SortedMap<string, unknown>)[1][1], -0), true);
+  assertEquals(rt.encode_value(undefined), null);
+});
+
+Deno.test("extern: the report is found by its marker, whatever else is printed (E10)", async () => {
+  // An entry like the toolchain's, whose example prints first: a line, then
+  // text without a line break.
+  const entry = `${OUT}noise.check.ts`;
+  await Deno.mkdir(OUT, { recursive: true });
+  await Deno.writeTextFile(
+    entry,
+    `import { run_isolated } from "../../../src/runtime.ts";\n` +
+      `const example = { definition: "m.f", text: "f() == 1", expected: () => 1, actual: () => {\n` +
+      `  console.log("noise");\n  Deno.stdout.writeSync(new TextEncoder().encode("partial"));\n  return 1;\n} };\n` +
+      `run_isolated([], [], [example], "MARK");\n`,
+  );
+  try {
+    const out = await new Deno.Command(Deno.execPath(), { args: ["run", "--no-config", "--quiet", entry] }).output();
+    const report = readReport(new TextDecoder().decode(out.stdout), "MARK");
+    assertEquals(report.last, { kind: "example", index: 0 });
+    assertEquals(JSON.parse(report.done!).examples.map((e: { passed: boolean }) => e.passed), [true]);
+  } finally {
+    await Deno.remove(entry);
+  }
 });
 
 Deno.test("extern: an extern cannot be built yet (E0303, until the boundary exists)", async () => {
