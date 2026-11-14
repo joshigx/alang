@@ -256,6 +256,9 @@ class DefChecker {
   // Whether that lambda stands where a function with effects is allowed
   // (the handler of `std.http.serve`); only the advice of E0232 differs.
   private lambdaMayAct = false;
+  // Whether `out` holds a function value (E0237); the examples' `==` on it
+  // is then the same cause, not another E0222 (5.6).
+  private outHoldsFn = false;
   // Effects the body triggers but the signature does not declare, with the
   // first call that triggers them (one diagnostic per definition).
   private missingEffects = new Set<Effect>();
@@ -438,6 +441,25 @@ class DefChecker {
     const sig = this.env.fns.get(this.name)!;
     const params = new Scope();
     for (const p of sig.params) params.define(p.name, p.type);
+
+    // F4: no `fn` returns a function value, also not inside a list, a map, an
+    // option or a record, since a pure one could never get an example: an
+    // example compares with `==`, which such a type lacks (3.9, 5.1). With or
+    // without effects, so the rule is one sentence. Run here, in pass 3, when
+    // every record's fields are declared.
+    this.section = "out";
+    if (containsFn(sig.out, (n) => this.env.recordFields(n))) {
+      const out = printTypeRef(def.out);
+      this.report(
+        "E0237",
+        out,
+        `\`${
+          def.path[def.path.length - 1]
+        }\` returns \`${out}\`, which holds a function value; a \`fn\` never does, since its result could not be compared, shown or stated in an example (3.9, 5.1). Build the function where it is applied, with \`let\` (from a \`match\`, an \`if\` or a map literal), or take what decides it as a parameter.`,
+      );
+      this.outHoldsFn = true;
+    }
+    this.section = null;
 
     if (def.requires) {
       this.section = "requires";
@@ -1584,7 +1606,10 @@ class DefChecker {
       case "!=": {
         const l = this.expr(e.left, scope, null);
         this.expr(e.right, scope, isBottom(l) ? null : l);
-        if (containsFn(l, (n) => this.env.recordFields(n))) {
+        // An example of a function whose `out` holds a function value: E0237
+        // names that cause already.
+        const reported = this.outHoldsFn && this.section === "examples";
+        if (!reported && containsFn(l, (n) => this.env.recordFields(n))) {
           this.report("E0222", at, `\`${e.op}\` is defined for types without function values (3.9).`);
         }
         return BOOL;

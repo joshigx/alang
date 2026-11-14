@@ -1253,6 +1253,43 @@ Deno.test("check: only a function value is applied, with as many arguments as it
   );
 });
 
+Deno.test("check: no fn returns a function value, also not inside another type (E0237)", () => {
+  const d = one(fn("return double", { out: "(Int) -> Int", extra: FNS }), "E0237");
+  assertEquals([d.section, d.at, d.message, d.expected, d.fix], [
+    "out",
+    "(Int) -> Int",
+    "`f` returns `(Int) -> Int`, which holds a function value; a `fn` never does, since its result could not be compared, shown or stated in an example (3.9, 5.1). Build the function where it is applied, with `let` (from a `match`, an `if` or a map literal), or take what decides it as a parameter.",
+    null,
+    null,
+  ]);
+  const cases: [string, string][] = [
+    ["Option<(Int) -> Int>", "return Some(double)"],
+    ["List<Rule>", 'return [Rule(name: "blank", broken: blank)]'],
+    ["Map<String, (Int) -> Int>", 'return ["d": double]'],
+    ["Check", "return Off"],
+  ];
+  for (const [out, body] of cases) assertEquals(one(fn(body, { out, extra: FNS }), "E0237").at, out);
+  // With effects too: the rule is one sentence.
+  one(fn("return double", { out: "(Int) -> Int", effects: "console", extra: FNS }), "E0237");
+  // The example's `==` on that result is the same cause (5.6).
+  one(fn("return double", { out: "(Int) -> Int", examples: ["f() == double"], extra: FNS }), "E0237");
+});
+
+Deno.test("check: lambdas may return functions, and a fn may take records holding them (F4)", () => {
+  clean(fn(
+    [
+      "let add: (Int) -> (Int) -> Int = fn(x: Int): (Int) -> Int => fn(y: Int): Int => x + y",
+      "let inc: (Int) -> Int = add(1)",
+      "return inc(2)",
+    ].join("\n"),
+  ));
+  clean(fn("return std.list.map(list: rules, with: fn(rule: Rule): String => rule.name)", {
+    params: ["rules: List<Rule>"],
+    out: "List<String>",
+    extra: FNS,
+  }));
+});
+
 // ---- maps ----
 
 const keyMessage = (found: string) =>

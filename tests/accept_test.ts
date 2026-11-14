@@ -113,6 +113,23 @@ Deno.test("accept: missing examples come in the same round as type errors", asyn
   assertEquals(ds.map((d) => [d.definition, d.code]), [["m.a", "E0204"], ["m.b", "E0401"], ["m.c", "E0203"]]);
 });
 
+Deno.test("accept: a function returning a function value is E0237, and still needs an example (F4)", async () => {
+  const double = fn("m.double", {
+    params: ["n: Int"],
+    out: "Int",
+    examples: ["double(n: 1) == 2"],
+    body: "return n * 2",
+  });
+  const pick = fn("m.pick", { params: ["n: Int"], out: "(Int) -> Int", body: "return double" });
+  const ds = await diagnostics(`${double}\n\n${pick}`);
+  // E0401 holds once `out` changes, so both are reported.
+  assertEquals(ds.map((d) => [d.definition, d.code, d.section]), [["m.pick", "E0237", "out"], [
+    "m.pick",
+    "E0401",
+    "examples",
+  ]]);
+});
+
 // ---- failing examples ----
 
 Deno.test("accept: a failing example is rejected and reports the actual value", async () => {
