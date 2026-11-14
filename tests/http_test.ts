@@ -215,9 +215,9 @@ end fn web.main
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b).trim();
 
-async function serverProgram(): Promise<{ built: Built; entry: string; url: string }> {
+async function serverProgram(source = SERVER): Promise<{ built: Built; entry: string; url: string }> {
   const port = freePort();
-  const built = (await accept(SERVER(port), `${OUT}server_${port}.ts`)).built;
+  const built = (await accept(source(port), `${OUT}server_${port}.ts`)).built;
   return { built, entry: await writeEntry(built), url: `http://127.0.0.1:${port}` };
 }
 
@@ -250,8 +250,8 @@ async function hasNode(): Promise<boolean> {
   return node?.success ?? false;
 }
 
-async function startedOn(command: string, args: string[]) {
-  const { entry, url } = await serverProgram();
+async function startedOn(command: string, args: string[], source = SERVER) {
+  const { entry, url } = await serverProgram(source);
   const child = new Deno.Command(command, { args: [...args, entry], stdout: "piped", stderr: "piped" }).spawn();
   return { child, url };
 }
@@ -276,6 +276,56 @@ for (const host of ["deno", "node"] as const) {
       [0, ["GET /hello", "GET //odd", "GET /again", "stopped"]],
       decode(out.stderr),
     );
+  });
+}
+
+// A pure handler that answers with the request as `std.text.show` gives it.
+const SHOW_SERVER = (port: number) => `
+fn web.answer
+  doc: "Answers with the request as text."
+  in:
+    request: std.http.Request
+  out: std.http.Response
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    answer(request: std.http.Request(method: "GET", path: "/", query: "", headers: std.list.empty<std.http.Header>(), content: "")) == std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: "Request(method: \\"GET\\", path: \\"/\\", query: \\"\\", headers: [], content: \\"\\")")
+  body:
+    return std.http.Response(status: 200, headers: std.list.empty<std.http.Header>(), content: std.text.show(value: request))
+end fn web.answer
+
+fn web.main
+  doc: "Serves until stopped."
+  in: none
+  out: Unit
+  effects: net
+  requires: none
+  ensures: none
+  examples: none
+  body:
+    std.http.serve(host: "127.0.0.1", port: ${literal(port)}, handler: answer) else return Unit
+    return Unit
+end fn web.main
+`;
+
+// A record the runtime builds shows with its type name, as one built in
+// alang does (R7): the request and its headers, on both hosts.
+for (const host of ["deno", "node"] as const) {
+  Deno.test(`http: a request shows as Request(...) with Header(...) items (${host})`, async () => {
+    if (host === "node" && !(await hasNode())) return;
+    const { child, url } = await startedOn(
+      host === "deno" ? Deno.execPath() : "node",
+      host === "deno" ? ["run", "--no-prompt", "--allow-net"] : [],
+      SHOW_SERVER,
+    );
+    const { status, text } = await get(`${url}/x?a=1`);
+    child.kill("SIGTERM");
+    const out = await child.output();
+    assertEquals(status, 200, decode(out.stderr));
+    const start = 'Request(method: "GET", path: "/x", query: "a=1", headers: [Header(name: ';
+    assert_(text.startsWith(start), text);
+    assertEquals(out.code, 0, decode(out.stderr));
   });
 }
 
@@ -824,19 +874,21 @@ end fn client.main
 // The client program, alike on both hosts, byte for byte: its `Failed`
 // texts are the runtime's own.
 const NET_STDOUT = [
-  'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "5"), ' +
-  '(name: "set-cookie", value: "a=1"), (name: "set-cookie", value: "b=2"), (name: "x-a", value: "2, 3"), ' +
-  '(name: "x-b", value: "1")], content: "hello"))',
-  'Ok((status: 200, headers: [(name: "connection", value: "close")], content: "compressed ä"))',
-  'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "35")], ' +
-  'content: "POST text/plain; charset=utf-8 1 ä"))',
-  'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "5"), ' +
-  '(name: "set-cookie", value: "a=1"), (name: "set-cookie", value: "b=2"), (name: "x-a", value: "2, 3"), ' +
-  '(name: "x-b", value: "1")], content: "hello"))',
-  'Ok((status: 299, headers: [(name: "connection", value: "close"), (name: "content-length", value: "3")], ' +
-  'content: "odd"))',
-  'Ok((status: 200, headers: [(name: "connection", value: "close"), (name: "content-length", value: "4"), ' +
-  '(name: "x-latin", value: "café")], content: "caf\uFFFD"))',
+  'Ok(Response(status: 200, headers: [Header(name: "connection", value: "close"), ' +
+  'Header(name: "content-length", value: "5"), Header(name: "set-cookie", value: "a=1"), ' +
+  'Header(name: "set-cookie", value: "b=2"), Header(name: "x-a", value: "2, 3"), Header(name: "x-b", value: "1")], ' +
+  'content: "hello"))',
+  'Ok(Response(status: 200, headers: [Header(name: "connection", value: "close")], content: "compressed ä"))',
+  'Ok(Response(status: 200, headers: [Header(name: "connection", value: "close"), ' +
+  'Header(name: "content-length", value: "35")], content: "POST text/plain; charset=utf-8 1 ä"))',
+  'Ok(Response(status: 200, headers: [Header(name: "connection", value: "close"), ' +
+  'Header(name: "content-length", value: "5"), Header(name: "set-cookie", value: "a=1"), ' +
+  'Header(name: "set-cookie", value: "b=2"), Header(name: "x-a", value: "2, 3"), Header(name: "x-b", value: "1")], ' +
+  'content: "hello"))',
+  'Ok(Response(status: 299, headers: [Header(name: "connection", value: "close"), ' +
+  'Header(name: "content-length", value: "3")], content: "odd"))',
+  'Ok(Response(status: 200, headers: [Header(name: "connection", value: "close"), ' +
+  'Header(name: "content-length", value: "4"), Header(name: "x-latin", value: "café")], content: "caf\uFFFD"))',
   'Err(Failed("The server answered with status 600, outside 200 to 599."))',
   'Err(Failed("the server closed the connection without answering"))',
   "Err(TimedOut)",

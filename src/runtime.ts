@@ -766,11 +766,21 @@ export function std$fs$describe(error: std$fs$Error): string {
   }
 }
 
+// The type name of every record its constructor built, without the module
+// (as a case shows), for std.text.show (3.9). Kept beside the object, so the
+// object, its fields, `eq` and spreading are untouched. A record the runtime
+// builds itself goes through `record` too, and so must every later one.
+const RECORD_NAMES = new WeakMap<object, string>();
+export function record<T extends object>(name: string, fields: T): T {
+  RECORD_NAMES.set(fields, name);
+  return fields;
+}
+
 // ---- std.http ----
 
 export type std$http$Header = { readonly name: string; readonly value: string };
 export function std$http$Header($fields: std$http$Header): std$http$Header {
-  return $fields;
+  return record("Header", $fields);
 }
 
 export type std$http$Request = {
@@ -781,7 +791,7 @@ export type std$http$Request = {
   readonly content: string;
 };
 export function std$http$Request($fields: std$http$Request): std$http$Request {
-  return $fields;
+  return record("Request", $fields);
 }
 
 export type std$http$Response = {
@@ -803,7 +813,7 @@ export function std$http$Response($fields: std$http$Response): std$http$Response
   if (!(200 <= status && status <= 599 && (content === "" || !noContent(status)))) {
     trap("where", "std.http.Response", RESPONSE_WHERE, `Invariant of std.http.Response violated: ${RESPONSE_WHERE}`);
   }
-  return $fields;
+  return record("Response", $fields);
 }
 
 export type std$http$ServeError =
@@ -901,13 +911,13 @@ const listenDeno = (deno: DenoHost): Listen => (host, port, a) => {
       let received: std$http$Request;
       try {
         const url = new URL(request.url);
-        received = {
+        received = record("Request", {
           method: request.method,
           path: url.pathname,
           query: url.search.slice(1),
-          headers: [...request.headers].map(([name, value]) => ({ name, value })),
+          headers: [...request.headers].map(([name, value]) => record("Header", { name, value })),
           content: await request.text(),
-        };
+        });
       } catch {
         // A request that cannot be read (the client went away while
         // sending) is the client's fault, not the program's: 400, and the
@@ -967,15 +977,15 @@ const listenNode = (http: NodeHttp): Listen => (host, port, a) => {
       const decoder = new TextDecoder();
       for await (const chunk of req) content += decoder.decode(chunk, { stream: true });
       content += decoder.decode();
-      received = {
+      received = record("Request", {
         method: req.method ?? "GET",
         path: url.pathname,
         query: url.search.slice(1),
         headers: Object.entries(req.headersDistinct)
-          .map(([name, values]) => ({ name, value: values.join(", ") }))
+          .map(([name, values]) => record("Header", { name, value: values.join(", ") }))
           .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0)),
         content,
-      };
+      });
     } catch {
       // A request that cannot be read (an odd target, the client went away
       // while sending) is the client's fault, not the program's: 400, and
@@ -1335,13 +1345,13 @@ export async function std$http$send(
     // Sorted, repeated names joined except set-cookie (fetch's order). Deno
     // drops the two headers that described compressed content, Node.js keeps
     // them: dropped here for both.
-    let received = [...r.headers].map(([name, value]) => ({ name, value }))
+    let received = [...r.headers].map(([name, value]) => record("Header", { name, value }))
       .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
     if (received.some((h) => h.name === "content-encoding")) {
       received = received.filter((h) => h.name !== "content-encoding" && h.name !== "content-length");
     }
     // The record's `where`: no content with 204, 205 and 304.
-    return Ok({ status: r.status, headers: received, content: noContent(r.status) ? "" : text });
+    return Ok(record("Response", { status: r.status, headers: received, content: noContent(r.status) ? "" : text }));
   } catch (e) {
     if (timedOut) return Err<std$http$SendError>({ tag: "TimedOut" });
     const err = e as { name?: string; code?: string; message?: string; cause?: { code?: string; message?: string } };
@@ -1627,7 +1637,7 @@ export function std$string$compare(left: string, right: string): Order {
 
 export type std$string$Cut = { readonly before: string; readonly after: string };
 export function std$string$Cut($fields: std$string$Cut): std$string$Cut {
-  return $fields;
+  return record("Cut", $fields);
 }
 
 export function std$string$contains(text: string, part: string): boolean {
@@ -1649,7 +1659,7 @@ export function std$string$find(text: string, part: string): Option<number> {
 
 export function std$string$cut(text: string, separator: string): Option<std$string$Cut> {
   const i = text.indexOf(separator);
-  return i < 0 ? None : Some({ before: text.slice(0, i), after: text.slice(i + separator.length) });
+  return i < 0 ? None : Some(record("Cut", { before: text.slice(0, i), after: text.slice(i + separator.length) }));
 }
 
 // A count above the length takes or drops everything; a negative count is a
@@ -2014,8 +2024,8 @@ export function std$order$then_by(first: Order, second: Order): Order {
   return first.tag === "Equal" ? second : first;
 }
 
-// Text representation (rule 3.9). Records have no runtime type name yet, so
-// they show as their fields in parentheses.
+// Text representation (rule 3.9). A record shows as its construction, with
+// the short type name its constructor registered; a case as its tag and value.
 export function std$text$show(value: unknown): string {
   if (value === null) return "Unit";
   if (typeof value === "string") return JSON.stringify(value);
@@ -2028,8 +2038,12 @@ export function std$text$show(value: unknown): string {
   }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
+    const fields = () => Object.entries(obj).map(([k, v]) => `${k}: ${std$text$show(v)}`).join(", ");
+    const name = RECORD_NAMES.get(obj);
+    if (name !== undefined) return `${name}(${fields()})`;
     if (typeof obj.tag === "string") return "value" in obj ? `${obj.tag}(${std$text$show(obj.value)})` : obj.tag;
-    return `(${Object.entries(obj).map(([k, v]) => `${k}: ${std$text$show(v)}`).join(", ")})`;
+    // Only a record no constructor built, such as one an extern fn returns.
+    return `(${fields()})`;
   }
   return String(value);
 }

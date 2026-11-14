@@ -413,6 +413,12 @@ confirmed. Do not build on them as if settled; raise them if a new phase depends
   card says where a table of functions goes, `rank` is rerun). Reasons: 5.1 with 3.9 (E0401 would need an exemption
   too), principle 3 (two ways), 3.8 (loosening later breaks nothing). In `decisions.md`, Type checking (Function
   results); details in "From the rank round".
+- Records in `show` (R7 of `docs/plans/records.md`, 2026-11-14, built as the first commit of phase `const`; the main
+  session took the recommendation). A std output change: records carry their type's short name at runtime, through a
+  `WeakMap` that each record constructor and the runtime's places that build std records fill, so `std.text.show`
+  prints `Port(value: 8080)` and a record with a `String` field `tag` no longer shows as a case; equality untouched. A
+  program that shows a record prints differently now; in the tests only the `NET_STDOUT` pin changed. In
+  `decisions.md`, Semantics and runtime (Records in `show`, Representation in TS).
 
 ## Database phase: open points (2026-11-12)
 
@@ -1385,7 +1391,8 @@ Left for later:
 - **Parser error recovery:** the parser stops at the first error. Since definitions start with `fn`/`type` at line
   start, it could resynchronize per definition and report one diagnostic per broken definition (5.6).
 - **Records at runtime** carry no type name, so `std.text.show` prints `(value: 8080)` instead of
-  `Port(value: 8080)`. A non-enumerable symbol tag on records would fix this without affecting equality.
+  `Port(value: 8080)`. A non-enumerable symbol tag on records would fix this without affecting equality. Done (R7 of
+  `docs/plans/records.md`): the constructor registers the short type name in a `WeakMap`, so equality is untouched.
 - **Lexer:** `List<Int>= x` lexes `>=` as one token. Harmless with canonical spacing, but a corner case.
 - **Language knowledge served by the tool** (the user's idea, 2026-11-12: once the compiler ships, should the model
   read a spec file or a database of specs and examples?). My recommendation: the server serves the language as it
@@ -1495,6 +1502,8 @@ Left for later:
   field, would be cleaner.
 - **`std.text.show` and the tool now disagree.** The tool prints values from their static type (`Port(value: 8080)`,
   alang string escapes); `std.text.show` at runtime has no types (`(value: 8080)`, JSON quoting). The emitter knows the
-  static type at every `show` call and could pass a type descriptor, so both share one printer.
+  static type at every `show` call and could pass a type descriptor, so both share one printer. Records agree since
+  R7 (the tool adds the module outside it). Strings still differ: `std.text.show(value: "a\u{1B}é")` gives
+  `"a\u001bé"` (JSON), an actual value `"a\u{1B}é"` (observed 2026-11-14).
 - **Examples as a regression net.** Since all examples run at every acceptance, the whole program's examples act as its
   test suite. For a large codebase only the examples of changed definitions and their dependents need to run.

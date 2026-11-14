@@ -586,6 +586,14 @@ Deno.test("std.map: equal maps compare and show alike, in key order", () => {
   assertEquals(rt.std$text$show(rt.std$map$insert(rt.std$map$empty<number, string>(), -1, "x")), '[-1: "x"]');
 });
 
+Deno.test("std.text.show: a record shows with the name its constructor registered (R7)", () => {
+  assertEquals(rt.std$text$show({ tag: "Some", value: 1 }), "Some(1)");
+  assertEquals(rt.std$text$show(rt.std$string$Cut({ before: "a", after: "b" })), 'Cut(before: "a", after: "b")');
+  assertEquals(rt.std$text$show(rt.record("Label", { tag: "a", value: 1 })), 'Label(tag: "a", value: 1)');
+  // Only a record no constructor built keeps the old form.
+  assertEquals(rt.std$text$show({ before: "a" }), '(before: "a")');
+});
+
 // One alang program whose examples call every function added with maps,
 // accepted and then held against the runtime's TypeScript, as PROGRAM is.
 const MAPS_PROGRAM = `fn maps.bump

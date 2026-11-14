@@ -1016,6 +1016,81 @@ fn fnvalues.apply_all
 end fn fnvalues.apply_all
 `;
 
+// Records show with their type's short name (R7), also those std builds;
+// a record with a `String` field `tag` is no case.
+const SHOWN = `
+type shown.Label
+  doc: "A tag with a number."
+  record:
+    tag: String
+    value: Int
+  where: none
+end type shown.Label
+
+type shown.Only
+  doc: "A tag alone."
+  record:
+    tag: String
+  where: none
+end type shown.Only
+
+type geo.Point
+  doc: "A point on a grid."
+  record:
+    x: Int
+    y: Int
+  where: none
+end type geo.Point
+
+fn shown.keep
+  doc: "The label it is given."
+  in:
+    label: Label
+  out: Label
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    keep(label: Label(tag: "a", value: 1)) == Label(tag: "a", value: 1)
+  body:
+    return label
+end fn shown.keep
+
+fn shown.texts
+  doc: "Records of this module and of another one, shown."
+  in:
+    tag: String
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    texts(tag: "a") == ["Label(tag: \\"a\\", value: 1)", "Only(tag: \\"a\\")", "[Some(Only(tag: \\"a\\"))]", "Point(x: 1, y: -2)"]
+  body:
+    let label: String = std.text.show(value: Label(tag: tag, value: 1))
+    let only: String = std.text.show(value: Only(tag: tag))
+    let nested: String = std.text.show(value: [Some(Only(tag: tag))])
+    return [label, only, nested, std.text.show(value: geo.Point(x: 1, y: -2))]
+end fn shown.texts
+
+fn shown.std_texts
+  doc: "Records of std, shown."
+  in:
+    text: String
+  out: List<String>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    std_texts(text: "a=b=c") == ["Some(Cut(before: \\"a\\", after: \\"b=c\\"))", "Header(name: \\"a\\", value: \\"b\\")", "Response(status: 204, headers: [], content: \\"\\")"]
+  body:
+    let cut: String = std.text.show(value: std.string.cut(text: text, separator: "="))
+    let header: String = std.text.show(value: std.http.Header(name: "a", value: "b"))
+    let response: String = std.text.show(value: std.http.Response(status: 204, headers: std.list.empty<std.http.Header>(), content: ""))
+    return [cut, header, response]
+end fn shown.std_texts
+`;
+
 const PROGRAMS: Record<string, string> = {
   hello: specBlock("fn hello.main"),
   port: specBlock("type net.port.Port"),
@@ -1032,6 +1107,7 @@ const PROGRAMS: Record<string, string> = {
   maps: MAPS,
   fnvalues: FNVALUES,
   first_true: specBlock("fn calc.first_true"),
+  shown: SHOWN,
   io: IO_PROGRAM,
   ending: ENDING_PROGRAM,
   net: NET_PROGRAM,
@@ -1071,7 +1147,8 @@ Deno.test("emit: generated TypeScript passes the TypeScript checker", async () =
   assert_(!bad.success, "deno check accepted an ill-typed file");
 });
 
-for (const name of ["hello", "port", "clamp", "calc", "port_plus", "propagate", "shared", "fnvalues", "first_true"]) {
+const WITH_EXAMPLES = ["hello", "port", "clamp", "calc", "port_plus", "propagate", "shared", "fnvalues", "first_true"];
+for (const name of [...WITH_EXAMPLES, "shown"]) {
   Deno.test(`emit: spec examples of ${name} pass`, async () => {
     const results = await testExamples(built[name]);
     assertEquals(results.filter((r) => !r.passed), []);
@@ -1291,6 +1368,25 @@ Deno.test("emit: a block ending without a value delivers Unit to a return (sink 
   const mod = await load("propagate");
   assertEquals(mod.propagate$settle({ tag: "Some", value: 2 }), null);
   assertEquals(mod.propagate$settle({ tag: "None" }), null);
+});
+
+Deno.test("emit: a record shows with its type's short name, equality untouched (R7)", async () => {
+  const mod = await load("shown");
+  assertEquals(mod.shown$texts("a"), [
+    'Label(tag: "a", value: 1)',
+    'Only(tag: "a")',
+    '[Some(Only(tag: "a"))]',
+    "Point(x: 1, y: -2)",
+  ]);
+  assertEquals(mod.shown$std_texts("a=b=c"), [
+    'Some(Cut(before: "a", after: "b=c"))',
+    'Header(name: "a", value: "b")',
+    'Response(status: 204, headers: [], content: "")',
+  ]);
+  // The name is kept beside the object: its fields and `==` are unchanged.
+  const label = mod.shown$Label({ tag: "a", value: 1 });
+  assertEquals(Object.keys(label), ["tag", "value"]);
+  assert_(rt.eq(label, { tag: "a", value: 1 }), "equal to the same fields");
 });
 
 // ---- effects at runtime ----

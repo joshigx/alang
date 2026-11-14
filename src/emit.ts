@@ -262,7 +262,7 @@ class DefinitionEmitter {
         "  }",
       );
     }
-    lines.push("  return $fields;", "}");
+    lines.push(`  return ${RT}.record(${JSON.stringify(def.path[def.path.length - 1])}, $fields);`, "}");
     return lines;
   }
 
