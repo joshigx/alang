@@ -855,8 +855,12 @@ class DefChecker {
     const fn = this.env.fns.get(full);
     if (fn) {
       // A local with the short name would take it (`by: compare` with a
-      // parameter `compare`), so there the full name is the only spelling.
-      if (scope.lookup(e.path[e.path.length - 1]) === undefined) this.shortForm(e, e.path, pathText(e.path));
+      // parameter `compare`), and a hidden name of a shared case would be
+      // E0236, so there the full name is the only spelling.
+      const short = e.path[e.path.length - 1];
+      if (scope.lookup(short) === undefined && scope.hiddenWhy(short) === undefined) {
+        this.shortForm(e, e.path, pathText(e.path));
+      }
       if (fn.typeParams.length > 0) {
         this.report(
           "E0210",

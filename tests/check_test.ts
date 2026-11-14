@@ -536,10 +536,13 @@ Deno.test("check: a name not every pattern binds has no value in the arm (E0236)
   );
   assertEquals(types.message, "`n` is an `Int` in `Ok(n)` and a `String` in `Err(n)`, so it has no single type here.");
   // A module function of the same name does not stand in for it.
-  const message = 'fn m.message\n  doc: "M."\n  in: none\n  out: String\n  effects: none\n  requires: none\n' +
-    '  ensures: none\n  examples:\n    message() == "m"\n  body:\n    return "m"\nend fn m.message';
+  const message = 'fn m.message\n  doc: "M."\n  in:\n    text: String\n  out: String\n  effects: none\n' +
+    '  requires: none\n  ensures: none\n  examples:\n    message(text: "m") == "m"\n  body:\n    return text\nend fn m.message';
   const withFn = fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE, "message"]]) + "\n\n" + message;
   one(withFn, "E0236");
+  // Written in full, it is the function, not reported as E0226: the short form would be the hidden name.
+  const join = 'std.string.join(parts: std.list.map(list: ["a"], with: m.message), separator: "")';
+  clean(fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE, join]]) + "\n\n" + message);
   // Used twice: one cause, one diagnostic.
   one(
     fsErrors([["std.fs.NotFound", '"missing"'], [UNREADABLE, "std.string.concat(left: message, right: message)"]]),
