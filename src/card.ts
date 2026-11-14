@@ -16,15 +16,11 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 
 - \`list("std")\` gives the std modules, \`list("std.string")\` a module's definitions. \`search("split")\` finds names
   and docs containing a text. Each hit holds its signature and doc.
-- \`search_type("String, String -> List<String>")\` finds functions by signature: parameter types in order, \`_\` for
-  any type; the count and the result must match.
 - \`context(name)\` gives a definition's text (examples, body) and hash, the signatures of what it uses and the text
   of the constants it uses: read code this way, not from \`export/\`.
-- \`add(text)\` adds a definition, \`replace(name, hash, text)\` replaces the version whose hash a query returned, and
-  \`submit(changes)\` sends several as one transaction: definitions that use each other, or an interface change with
-  its callers. Nothing is written unless all of it is accepted.
-- A rejected change returns diagnostics with \`code\`, \`at\` (the quoted text), \`message\`, \`expected\` and, when the
-  correction is mechanical, a \`fix\` (\`replace\` by \`with\`): apply it and send the change again.
+- \`add(text)\` adds a definition, \`replace(name, hash, text)\` the version whose hash a query returned, and
+  \`submit(changes)\` several in one transaction (an interface change with its callers): all are accepted, or none.
+- A rejected change returns diagnostics; where one has a \`fix\` (\`replace\` by \`with\`), apply it and send again.
 
 ## Definitions
 
@@ -39,6 +35,10 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   or a limit: pure, no examples, used as \`limit\` (not \`limit()\`), not a pure \`fn\` with \`in: none\`.
 - Generic: \`fn util.last<T>\`, \`type util.Pair<A, B>\`, one capital letter each, \`end fn util.last\`.
   A \`T\` has no \`==\` (E0222), except against literals and cases: \`option == None\`.
+- \`extern fn\`: a \`fn\` with \`target: "./text.ts#slugify"\` for \`body:\`, \`end extern fn <full name>\`: \`slugify\`,
+  exported by \`text.ts\`, TypeScript you write beside \`alang.db\`. Values cross as JavaScript: \`List\` an array, a
+  record an object, \`Unit\` \`null\`, a case \`{ tag: "Some", value: 1 }\`, a \`Map\` a \`Map\`. The result is checked
+  against \`out\`; with \`effects: none\` it returns at once (no \`Promise\`) and has examples.
 - Names of the own module are short (\`Problem\`, \`fahrenheit\`, \`NotANumber\` in \`temp\`). All others are in full, std
   included, and enclosing or nested modules count as others. A case's full name is \`module.Case\`
   (\`std.fs.NotFound\`), so case names are unique per module. Built-ins are always short: \`Int Float Bool String
@@ -71,7 +71,6 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 - Every argument is named, in declaration order (E0107, E0205 to E0208): \`std.string.concat(left: a, right: b)\`,
   records too: \`Item(name: "x", count: 1)\`. A case's value is unnamed: \`Some(n)\`, \`Err(NotANumber(t))\`. Fields:
   \`item.name\`. No method calls (\`x.f()\`, E0220).
-- Type arguments only where no argument fixes them (E0209): \`std.list.empty<Int>()\`.
 - \`Ok\`, \`Err\`, \`None\` and a generic type's \`Leaf\` take their type from what is expected (a \`let\`, a parameter,
   \`out\`, the left side of \`==\`): \`f(x: 1) == None\`. Where a generic parameter leaves it open: \`Leaf<Int>\` (E0210).
 - Lists: \`[a, b, c]\`; the empty list is \`std.list.empty<T>()\`, never \`[]\` (E0228). No \`xs[0]\` and no \`Int[]\`:
@@ -104,8 +103,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 
 ## Not in alang
 
-No comments (the \`doc\` describes), \`extern fn\`, imports, \`var\`, assignment, \`null\`, exceptions, \`while\` (use
-recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, concurrency. Most get E0006, naming the alang form.
+No comments (the \`doc\` describes), imports, \`var\`, assignment, \`null\`, exceptions, \`while\` (use recursion), \`?\`,
+braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, concurrency. Most get E0006, naming the alang form.
 
 ## A complete program, accepted as it stands
 

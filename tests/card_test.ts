@@ -8,6 +8,7 @@ import { EFFECTS, pathText } from "../src/ast.ts";
 import { CARD } from "../src/card.ts";
 import { McpServer, TOOLS } from "../src/mcp.ts";
 import { AlangError } from "../src/diagnostic.ts";
+import { checkProgram } from "../src/check.ts";
 import { parseExpression, parseProgram } from "../src/parser.ts";
 import { printProgram } from "../src/printer.ts";
 import { STD, STD_TYPES } from "../src/std.ts";
@@ -88,7 +89,7 @@ Deno.test("card: the effects are listed in table order", () => {
 Deno.test("card: every tool it names exists", () => {
   const section = CARD.slice(CARD.indexOf("## Working through the tools"), CARD.indexOf("## Definitions"));
   const named = [...new Set([...section.matchAll(/`([a-z_]+)\(/g)].map((m) => m[1]))];
-  assertEquals(named, ["list", "search", "search_type", "context", "add", "replace", "submit"]);
+  assertEquals(named, ["list", "search", "context", "add", "replace", "submit"]);
   for (const name of named) assert_(TOOLS.some((t) => t.name === name), name);
 });
 
@@ -114,7 +115,6 @@ Deno.test("card: the tool calls it shows find what it says", async () => {
       '`list("std")`',
       '`list("std.string")`',
       '`search("split")`',
-      '`search_type("String, String -> List<String>")`',
       "`context(name)`",
     ]
   ) assert_(CARD.includes(shown), shown);
@@ -141,6 +141,18 @@ Deno.test("card: the tool calls it shows find what it says", async () => {
   assert_(context.text.includes("doc: "));
   assertEquals(names(context.uses), ["std.fs.Error"]);
   await done(cb);
+});
+
+// The extern on the card (E17) checks in the form it describes; its example
+// is not the round's task, so it does not hint at it.
+Deno.test("card: its extern form checks", () => {
+  const target = 'target: "./text.ts#slugify"';
+  assert_(CARD.includes(`\`${target}\``));
+  assert_(CARD.includes("`end extern fn <full name>`"));
+  const slugify = 'extern fn m.slugify\n  doc: "The text as a slug."\n  in:\n    text: String\n  out: String\n' +
+    '  effects: none\n  requires: none\n  ensures: none\n  examples:\n    slugify(text: "A b") == "a-b"\n' +
+    `  ${target}\nend extern fn m.slugify\n`;
+  assertEquals(checkProgram(parseProgram(slugify)).diagnostics, []);
 });
 
 Deno.test("card: it stays a card", () => {
