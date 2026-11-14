@@ -74,7 +74,7 @@ function printType(def: TypeDef): string {
     def.shape.cases.map((c) => (c.payload ? `${c.name}: ${printTypeRef(c.payload)}` : c.name)),
   );
   return [
-    `type ${name}`,
+    `type ${name}${printTypeParams(def.typeParams)}`,
     ...section("doc", printString(def.doc)),
     ...shape,
     ...section("where", def.where && printExpr(def.where, inner)),

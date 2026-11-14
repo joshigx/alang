@@ -215,7 +215,7 @@ fn_def     = "fn" path [ type_params ]
              "body:" stmt { stmt }
              "end" "fn" path ;
 
-type_def   = "type" path
+type_def   = "type" path [ type_params ]
              "doc:" string
              ( "record:" param { param } | "variant:" case { case } )
              "where:" ( "none" | expr )
@@ -531,7 +531,6 @@ These forms are common in other languages but do not exist in alang. Write the f
 | A wildcard pattern `_` | Every value in a pattern gets a name, used or not: `case Ok(done) then`; in a shared case, a name that not every pattern binds is simply left unused |
 | A pattern over a list's items, `case [a, b] then` (E0101) | `let [a, b]: List<T> = xs else return …` for an exact length; `std.list.first` and `std.list.drop` for the first item and the rest |
 | Copying a record with one field changed | Construct it again with every field named: `Task(text: task.text, done: true)` |
-| Generic types, `type m.Pair<A, B>` (E0101) | A generic function over the parts, or a type for each use |
 | Bounds on a type parameter (`<T: Ord>`), and `==`, `<` or `std.text.show` on its values (E0222, E0211) | Take a function as a parameter: `same: (T, T) -> Bool`, `by: (T, T) -> Order`, `show: (T) -> String`; compare with a value built from literals and cases (`option == None`), or tell cases apart with `match` |
 
 ### 7.2 Text
@@ -597,6 +596,48 @@ fn util.contains_by<T>
 end fn util.contains_by
 ```
 
+- **Generic types.** A type takes type parameters the same way: `type tree.Tree<T>`, written with its arguments wherever it is used (`Tree<Int>`, `Tree<T>`; E0209 without them). Each type parameter occurs in a field or a case (E0250). A record takes its type arguments from its fields, read from left to right; a case from what is expected there, or from its value when that names every type parameter (`Node(branch)`), and otherwise it names them: `Leaf<Int>` (7.5). So the field that fixes the type comes first, as `item` does in `Branch`.
+
+```
+type tree.Tree<T>
+  doc: "A binary tree: a leaf, or a node with an item and a tree on either side."
+  variant:
+    Leaf
+    Node: Branch<T>
+  where: none
+end type tree.Tree
+
+type tree.Branch<T>
+  doc: "A node of a tree: its item, and the trees left and right of it."
+  record:
+    item: T
+    left: Tree<T>
+    right: Tree<T>
+  where: none
+end type tree.Branch
+
+fn tree.items<T>
+  doc: "The items of the tree from left to right."
+  in:
+    tree: Tree<T>
+  out: List<T>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    items(tree: Leaf<Int>) == std.list.empty<Int>()
+    items(tree: Node(Branch(item: "b", left: Leaf, right: Node(Branch(item: "c", left: Leaf, right: Leaf))))) == ["b", "c"]
+  body:
+    let parts: List<List<T>> = match tree
+      case Leaf then
+        std.list.empty<List<T>>()
+      case Node(branch) then
+        [items(tree: branch.left), [branch.item], items(tree: branch.right)]
+    end match
+    return std.list.flatten(lists: parts)
+end fn tree.items
+```
+
 - **Cases belong to the module.** A case's full name is `module.Case`, not `module.Type.Case`. So two types of one module cannot share a case name, and a case cannot share its name with a type of its module (E0215). Outside its module, a case is written in full: `std.fs.NotFound`, `net.port.OutOfRange`.
 - **The own module is written short (1.2).** Inside `net.port`, write `parse`, `Port` and `OutOfRange`. Names from any other module are written in full, std included: `std.http.Request`, `std.http.AddressInUse`. Enclosing and nested modules count as other modules. An own-module name written in full is E0226; the codebase stores it short by itself and lists it under `fixed`. One exception: a function passed as a value or a constant whose short name is also the name of a local, and a type, record or case named like a type parameter of the definition, are written in full.
 - **Built-ins are always short.** `Int`, `Float`, `Bool`, `String`, `Unit`, `List`, `Map`, `Option` (`Some`, `None`), `Result` (`Ok`, `Err`) and `Order` (`Less`, `Equal`, `Greater`). No type or case may take one of these names (E0215).
@@ -627,7 +668,7 @@ end fn util.contains_by
 - **Lists.** `[1, 2, 3]` is a `List<Int>`. A list literal has at least one item; the stored text separates the items with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The item type comes from the expected type (a `let`, a parameter, `out` at a `return`, the left side of `==`), otherwise from the first item, and every other item must have it: `[1.0, 2]` is an error (E0204), and so is `[None, Some(1)]` without an expected type (E0210). The empty list is `std.list.empty<Int>()`; `[]` is an error whose fix names the item type when the expected type gives it (E0228). A `for` gives a literal it iterates its declared type as the item type, since it stands to the left: `for x: Option<Int> in [None, Some(1)]` is fine, and in `for x: Float in [1]` the `1` is an error with the fix `1.0` (E0204). There is no index access (`xs[0]`) and no `Int[]` (E0006): use `std.list.get(list: xs, index: 0)` and `List<Int>`.
 - **Maps.** `["a": 1, "b": 2]` is a `Map<String, Int>`. Every entry is `key: value`, with no space before the colon and one after it; a map literal has at least one entry, the stored text separates the entries with `, ` and keeps them on one line, and a comma before `]` is an error (E0101). The token after the first expression decides: a `:` makes the literal a map, so every entry has one, the first one too. Keys are `Int` or `String` (E0229), wherever a `Map` type arises: written (`Map<Float, Int>`), in a literal (`[1.5: 1]`), or built by a std call (`std.map.empty<Point, Int>()`, a `std.map.from_list` whose key function returns a record); key a map by an `Int` or `String` field instead, or keep a `List` of records. The key and value types come from the expected type, otherwise from the first entry, as for a list. A key is a value, so a text key is in quotes: `["name": 1]`; a bare unknown name as a key (`[name: 1]`) is E0203 with the quoted text as its fix. Two equal literal keys are an error (E0234); two computed keys that turn out equal trap (`key`). The empty map is `std.map.empty<String, Int>()`; `[:]` is an error whose fix names the types when the expected type gives them (E0228), and so is `[]` where a map is expected. There is no index access (`m["a"]`, E0006): `std.map.get(map: m, key: "a")` gives an `Option`. A `for` iterates over a list, so over `std.map.keys` or `std.map.to_list` of a map (E0204).
 - **Explicit type arguments (1.4).** They are written exactly when a type parameter of the function occurs in no parameter type, and never otherwise (E0209): `std.list.empty<Int>()`, but `std.list.map(list: xs, with: ...)`. This holds for your own generic functions too: `fn m.none_list<T>`, with `in: none`, is called `none_list<Int>()`.
-- **Types flow from left to right (1.4).** `Ok`, `Err` and `None` take their type from what is expected at that point: the type of a `let`, a parameter, `out` at a `return`, or the left side of `==`. `Some(x)` can also take its type from `x`. Where neither gives it, the case names its type arguments: `None<Int>`, `Ok<Int, String>(1)`. Without them it is an error (E0210), and where the expected type or the value gives them, writing them is one (E0209, with the fix). So `first_some(first: None<Int>, second: Some(2))`, but `let o: Option<Int> = None`. A record takes its type from its fields, never from written type arguments.
+- **Types flow from left to right (1.4).** `Ok`, `Err` and `None` take their type from what is expected at that point: the type of a `let`, a parameter, `out` at a `return`, or the left side of `==`. `Some(x)` can also take its type from `x`. Where neither gives it, the case names its type arguments: `None<Int>`, `Ok<Int, String>(1)`, and so does a case of your own generic type: `Leaf<Int>`. Without them it is an error (E0210), and where the expected type or the value gives them, writing them is one (E0209, with the fix). So `first_some(first: None<Int>, second: Some(2))`, but `let o: Option<Int> = None`. A record takes its type from its fields, never from written type arguments.
 - **Arithmetic.** `+ - * / %` work on two `Int` or two `Float`; nothing is converted implicitly (`std.int.to_float`). `Int` division truncates toward zero, and `%` takes the sign of the dividend (`-7 % 2 == -1`). Division by zero and leaving the `Int` range trap. An `Int` is never negative zero: `0 * -1` and `-1 / 2` are `0`, while a `Float` keeps IEEE's `-0.0`. A `Float` result that is NaN traps (`0.0 / 0.0`); infinities are ordinary values.
 - **Comparison and logic.** `==` and `!=` work on every type without functions, by structure (3.9). On a type that holds a function or a type parameter, they work only against a value built from literals and cases, such as `None`, `Err(std.fs.NotFound)` or `std.list.empty<T>()` (E0222). `< <= > >=` work only on `Int`, `Float` and `String` (E0211); other types are ordered by a function that returns `Order`. The logical operators are `and`, `or` and `not`. `not` binds more loosely than comparison: `not a == b` means `not (a == b)`. Mixing `+ -` with `* / %`, or `and` with `or`, needs parentheses (3.5). Within `* / %`, or within `+ -`, operators group from the left without them: `12 * 5 / 4` is `(12 * 5) / 4`. Parentheses that 3.5 does not require are dropped from the stored text. `==` compares variant values too (`outcome == Err(std.fs.NotFound)`); to branch on several cases, use `match`.
 - **Lambdas (2.4).** `fn(item: Int): Int => item * factor` has typed parameters, a result type, and one expression as its body: no `let` and no `return` (E0219). It has no effects (E0232) and may read the bindings around it. A lambda used as an operand is put in parentheses. Since its body is one expression, an `Option` inside it is unwrapped with `std.option.with_default` (or changed with `std.option.map`), and the `Some` results of a function over a list are kept with `std.list.filter_map`; neither needs a helper function.
@@ -945,7 +986,7 @@ Section 6 in practice. `alang mcp` offers the queries and operations as tools fo
 
 | Query | Result |
 | --- | --- |
-| `list(module)` | The module's definitions (name, hash, kind, `signature` on one line, and doc) and submodules; without a module, the codebase's top level; `std` for the library. A function's signature is like `fn std.string.split(text: String, separator: String): List<String>, effects: none`, a generic one's like `fn util.contains_by<T>(list: List<T>, item: T, same: (T, T) -> Bool): Bool, effects: none`, a type's like `type std.string.Cut, record: before: String, after: String` or `type std.fs.Kind, variant: File \| Directory`, with `, where: ...` unless the where is `none`; a constant's like `const shop.sizes: List<String>` |
+| `list(module)` | The module's definitions (name, hash, kind, `signature` on one line, and doc) and submodules; without a module, the codebase's top level; `std` for the library. A function's signature is like `fn std.string.split(text: String, separator: String): List<String>, effects: none`, a generic one's like `fn util.contains_by<T>(list: List<T>, item: T, same: (T, T) -> Bool): Bool, effects: none`, a type's like `type std.string.Cut, record: before: String, after: String` or `type std.fs.Kind, variant: File \| Directory`, a generic one's like `type tree.Tree<T>, variant: Leaf \| Node: tree.Branch<T>`, with `, where: ...` unless the where is `none`; a constant's like `const shop.sizes: List<String>` |
 | `search(text)` | Definitions whose name or `doc` contains the text, std included, shown as `list` shows them |
 | `search_type(pattern)` | Functions by signature, such as `String -> Option<Int>`, `Int, Int -> Bool`, or `-> Unit` for none. `_` matches any type; `Port` matches by last segment. The parameter count and the result type must match exactly, so `String -> Int` does not find `std.int.parse`. A function-typed parameter is written as a function type: `List<_>, (_) -> Bool -> List<_>` finds `std.list.filter` (`_` matches it too), and a whole pattern in parentheses, `(String) -> Option<Int>`, reads as `String -> Option<Int>`. A type parameter, std's or your own, matches any type, the same one at each occurrence: `List<Int> -> Option<Int>` finds `std.list.first` |
 | `context(name)` | The text and hash, and the signatures of everything it uses (std as one line or as alang text; a constant as its whole text, since examples depend on its value). Read this before a change. To call a std function or use a std type, its `signature` in a hit is enough; `context` of a function adds the types it mentions |

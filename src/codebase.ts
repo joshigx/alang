@@ -264,8 +264,9 @@ function signatureTypes(def: Definition): TypeTree[] {
     return [...def.params.map((p) => tree(p.type)), tree(def.out)];
   }
   if (def.kind === "const") return [treeOfRef(def.out, module)];
-  if (def.shape.kind === "record") return def.shape.fields.map((f) => treeOfRef(f.type, module));
-  return def.shape.cases.flatMap((c) => (c.payload ? [treeOfRef(c.payload, module)] : []));
+  const tree = (t: TypeRef) => treeOfRef(t, module, def.typeParams);
+  if (def.shape.kind === "record") return def.shape.fields.map((f) => tree(f.type));
+  return def.shape.cases.flatMap((c) => (c.payload ? [tree(c.payload)] : []));
 }
 
 // A stored function's signature on one line without the doc, its types in
@@ -283,14 +284,16 @@ function storedHead(name: string, def: FnDef): string {
 // A type's signature on one line without the doc, std and stored alike: its
 // sections in order, field and case types in full as in `storedHead`, cases
 // separated by `|`, and the where as the definition writes it (it reads the
-// fields), left out when it is `none`. Types have no type parameters.
+// fields), left out when it is `none`. A generic type's type parameters
+// follow its name, as a function's do (G15).
 function typeHead(name: string, def: TypeDef): string {
   const module = moduleOf(def.path);
-  const full = (t: TypeRef) => showTree(treeOfRef(t, module));
+  const full = (t: TypeRef) => showTree(treeOfRef(t, module, def.typeParams));
   const shape = def.shape.kind === "record"
     ? `record: ${def.shape.fields.map((f) => `${f.name}: ${full(f.type)}`).join(", ")}`
     : `variant: ${def.shape.cases.map((c) => (c.payload ? `${c.name}: ${full(c.payload)}` : c.name)).join(" | ")}`;
-  return `type ${name}, ${shape}${def.where ? `, where: ${printExpr(def.where, "")}` : ""}`;
+  const letters = def.typeParams.length === 0 ? "" : `<${def.typeParams.join(", ")}>`;
+  return `type ${name}${letters}, ${shape}${def.where ? `, where: ${printExpr(def.where, "")}` : ""}`;
 }
 
 // The `list` and `search` entry of a stored definition; a constant's line is

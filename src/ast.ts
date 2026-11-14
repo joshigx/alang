@@ -157,6 +157,8 @@ export interface Case {
 export interface TypeDef {
   readonly kind: "type";
   readonly path: Path;
+  // `type tree.Tree<T>` (G8), as for functions; `[]` without them.
+  readonly typeParams: readonly string[];
   readonly doc: string;
   readonly shape:
     | { readonly kind: "record"; readonly fields: readonly Param[] }

@@ -280,7 +280,7 @@ class Parser {
     this.expectKeyword("fn");
     const path = this.definitionPath("fn");
     this.definition = pathText(path);
-    const typeParams = this.isSymbol("<") ? this.typeParams() : [];
+    const typeParams = this.isSymbol("<") ? this.typeParams("fn util.last<T>") : [];
     this.expectNewline();
     const doc = this.docSection();
 
@@ -333,14 +333,14 @@ class Parser {
     return { kind: "fn", path, typeParams, doc, params, out, effects, requires, ensures, examples, body };
   }
 
-  // `<T, U>` after a definition's name (G1, G3): one capital letter each,
-  // at least one, no comma before `>`. Whether a letter is written twice is
-  // the checker's (E0215).
-  private typeParams(): string[] {
+  // `<T, U>` after a definition's name (G1, G3, G8): one capital letter
+  // each, at least one, no comma before `>`. Whether a letter is written
+  // twice is the checker's (E0215). `example` is a header of the kind.
+  private typeParams(example: string): string[] {
     this.expectSymbol("<");
     if (this.isSymbol(">")) {
       this.fail(
-        "A definition's type parameters are capital letters in `<...>`: `fn util.last<T>`; without any, write the name alone.",
+        `A definition's type parameters are capital letters in \`<...>\`: \`${example}\`; without any, write the name alone.`,
       );
     }
     const letters = [this.typeParam()];
@@ -462,6 +462,7 @@ class Parser {
     this.expectKeyword("type");
     const path = this.definitionPath("type");
     this.definition = pathText(path);
+    const typeParams = this.isSymbol("<") ? this.typeParams("type util.Pair<A, B>") : [];
     this.expectNewline();
     const doc = this.docSection();
 
@@ -499,7 +500,7 @@ class Parser {
     this.sectionHeader("where");
     const where = this.noneOrExpr();
     this.endDef("type", path);
-    return { kind: "type", path, doc, shape, where };
+    return { kind: "type", path, typeParams, doc, shape, where };
   }
 
   // ---- types ----

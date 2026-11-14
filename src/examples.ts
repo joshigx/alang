@@ -21,7 +21,7 @@ import {
   std$text$show,
   type TrapInfo,
 } from "./runtime.ts";
-import type { Type } from "./types.ts";
+import { type Subst, substitute, type Type } from "./types.ts";
 
 // ---- presence ----
 
@@ -237,11 +237,14 @@ export function valueExpr(
   }
   const shape = shapes.get(t.name);
   if (!shape) return null;
+  // A generic type's fields and case values hold its type parameters, which
+  // the value's type arguments give (G8).
+  const s: Subst = new Map(shape.typeParams.map((tp, i) => [tp, t.args[i]]));
   if (shape.kind === "record") {
     const fields = value as Record<string, unknown>;
     const args = [];
     for (const f of shape.fields) {
-      const v = go(fields[f.name], f.type);
+      const v = go(fields[f.name], substitute(f.type, s));
       if (!v) return null;
       args.push({ name: f.name, value: v });
     }
@@ -251,7 +254,7 @@ export function valueExpr(
   if (!c) return null;
   const path = written(`${pathText(moduleOf(t.name.split(".")))}.${c.name}`, module);
   if (!c.payload) return construct(path);
-  const inner = go(tagged.value, c.payload);
+  const inner = go(tagged.value, substitute(c.payload, s));
   return inner && construct(path, inner);
 }
 

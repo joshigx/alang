@@ -110,3 +110,79 @@ export const FIRST_SOME = `fn util.first_some<T>
     return first
 end fn util.first_some
 `;
+
+// The spec block of 7.3 (`Tree`, `Branch`, `items`) and `insert`.
+export const TREE = `type tree.Tree<T>
+  doc: "A binary tree: a leaf, or a node with an item and a tree on either side."
+  variant:
+    Leaf
+    Node: Branch<T>
+  where: none
+end type tree.Tree
+
+type tree.Branch<T>
+  doc: "A node of a tree: its item, and the trees left and right of it."
+  record:
+    item: T
+    left: Tree<T>
+    right: Tree<T>
+  where: none
+end type tree.Branch
+
+fn tree.items<T>
+  doc: "The items of the tree from left to right."
+  in:
+    tree: Tree<T>
+  out: List<T>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    items(tree: Leaf<Int>) == std.list.empty<Int>()
+    items(tree: Node(Branch(item: "b", left: Leaf, right: Node(Branch(item: "c", left: Leaf, right: Leaf))))) == ["b", "c"]
+  body:
+    let parts: List<List<T>> = match tree
+      case Leaf then
+        std.list.empty<List<T>>()
+      case Node(branch) then
+        [items(tree: branch.left), [branch.item], items(tree: branch.right)]
+    end match
+    return std.list.flatten(lists: parts)
+end fn tree.items
+
+fn tree.insert<T>
+  doc: "The tree with the item added in order: smaller items go left."
+  in:
+    tree: Tree<T>
+    item: T
+    by: (T, T) -> Order
+  out: Tree<T>
+  effects: none
+  requires: none
+  ensures: none
+  examples:
+    insert(tree: Leaf<Int>, item: 2, by: std.int.compare) == Node(Branch(item: 2, left: Leaf, right: Leaf))
+    insert(tree: insert(tree: Leaf<String>, item: "b", by: std.string.compare), item: "a", by: std.string.compare) == Node(Branch(item: "b", left: Node(Branch(item: "a", left: Leaf, right: Leaf)), right: Leaf))
+  body:
+    let grown: Tree<T> = match tree
+      case Leaf then
+        Node(Branch(item: item, left: Leaf, right: Leaf))
+      case Node(branch) then
+        if by(item, branch.item) == Less then
+          Node(Branch(item: branch.item, left: insert(tree: branch.left, item: item, by: by), right: branch.right))
+        else
+          Node(Branch(item: branch.item, left: branch.left, right: insert(tree: branch.right, item: item, by: by)))
+        end if
+    end match
+    return grown
+end fn tree.insert
+`;
+
+export const PAIR = `type m.Pair<A, B>
+  doc: "Two values."
+  record:
+    left: A
+    right: B
+  where: none
+end type m.Pair
+`;

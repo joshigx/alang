@@ -37,7 +37,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   at most one value), then \`where:\` (\`none\`, or an invariant over a record's fields), then \`end type <full name>\`.
 - \`const\`: \`doc\`, \`out: Type\`, \`body:\` ending in \`return\`, then \`end const <full name>\`. A named value for a table
   or a limit: pure, no examples, used as \`limit\` (not \`limit()\`), not a pure \`fn\` with \`in: none\`.
-- Generic: \`fn util.last<T>\`, one capital letter per type parameter, \`end fn util.last\`. A \`T\` has no \`==\` (E0222).
+- Generic: \`fn util.last<T>\`, \`type util.Pair<A, B>\`, one capital letter each, \`end fn util.last\`.
+  A \`T\` has no \`==\` (E0222).
 - Names of the own module are short (\`Problem\`, \`fahrenheit\`, \`NotANumber\` in \`temp\`). All others are in full, std
   included, and enclosing or nested modules count as others. A case's full name is \`module.Case\`
   (\`std.fs.NotFound\`), so case names are unique per module. Built-ins are always short: \`Int Float Bool String
@@ -71,8 +72,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
   records too: \`Item(name: "x", count: 1)\`. A case's value is unnamed: \`Some(n)\`, \`Err(NotANumber(t))\`. Fields:
   \`item.name\`. No method calls (\`x.f()\`, E0220).
 - Type arguments only where no argument fixes them (E0209): \`std.list.empty<Int>()\`.
-- \`Ok\`, \`Err\` and \`None\` take their type from what is expected (a \`let\`, a parameter, \`out\`, the left side of
-  \`==\`): \`f(x: 1) == None\`. Where a generic parameter leaves it open, they name it: \`None<Int>\` (E0210).
+- \`Ok\`, \`Err\`, \`None\` and a generic type's \`Leaf\` take their type from what is expected (a \`let\`, a parameter,
+  \`out\`, the left side of \`==\`): \`f(x: 1) == None\`. Where a generic parameter leaves it open: \`Leaf<Int>\` (E0210).
 - Lists: \`[a, b, c]\`; the empty list is \`std.list.empty<T>()\`, never \`[]\` (E0228). No \`xs[0]\` and no \`Int[]\`:
   \`std.list.get\` gives an \`Option\`, the type is \`List<Int>\`.
 - Maps: \`["a": 1, "b": 2]\` is a \`Map<String, Int>\`; keys are \`Int\` or \`String\` (E0229), each written once (E0234);
@@ -103,9 +104,8 @@ alang is written by LLMs and transpiled to TypeScript. Write from this card; the
 
 ## Not in alang
 
-No comments (the \`doc\` describes), \`extern fn\`, imports, \`var\`, assignment, \`null\`, exceptions, \`while\`
-(use recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, generic types, concurrency. Most of
-these get E0006, which names the alang form.
+No comments (the \`doc\` describes), \`extern fn\`, imports, \`var\`, assignment, \`null\`, exceptions, \`while\` (use
+recursion), \`?\`, braces, \`;\`, \`'\`, \`===\`, \`&&\`, \`||\`, \`!\`, tuples, concurrency. Most get E0006, naming the alang form.
 
 ## A complete program, accepted as it stands
 

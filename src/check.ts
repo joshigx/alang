@@ -52,6 +52,7 @@ import {
   STRING,
   type Subst,
   substitute,
+  tvar,
   type Type,
   typeEquals,
   unify,
@@ -134,9 +135,16 @@ interface FnSig {
   readonly withoutFunctions?: readonly string[];
 }
 
+// A generic type's fields and case values hold its type parameters as
+// variables, which its type arguments substitute (G8).
 export type TypeShape =
-  | { readonly kind: "record"; readonly name: string; readonly fields: Param[] }
-  | { readonly kind: "variant"; readonly name: string; readonly cases: CaseInfo[] };
+  | { readonly kind: "record"; readonly name: string; readonly typeParams: readonly string[]; readonly fields: Param[] }
+  | {
+    readonly kind: "variant";
+    readonly name: string;
+    readonly typeParams: readonly string[];
+    readonly cases: CaseInfo[];
+  };
 
 export interface CaseInfo {
   readonly owner: string; // full name of the variant type; builtins use their type name
@@ -208,9 +216,14 @@ export function checkProgram(defs: readonly Definition[], options: CheckOptions 
       continue;
     }
     if (def.kind === "type") {
+      // With its type parameters, so that arity never depends on the order
+      // of definitions (G8).
+      const typeParams = [...new Set(def.typeParams)];
       env.types.set(
         name,
-        def.shape.kind === "record" ? { kind: "record", name, fields: [] } : { kind: "variant", name, cases: [] },
+        def.shape.kind === "record"
+          ? { kind: "record", name, typeParams, fields: [] }
+          : { kind: "variant", name, typeParams, cases: [] },
       );
     }
   }
@@ -310,7 +323,7 @@ class DefChecker {
   ) {
     this.module = pathText(moduleOf(def.path));
     this.name = pathText(def.path);
-    this.letters = def.kind === "fn" ? [...new Set(def.typeParams)] : [];
+    this.letters = def.kind === "const" ? [] : [...new Set(def.typeParams)];
     this.rigidOf = new Map(this.letters.map((l) => [l, rigid(l)]));
   }
 
@@ -386,7 +399,7 @@ class DefChecker {
       this.typeParamsUsed(
         def.typeParams,
         [...def.params.map((p) => p.type), def.out],
-        "occurs in no parameter type and not in `out`",
+        "occurs in no parameter type and not in `out`, so no call could give it a meaning",
       );
       this.section = "in";
       const params: Param[] = [];
@@ -418,13 +431,21 @@ class DefChecker {
     }
     const t = this.env.types.get(this.name);
     if (!t) return;
+    const refs = def.shape.kind === "record"
+      ? def.shape.fields.map((f) => f.type)
+      : def.shape.cases.flatMap((c) => (c.payload ? [c.payload] : []));
+    this.typeParamsUsed(
+      def.typeParams,
+      refs,
+      `occurs in no ${def.shape.kind === "record" ? "field" : "case"}, so no value could give it a meaning`,
+    );
     if (def.shape.kind === "record" && t.kind === "record") {
       this.section = "record";
       for (const f of def.shape.fields) {
         if (t.fields.some((g) => g.name === f.name)) {
           this.report("E0215", `${f.name}: ${printTypeRef(f.type)}`, `Field \`${f.name}\` is declared twice.`);
         }
-        t.fields.push({ name: f.name, type: this.resolveType(f.type) });
+        t.fields.push({ name: f.name, type: generalize(this.resolveType(f.type)) });
       }
     } else if (def.shape.kind === "variant" && t.kind === "variant") {
       this.section = "variant";
@@ -450,7 +471,7 @@ class DefChecker {
         const info: CaseInfo = {
           owner: this.name,
           name: c.name,
-          payload: c.payload ? this.resolveType(c.payload) : null,
+          payload: c.payload ? generalize(this.resolveType(c.payload)) : null,
         };
         t.cases.push(info);
         this.env.cases.set(full, info);
@@ -474,12 +495,10 @@ class DefChecker {
     for (const l of this.letters) {
       if (used.has(l)) continue;
       const fixed = this.header(this.letters.filter((m) => m !== l));
-      this.report(
-        "E0250",
-        at,
-        `\`${l}\` ${where}, so no call could give it a meaning; remove it from \`<...>\`.`,
-        { expected: fixed, fix: { replace: at, with: fixed } },
-      );
+      this.report("E0250", at, `\`${l}\` ${where}; remove it from \`<...>\`.`, {
+        expected: fixed,
+        fix: { replace: at, with: fixed },
+      });
     }
   }
 
@@ -524,7 +543,9 @@ class DefChecker {
       return con(ref.path[0], ...args);
     }
     const full = this.resolvePath(ref.path);
-    if (!this.env.types.has(full) && ref.path.length === 1 && /^[A-Z]$/.test(ref.path[0]) && this.def.kind === "fn") {
+    if (
+      !this.env.types.has(full) && ref.path.length === 1 && /^[A-Z]$/.test(ref.path[0]) && this.def.kind !== "const"
+    ) {
       // `T` without a header that declares it: the header is the fix's place.
       const header = this.header([...this.letters, ref.path[0]]);
       this.report(
@@ -549,11 +570,30 @@ class DefChecker {
       return ERROR;
     }
     this.shortForm(ref, ref.path, printTypeRef(ref));
-    if (args.length > 0) {
-      this.report("E0209", printTypeRef(ref), `\`${pathText(ref.path)}\` takes no type arguments.`);
+    // A generic type is written with its arguments wherever it is used (G8).
+    const letters = this.env.types.get(full)!.typeParams;
+    if (args.length !== letters.length) {
+      const written = pathText(ref.path);
+      const count = letters.length;
+      this.report(
+        "E0209",
+        printTypeRef(ref),
+        count === 0
+          ? `\`${written}\` takes no type arguments.`
+          : `\`${written}\` takes ${count} type argument${count === 1 ? "" : "s"}: \`${written}<${
+            letters.join(", ")
+          }>\`.`,
+      );
       return ERROR;
     }
-    return con(full);
+    return con(full, ...args);
+  }
+
+  // The type arguments of `t`, a use of the generic type `shape`, for its
+  // type parameters (G8).
+  private shapeSubst(shape: TypeShape, t: Type): Subst {
+    const args = t.k === "con" ? t.args : [];
+    return new Map(shape.typeParams.map((tp, i) => [tp, args[i] ?? ERROR]));
   }
 
   // ---- definitions ----
@@ -712,7 +752,7 @@ class DefChecker {
       return;
     }
     const scope = new Scope();
-    for (const f of t.fields) scope.define(f.name, f.type);
+    for (const f of t.fields) scope.define(f.name, substitute(f.type, this.rigidOf));
     this.expr(def.where, scope, BOOL);
     this.section = null;
   }
@@ -1005,10 +1045,16 @@ class DefChecker {
     return actual;
   }
 
-  // A name checked with a hint instead of an expected type (G9).
-  private hinted(e: Extract<Expr, { kind: "name" }>, scope: Scope, hint: Extract<Type, { k: "fn" }>): Type {
-    const t = this.name_(e, scope, null, hint);
-    this.info.types.set(e, t);
+  // A value for a parameter or field whose type `pt` still holds variables:
+  // checked without an expected type, except that a function passed by
+  // name gets `pt` as a hint where its parameter types are known already,
+  // so a generic one takes its type arguments from them (G9).
+  private open(value: Expr, pt: Type, scope: Scope): Type {
+    if (value.kind !== "name" || pt.k !== "fn" || pt.params.some((q) => freeVars(q).size > 0)) {
+      return this.expr(value, scope, null);
+    }
+    const t = this.name_(value, scope, null, pt);
+    this.info.types.set(value, t);
     return t;
   }
 
@@ -1279,7 +1325,7 @@ class DefChecker {
       });
       return ERROR;
     }
-    return f.type;
+    return substitute(f.type, this.shapeSubst(ut, t));
   }
 
   // Matches named arguments to parameters (rule 4.1: every argument carries
@@ -1432,14 +1478,7 @@ class DefChecker {
         this.expr(a.value, scope, pt);
         return;
       }
-      // A function passed by name where the parameter types are known
-      // already: a generic one takes its type arguments from them (G9).
-      const hint = a.value.kind === "name" && pt.k === "fn" && pt.params.every((q) => freeVars(q).size === 0)
-        ? pt
-        : null;
-      const t = hint !== null && a.value.kind === "name"
-        ? this.hinted(a.value, scope, hint)
-        : this.expr(a.value, scope, null);
+      const t = this.open(a.value, pt, scope);
       if (!unify(pt, t, subst)) {
         this.report(
           "E0204",
@@ -1644,7 +1683,7 @@ class DefChecker {
       if (ut?.kind !== "record") return null;
       const f = ut.fields.find((g) => g.name === segment);
       if (!f) return null;
-      t = f.type;
+      t = substitute(f.type, this.shapeSubst(ut, t));
     }
     return t;
   }
@@ -1782,7 +1821,7 @@ class DefChecker {
           })\`.`,
         );
         checkAnyway();
-        return con(full);
+        return ut.typeParams.length === 0 ? con(full) : ERROR;
       }
       const byName = this.matchArgs(
         ut.fields,
@@ -1791,11 +1830,33 @@ class DefChecker {
         (args) => printExpr({ ...e, payload: { kind: "args", args } }, ""),
         "field",
       );
+      // A generic record takes its type arguments from an expected type of
+      // its own, otherwise from its fields, read from left to right as a
+      // call's arguments are (G8). A field of the error type leaves its
+      // type parameter unbound, and the record is then the error type (5.6).
+      const subst: Subst = expected !== null && isCon(expected, full) ? this.shapeSubst(ut, expected) : new Map();
       ut.fields.forEach((f, i) => {
         const a = byName[i];
-        if (a) this.expr(a.value, scope, f.type);
+        if (!a) return;
+        const ft = substitute(f.type, subst);
+        if (freeVars(ft).size === 0) {
+          this.expr(a.value, scope, ft);
+          return;
+        }
+        const t = this.open(a.value, ft, scope);
+        if (!unify(ft, t, subst)) {
+          const want = this.show(substitute(ft, subst));
+          this.report(
+            "E0204",
+            firstLine(printExpr(a.value, "")),
+            `Expected \`${want}\` for \`${f.name}\`, found \`${this.show(t)}\`.`,
+            { expected: want },
+          );
+        }
       });
-      return con(full);
+      if (ut.typeParams.length === 0) return con(full);
+      const args = ut.typeParams.map((tp) => subst.get(tp));
+      return args.every((a) => a !== undefined) ? con(full, ...(args as Type[])) : ERROR;
     }
     if (ut?.kind === "variant") {
       this.report(
@@ -1806,7 +1867,7 @@ class DefChecker {
         }.`,
       );
       checkAnyway();
-      return con(full);
+      return ut.typeParams.length === 0 ? con(full) : ERROR;
     }
     const c = this.env.cases.get(full);
     if (!c && p === null) {
@@ -1839,6 +1900,8 @@ class DefChecker {
       return ERROR;
     }
     this.info.constructs.set(e, { kind: "case", type: c.owner });
+    const letters = this.env.types.get(c.owner)?.typeParams ?? [];
+    if (letters.length > 0) return this.genericCase(e, c, letters, scope, expected, at);
     if (e.typeArgs.length > 0) {
       this.extraTypeArgs(
         e,
@@ -1848,6 +1911,87 @@ class DefChecker {
     }
     this.casePayload(e, c.name, c.payload, scope, at);
     return con(c.owner);
+  }
+
+  // A case of a generic variant (G7, G8): its type arguments come from the
+  // expected type, then from its value where that names every type
+  // parameter (`Node(branch)`), then from written type arguments
+  // (`Leaf<Int>`); otherwise it is E0210. Written where the expected type or
+  // the value gives them, they are E0209, and the case is checked as if
+  // they were absent (5.6).
+  private genericCase(
+    e: Extract<Expr, { kind: "construct" }>,
+    c: CaseInfo,
+    letters: readonly string[],
+    scope: Scope,
+    expected: Type | null,
+    at: string,
+  ): Type {
+    const p = e.payload;
+    const written = pathText(e.path);
+    const shown = this.show(con(c.owner, ...letters.map(tvar)));
+    const inPayload = c.payload === null ? new Set<string>() : freeVars(c.payload);
+    const valueGives = p?.kind === "value" && letters.every((l) => inPayload.has(l));
+    const own = expected !== null && isCon(expected, c.owner);
+    let given: Type[] | null = null;
+    if (e.typeArgs.length > 0) {
+      const removed = `remove \`<${e.typeArgs.map(printTypeRef).join(", ")}>\``;
+      if (e.typeArgs.length !== letters.length) {
+        const count = letters.length;
+        this.report(
+          "E0209",
+          at,
+          `\`${written}\` is a case of \`${shown}\`, which takes ${count} type argument${count === 1 ? "" : "s"}.`,
+        );
+      } else if (own) {
+        this.extraTypeArgs(e, at, `\`${written}\` takes its type from what is expected here; ${removed}.`);
+      } else if (valueGives) {
+        this.extraTypeArgs(e, at, `\`${written}\` takes its type from its value; ${removed}.`);
+      } else {
+        given = e.typeArgs.map((t) => this.resolveType(t));
+      }
+    }
+    const typed = (args: readonly Type[]): Type => {
+      const s: Subst = new Map(letters.map((l, i) => [l, args[i]]));
+      this.casePayload(e, c.name, c.payload && substitute(c.payload, s), scope, at);
+      return con(c.owner, ...args);
+    };
+    const rest = (): Type => {
+      if (p?.kind === "value") this.expr(p.value, scope, null);
+      if (p?.kind === "args") { for (const a of p.args) this.expr(a.value, scope, null); }
+      return ERROR;
+    };
+    if (own) return typed(expected.args);
+    if (expected !== null && !isBottom(expected) && !containsError(expected)) {
+      this.report("E0204", at, `Expected \`${this.show(expected)}\`, found a case of \`${shown}\`.`, {
+        expected: this.show(expected),
+      });
+      return rest();
+    }
+    if (given !== null) return typed(given);
+    if (valueGives && p?.kind === "value" && c.payload !== null) {
+      const t = this.expr(p.value, scope, null);
+      const s: Subst = new Map();
+      if (!unify(c.payload, t, s)) {
+        this.report(
+          "E0204",
+          firstLine(printExpr(p.value, "")),
+          `Expected \`${this.show(c.payload)}\`, found \`${this.show(t)}\`.`,
+          { expected: this.show(c.payload) },
+        );
+        return ERROR;
+      }
+      const args = letters.map((l) => s.get(l));
+      return args.every((a) => a !== undefined) ? con(c.owner, ...(args as Type[])) : ERROR;
+    }
+    // A value where the case has none, or none where it has one: E0223 says
+    // so, whatever the type arguments.
+    if (p?.kind === "args" || (c.payload === null) !== (p === null)) {
+      this.casePayload(e, c.name, c.payload, scope, at);
+      return ERROR;
+    }
+    if (expected === null) this.undeterminedCase(e, at, written, [...letters]);
+    return rest();
   }
 
   // E0203 (G4): a construction or pattern `T` where `T` is a type parameter
@@ -2418,10 +2562,11 @@ class DefChecker {
     }
     const ut = this.env.types.get(t.name);
     if (ut?.kind !== "variant") return null;
+    const s = this.shapeSubst(ut, t);
     return ut.cases.map((c) => ({
       name: c.name,
       written: this.written(`${moduleOfName(c.owner)}.${c.name}`),
-      payload: c.payload,
+      payload: c.payload && substitute(c.payload, s),
     }));
   }
 

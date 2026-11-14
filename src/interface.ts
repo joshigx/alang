@@ -56,10 +56,9 @@ function fullType(t: TypeRef, module: Path, letters: readonly string[] = []): st
 function shapeKey(def: Definition): string {
   const module = moduleOf(def.path);
   if (def.kind !== "type") return "";
-  if (def.shape.kind === "record") {
-    return def.shape.fields.map((f) => `${f.name}: ${fullType(f.type, module)}`).join(", ");
-  }
-  return def.shape.cases.map((c) => (c.payload ? `${c.name}: ${fullType(c.payload, module)}` : c.name)).join(", ");
+  const full = (t: TypeRef) => fullType(t, module, def.typeParams);
+  if (def.shape.kind === "record") return def.shape.fields.map((f) => `${f.name}: ${full(f.type)}`).join(", ");
+  return def.shape.cases.map((c) => (c.payload ? `${c.name}: ${full(c.payload)}` : c.name)).join(", ");
 }
 
 // How the interface changes from `before` to `after`, two versions of one

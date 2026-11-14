@@ -101,7 +101,7 @@ class DefinitionEmitter {
   constructor(def: Definition, private readonly info: CheckInfo) {
     this.module = moduleOf(def.path);
     this.name = pathText(def.path);
-    this.letters = def.kind === "fn" ? def.typeParams : [];
+    this.letters = def.kind === "const" ? [] : def.typeParams;
   }
 
   private fail(code: string, message: string, at: string): never {
@@ -257,7 +257,8 @@ class DefinitionEmitter {
   // ---- definitions ----
 
   type(def: TypeDef): string[] {
-    const name = mangle(def.path);
+    const generic = def.typeParams.length === 0 ? "" : `<${def.typeParams.join(", ")}>`;
+    const name = mangle(def.path) + generic;
     if (def.shape.kind === "variant") {
       if (def.where) this.fail("E0303", "`where` on a variant type is not supported yet.", printExpr(def.where, ""));
       const cases = def.shape.cases.map((c) =>
@@ -578,7 +579,12 @@ class DefinitionEmitter {
         const p = e.payload;
         if (p !== null && p.kind === "args") {
           const fields = p.args.map((a) => `${a.name}: ${this.expr(a.value, scope)}`);
-          return `${this.globalRef(this.resolve(e.path))}({ ${fields.join(", ")} })`;
+          // A generic record gets the type arguments the checker bound (G16).
+          const t = this.typeOf(e);
+          const typeArgs = t.k === "con" && t.args.length > 0
+            ? `<${t.args.map((a) => this.tsType(a)).join(", ")}>`
+            : "";
+          return `${this.globalRef(this.resolve(e.path))}${typeArgs}({ ${fields.join(", ")} })`;
         }
         if (builtin) {
           return p === null ? `${RT}.${last}` : `${RT}.${last}(${this.expr(p.value, scope)})`;
@@ -588,9 +594,10 @@ class DefinitionEmitter {
         // A case has its variant type, not its own: a local of the type must
         // not be narrowed to the case by TypeScript, or a `match` on it would
         // not type-check. `satisfies` keeps the check, `as` widens.
+        // The checked type, so a generic type has its arguments (G16).
         const construct = this.info.constructs.get(e);
         if (construct?.kind !== "case") throw new Error(`unresolved case: ${pathText(e.path)}`);
-        const type = this.globalRef(construct.type.split("."));
+        const type = this.tsType(this.typeOf(e));
         return `(${value} satisfies ${type} as ${type})`;
       }
       case "list": {

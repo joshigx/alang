@@ -11,7 +11,8 @@ import { parseExpression, parseProgram } from "../src/parser.ts";
 import { printExpr, printProgram, printSignature } from "../src/printer.ts";
 import { applyOwnFixes } from "../src/refs.ts";
 import { accept, build } from "../src/toolchain.ts";
-import { FIRST_SOME, HIDE, TYPE_T, UTIL } from "./generics_fixtures.ts";
+import { FIRST_SOME, HIDE, PAIR, TREE, TYPE_T, UTIL } from "./generics_fixtures.ts";
+import * as rt from "../src/runtime.ts";
 
 const OUT = new URL("../out/test/generics/", import.meta.url).pathname;
 
@@ -485,6 +486,144 @@ Deno.test("generics: without a function type there, or with another, a generic f
   assert_(letter.message.includes("and `T` is a type parameter"), letter.message);
 });
 
+// ---- generic types (G8) ----
+
+const G = 'fn m.g\n  doc: "G."\n  in: none\n  out: Int\n  effects: none\n  requires: none\n  ensures: none\n' +
+  "  examples:\n    g() == 1\n  body:\n    return 1\nend fn m.g";
+
+Deno.test("generics: a generic type's header round-trips; `<>` and a word are E0101 (G8)", () => {
+  for (const source of [TREE, PAIR]) {
+    const tree = parseProgram(source);
+    assertEquals(printProgram(tree), source);
+    assertEquals(parseProgram(printProgram(tree)), tree);
+  }
+  assert_(printSignature(parseProgram(TREE)[0]).startsWith("type tree.Tree<T>\n"));
+  assert_(printSignature(parseProgram(TREE)[0]).endsWith("\nend type tree.Tree"));
+  const empty = parseError(
+    PAIR.replace("type m.Pair<A, B>", "type m.Box<>").replace("end type m.Pair", "end type m.Box"),
+  );
+  assertEquals([empty.code, empty.message], [
+    "E0101",
+    "A definition's type parameters are capital letters in `<...>`: `type util.Pair<A, B>`; without any, write the name alone.",
+  ]);
+  const word = parseError(PAIR.replace("type m.Pair<A, B>", "type m.Pair<Item>"));
+  assertEquals([word.code, word.message], [
+    "E0101",
+    "A type parameter is one capital letter, such as `T` or `K` (3); `Item` is not one.",
+  ]);
+});
+
+Deno.test("generics: generic types check: fields and cases at their type arguments (G8)", () => {
+  clean(TREE);
+  clean(fn(
+    'let p: Pair<Int, String> = Pair(left: 1, right: "a")\nlet q: Pair<Option<Int>, Int> = Pair(left: None, right: 1)\nlet r: Int = Pair(left: None<Int>, right: 1).right\nreturn Pair(left: 1, right: "a").right',
+    { out: "String", extra: PAIR },
+  ));
+  // A generic function over a generic type, a record inside a generic body.
+  clean(fn("let p: Pair<T, List<T>> = Pair(left: x, right: [x])\nreturn std.list.length(list: p.right)", {
+    typeParams: "T",
+    params: ["x: T"],
+    extra: PAIR,
+  }));
+  const wrong = one(fn("let a: Int = p.right\nreturn a", { params: ["p: Pair<Int, String>"], extra: PAIR }), "E0204");
+  assertEquals(wrong.message, "Expected `Int`, found `String`.");
+});
+
+Deno.test("generics: a generic type is written with its type arguments (E0209)", () => {
+  for (const written of ["Pair<Int>", "Pair"]) {
+    const d = one(fn("return 0", { params: [`p: ${written}`], extra: PAIR }), "E0209");
+    assertEquals([d.at, d.message], [written, "`Pair` takes 2 type arguments: `Pair<A, B>`."]);
+  }
+  const record = fn('return Pair<Int, String>(left: 1, right: "a").left', { extra: PAIR });
+  const r = one(record, "E0209");
+  assertEquals([r.message, r.fix], [
+    "A record takes its type arguments from its fields; remove `<Int, String>`.",
+    { replace: 'Pair<Int, String>(left: 1, right: "a")', with: 'Pair(left: 1, right: "a")' },
+  ]);
+  assertEquals(check(fixed(record, r)), []);
+  const node = fn("let t: Tree<Int> = Node<Int>(Branch(item: 1, left: Leaf, right: Leaf))\nreturn 0", {
+    name: "tree.f",
+    extra: TREE,
+  });
+  const n = one(node, "E0209");
+  assertEquals([n.message, n.fix], [
+    "`Node` takes its type from what is expected here; remove `<Int>`.",
+    {
+      replace: "Node<Int>(Branch(item: 1, left: Leaf, right: Leaf))",
+      with: "Node(Branch(item: 1, left: Leaf, right: Leaf))",
+    },
+  ]);
+  assertEquals(check(fixed(node, n)), []);
+  const value = one(
+    fn("return std.list.length(list: [Node<Int>(Branch(item: 1, left: Leaf, right: Leaf))])", {
+      name: "tree.f",
+      extra: TREE,
+    }),
+    "E0209",
+  );
+  assertEquals(value.message, "`Node` takes its type from its value; remove `<Int>`.");
+});
+
+Deno.test("generics: a case or field whose type nothing gives is E0210 (G7, G8)", () => {
+  const none = one(fn("return Pair(left: None, right: 1).right", { extra: PAIR }), "E0210");
+  assertEquals(none.at, "None");
+  const leaf = one(fn("return std.list.length(list: [Leaf])", { name: "tree.f", extra: TREE }), "E0210");
+  assertEquals([leaf.at, leaf.expected], ["Leaf", "Leaf<T>"]);
+  // Another type expected: the case's type is named with its letters.
+  const other = one(fn("return Leaf", { name: "tree.f", extra: TREE }), "E0204");
+  assertEquals(other.message, "Expected `Int`, found a case of `Tree<T>`.");
+});
+
+Deno.test("generics: every type parameter of a type occurs in a field or case (E0250, G5)", () => {
+  const box = 'type m.Box<T>\n  doc: "A box."\n  record:\n    n: Int\n  where: none\nend type m.Box';
+  const d = one(box, "E0250");
+  assertEquals([d.message, d.fix], [
+    "`T` occurs in no field, so no value could give it a meaning; remove it from `<...>`.",
+    { replace: "type m.Box<T>", with: "type m.Box" },
+  ]);
+  assertEquals(check(fixed(box, d)), []);
+  const index =
+    'type m.Index<K>\n  doc: "An index."\n  record:\n    entries: Map<K, Int>\n  where: none\nend type m.Index';
+  assertEquals(one(index, "E0229").at, "Map<K, Int>");
+});
+
+Deno.test("generics: match, equality and function values over generic types (G2, G8, G9)", () => {
+  const partial = one(
+    fn("let n: Int = match t\n  case Leaf then\n    0\nend match\nreturn n", {
+      name: "tree.f",
+      params: ["t: Tree<Int>"],
+      extra: TREE,
+    }),
+    "E0213",
+  );
+  assertEquals(partial.expected, "case Node(_) then");
+  one(
+    fn("return Pair(left: g, right: 1) == Pair(left: g, right: 1)", { out: "Bool", extra: `${PAIR}\n${G}` }),
+    "E0222",
+  );
+  clean(fn("return t == Leaf", { name: "tree.f", typeParams: "T", params: ["t: Tree<T>"], out: "Bool", extra: TREE }));
+  // A field whose function type has known parameter types takes a generic
+  // function by name (G9), from the fields to its left.
+  const mapping =
+    'type m.Mapping<T, U>\n  doc: "Items and a function over them."\n  record:\n    items: List<T>\n    with: (T) -> U\n  where: none\nend type m.Mapping';
+  clean(fn("let m: Mapping<List<Int>, Option<Int>> = Mapping(items: [[1]], with: util.last)\nreturn 0", {
+    extra: `${mapping}\n\n${UTIL}`,
+  }));
+  clean(fn("return std.list.length(list: std.list.map(list: m.items, with: m.with))", {
+    params: ["m: Mapping<List<Int>, Option<Int>>"],
+    extra: mapping,
+  }));
+  // Without an expected type, the field to its left binds `T`.
+  clean(
+    fn(
+      "let m: List<Int> = std.list.first(list: Mapping(items: [[1]], with: util.last).items) else return 0\nreturn 1",
+      {
+        extra: `${mapping}\n\n${UTIL}`,
+      },
+    ),
+  );
+});
+
 // ---- TypeScript and acceptance (G16) ----
 
 Deno.test("generics: TypeScript generics, with the checked type arguments at user calls (G16)", async () => {
@@ -492,6 +631,7 @@ Deno.test("generics: TypeScript generics, with the checked type arguments at use
   assertEquals(await acceptance(FIRST_SOME), []);
   // A function value is passed bare; TypeScript instantiates it from context.
   assertEquals(await acceptance(LASTS), []);
+  assertEquals(await acceptance(TREE), []);
   const lasts = await load(LASTS, "lasts");
   assertEquals(lasts.m$lasts([[1], [2, 3]]), [{ tag: "Some", value: 1 }, { tag: "Some", value: 3 }]);
   assert_((await Deno.readTextFile(`${OUT}lasts.ts`)).includes("$rt.std$list$map(groups, util$last)"));
@@ -510,4 +650,34 @@ Deno.test("generics: every accepted program here is accepted by TypeScript too",
   assert_(files.length >= 5, String(files.length));
   const result = await new Deno.Command(Deno.execPath(), { args: ["check", ...files], stderr: "piped" }).output();
   assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+});
+
+Deno.test("generics: generic types are TypeScript generic types, constructed at their checked types (G16)", async () => {
+  const mod = await load(TREE, "tree");
+  const text = await Deno.readTextFile(`${OUT}tree.ts`);
+  assert_(text.includes("export type tree$Tree<T> ="));
+  assert_(text.includes("satisfies tree$Tree<number> as tree$Tree<number>"));
+  assert_(text.includes("tree$Branch<T>({"));
+  // The second example's tree of `items`: `b` with `c` on its right.
+  const leaf = { tag: "Leaf" };
+  const c = { tag: "Node", value: mod.tree$Branch({ item: "c", left: leaf, right: leaf }) };
+  assertEquals(mod.tree$items({ tag: "Node", value: mod.tree$Branch({ item: "b", left: leaf, right: c }) }), [
+    "b",
+    "c",
+  ]);
+  // A generic record shows with its type's short name (R7).
+  const pairs = await load(`${PAIR}\n${fn("return 0", { params: ["p: Pair<Int, String>"] })}`, "pair");
+  assertEquals(rt.std$text$show(pairs.m$Pair({ left: 1, right: "a" })), 'Pair(left: 1, right: "a")');
+});
+
+Deno.test("generics: a failing example shows a generic type's actual value (E0402)", async () => {
+  const wrong = TREE.replace(
+    "insert(tree: Leaf<Int>, item: 2, by: std.int.compare) == Node(Branch(item: 2, left: Leaf, right: Leaf))",
+    "insert(tree: Leaf<Int>, item: 2, by: std.int.compare) == Leaf",
+  );
+  const ds = await acceptance(wrong);
+  assertEquals(ds.map((d) => [d.code, d.message]), [[
+    "E0402",
+    "The example does not hold: `insert(tree: Leaf<Int>, item: 2, by: std.int.compare)` is `Node(Branch(item: 2, left: Leaf, right: Leaf))`.",
+  ]]);
 });

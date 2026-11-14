@@ -33,8 +33,8 @@ const statementBlocks = letBlocks.filter((b) => !prefixBlocks.includes(b));
 
 Deno.test("spec: block inventory", () => {
   // Guards against blocks silently dropping out of the test set.
-  assertEquals(definitionBlocks.length, 9);
-  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 21);
+  assertEquals(definitionBlocks.length, 10);
+  assertEquals(definitionBlocks.map((b) => parseProgram(b.text).length).reduce((a, b) => a + b), 24);
   assertEquals(statementBlocks.length, 3);
   assertEquals(prefixBlocks.length, 1);
 });
@@ -103,6 +103,13 @@ Deno.test("spec: the constant of 7.3 is accepted, with the examples of the funct
 Deno.test("spec: the generic function of 7.3 is accepted, its examples run", async () => {
   const block = definitionBlocks.find((b) => b.text.startsWith("fn util.contains_by<T>\n"));
   const out = new URL("../out/test/spec/contains_by.ts", import.meta.url).pathname;
+  const { examples } = await accept(block!.text, out);
+  assertEquals(examples.map((e) => e.passed), [true, true]);
+});
+
+Deno.test("spec: the generic type of 7.3 is accepted, its examples run", async () => {
+  const block = definitionBlocks.find((b) => b.text.startsWith("type tree.Tree<T>\n"));
+  const out = new URL("../out/test/spec/tree.ts", import.meta.url).pathname;
   const { examples } = await accept(block!.text, out);
   assertEquals(examples.map((e) => e.passed), [true, true]);
 });

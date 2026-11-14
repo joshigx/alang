@@ -44,9 +44,9 @@ export function dependencies(def: Definition, info: CheckInfo): string[] {
   return [...new Set(references(def, info).map((r) => r.full))];
 }
 
-// The type parameters of a definition (G1); none for a constant.
+// The type parameters of a definition (G1, G8); none for a constant.
 export function typeParamsOf(def: Definition): readonly string[] {
-  return def.kind === "fn" ? def.typeParams : [];
+  return def.kind === "const" ? [] : def.typeParams;
 }
 
 // A full name as written in `module`: short inside it, full elsewhere (1.2).
@@ -247,6 +247,7 @@ function rebuild(
   return {
     kind: "type",
     path,
+    typeParams: def.typeParams,
     doc: def.doc,
     shape: def.shape.kind === "record" ? { kind: "record", fields: def.shape.fields.map(param) } : {
       kind: "variant",

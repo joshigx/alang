@@ -10,7 +10,7 @@ import { parseProgram } from "../src/parser.ts";
 import { printDefinition } from "../src/printer.ts";
 import { dependencies } from "../src/refs.ts";
 import { add, codes, done, fails, fn, fresh, hashOf, ok, withPort } from "./db_helpers.ts";
-import { UTIL } from "./generics_fixtures.ts";
+import { TREE, UTIL } from "./generics_fixtures.ts";
 
 const [LAST, COUNT_IF, REPEAT, NONE_LIST] = parseProgram(UTIL).map(printDefinition);
 
@@ -124,5 +124,43 @@ Deno.test("generics db: a case's type arguments are references (G7)", async () =
   });
   await ok(cb, [add(none)]);
   assert_(cb.callers("net.port.Port").callers.includes("m.none_port"));
+  await done(cb);
+});
+
+Deno.test("generics db: generic types in hits, search_type and interface changes (G8, G13, G15)", async () => {
+  const cb = await fresh();
+  const defs = parseProgram(TREE).map(printDefinition);
+  await ok(cb, defs.map(add));
+  const hits = cb.list("tree").definitions.map((h) => [h.name, h.signature]);
+  assertEquals(hits.sort(), [
+    ["tree.Branch", "type tree.Branch<T>, record: item: T, left: tree.Tree<T>, right: tree.Tree<T>"],
+    ["tree.Tree", "type tree.Tree<T>, variant: Leaf | Node: tree.Branch<T>"],
+    [
+      "tree.insert",
+      "fn tree.insert<T>(tree: tree.Tree<T>, item: T, by: (T, T) -> Order): tree.Tree<T>, effects: none",
+    ],
+    ["tree.items", "fn tree.items<T>(tree: tree.Tree<T>): List<T>, effects: none"],
+  ]);
+  assertEquals(names(cb, "Tree<_> -> List<_>"), ["tree.items"]);
+  // The context of a function over a generic type names it, never a letter.
+  assertEquals(cb.context("tree.items").uses.map((u) => u.name), [
+    "tree.Tree",
+    "std.list.empty",
+    "tree.Branch",
+    "std.list.flatten",
+  ]);
+  const tree = defs.find((d) => d.startsWith("type tree.Tree<T>"))!;
+  await ok(cb, [{
+    op: "replace",
+    name: "tree.Tree",
+    hash: hashOf(cb, "tree.Tree"),
+    text: tree.replaceAll("T>", "E>"),
+  }]);
+  assert_(cb.definition("tree.Tree").text.startsWith("type tree.Tree<E>\n"));
+  const branch = defs.find((d) => d.startsWith("type tree.Branch<T>"))!;
+  const swapped = branch.replace("    item: T\n    left: Tree<T>\n", "    left: Tree<T>\n    item: T\n");
+  const r = await fails(cb, [{ op: "replace", name: "tree.Branch", hash: hashOf(cb, "tree.Branch"), text: swapped }]);
+  assertEquals(codes(r.diagnostics), ["E0506"]);
+  assert_(r.diagnostics[0].message.includes("changes its `record` section"), r.diagnostics[0].message);
   await done(cb);
 });

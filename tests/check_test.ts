@@ -107,6 +107,7 @@ Deno.test("check: spec programs are accepted", () => {
   clean(specBlock("fn math.clamp"));
   clean(specBlock("fn calc.first_true"));
   clean(specBlock("fn util.contains_by"));
+  clean(specBlock("type tree.Tree"));
 });
 
 // The type config.load_port relies on, which the spec leaves out, plus the
