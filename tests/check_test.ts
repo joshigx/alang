@@ -354,6 +354,14 @@ Deno.test("check: a local built from a case is matched on every case, also of a 
   ));
 });
 
+Deno.test("check: an fs error becomes the text of main's Err through std.fs.describe", () => {
+  // `error:` is a label here, not a binding, so E0109 does not apply.
+  clean(fn(
+    "let t: String = std.fs.read_text(path: p) else return Err(std.fs.describe(error: error))\nreturn Ok(Unit)",
+    { params: ["p: String"], out: "Result<Unit, String>", effects: "fs.read" },
+  ));
+});
+
 Deno.test("check: uniqueness of definitions, cases, fields and params", () => {
   one(fn("return 1", { extra: G + "\n\n" + G }), "E0215");
   one(

@@ -745,8 +745,16 @@ Deno.test("io: examples/lines.alang sorts the lines of a file into another", asy
     assertEquals(await start(["in.txt", "out.txt"]), [0, "", ""]);
     assertEquals(await Deno.readTextFile(join(cwd, "out.txt")), "apple\nfig\npear\n");
     assertEquals(await start(["in.txt"]), [1, "", "usage: lines <source> <target>\n"]);
-    assertEquals(await start(["missing.txt", "out.txt"]), [1, "", "cannot read the source: NotFound\n"]);
-    assertEquals(await start(["in.txt", "no/such/dir.txt"]), [1, "", "cannot write the target: NotFound\n"]);
+    assertEquals(await start(["missing.txt", "out.txt"]), [
+      1,
+      "",
+      "cannot read the source: no such file or directory\n",
+    ]);
+    assertEquals(await start(["in.txt", "no/such/dir.txt"]), [
+      1,
+      "",
+      "cannot write the target: no such file or directory\n",
+    ]);
   } finally {
     await Deno.remove(cwd, { recursive: true });
   }
@@ -780,7 +788,7 @@ for (const host of ["deno", "node"] as const) {
         "",
       ]);
       assertEquals(await start([]), [1, "", "usage: words <file>\n"]);
-      assertEquals(await start(["missing.txt"]), [1, "", "cannot read the file: NotFound\n"]);
+      assertEquals(await start(["missing.txt"]), [1, "", "cannot read the file: no such file or directory\n"]);
     } finally {
       await Deno.remove(cwd, { recursive: true });
     }

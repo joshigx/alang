@@ -728,6 +728,22 @@ export function std$fs$remove(path: string): Result<Unit, std$fs$Error> {
   });
 }
 
+// The texts a program shows for an error; `Other` carries the host's own.
+export function std$fs$describe(error: std$fs$Error): string {
+  switch (error.tag) {
+    case "NotFound":
+      return "no such file or directory";
+    case "PermissionDenied":
+      return "permission denied";
+    case "IsADirectory":
+      return "is a directory";
+    case "AlreadyExists":
+      return "already exists";
+    case "Other":
+      return error.value;
+  }
+}
+
 // ---- std.http ----
 
 export type std$http$Header = { readonly name: string; readonly value: string };

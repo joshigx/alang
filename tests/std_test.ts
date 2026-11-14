@@ -25,6 +25,17 @@ Deno.test("std: an Int is never negative zero", () => {
 
 const MAX = Number.MAX_SAFE_INTEGER;
 
+Deno.test("std.fs: describe gives each error as a short text", () => {
+  const cases: [rt.std$fs$Error, string][] = [
+    [{ tag: "NotFound" }, "no such file or directory"],
+    [{ tag: "PermissionDenied" }, "permission denied"],
+    [{ tag: "IsADirectory" }, "is a directory"],
+    [{ tag: "AlreadyExists" }, "already exists"],
+    [{ tag: "Other", value: "Disk quota exceeded (os error 122)" }, "Disk quota exceeded (os error 122)"],
+  ];
+  for (const [error, text] of cases) assertEquals(rt.std$fs$describe(error), text);
+});
+
 Deno.test("std.int: min, max and abs", () => {
   assertEquals([rt.std$int$min(3, -4), rt.std$int$min(-4, 3), rt.std$int$min(2, 2)], [-4, -4, 2]);
   assertEquals([rt.std$int$max(3, -4), rt.std$int$max(-4, 3), rt.std$int$max(2, 2)], [3, 3, 2]);

@@ -35,7 +35,7 @@ fn words.main
   examples: none
   body:
     let path: String = std.list.first(list: std.env.args()) else return Err("usage: words <file>")
-    let text: String = std.fs.read_text(path: path) else return Err(std.string.concat(left: "cannot read the file: ", right: std.text.show(value: error)))
+    let text: String = std.fs.read_text(path: path) else return Err(std.string.concat(left: "cannot read the file: ", right: std.fs.describe(error: error)))
     for printed: String in report(text: text) do
       std.console.print_line(text: printed)
     end for

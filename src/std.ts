@@ -26,7 +26,7 @@ import {
 // Types of the standard library, written in alang. runtime.ts has the
 // matching TypeScript type under the mangled name (`std$fs$Error`).
 export const STD_TYPES_SOURCE = `type std.fs.Error
-  doc: "Why a file or directory operation failed. Other carries the host's message, which differs between runtimes: show it, do not compare it."
+  doc: "Why a file or directory operation failed; \`std.fs.describe\` gives it as text. Other carries the host's message, which differs between runtimes: show it, do not compare it."
   variant:
     NotFound
     PermissionDenied
@@ -207,6 +207,13 @@ export const STD: readonly Signature[] = [
     [["path", STRING]],
     result(UNIT, con("std.fs.Error")),
     ["fs.write"],
+  ),
+  sig(
+    "std.fs.describe",
+    "The error as a short text for a message, starting in lower case and without a final period: `no such file or directory`, `permission denied`, `is a directory`, `already exists`, or the host's message that `Other` carries.",
+    [],
+    [["error", con("std.fs.Error")]],
+    STRING,
   ),
 
   sig(

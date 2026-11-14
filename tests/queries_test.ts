@@ -306,6 +306,7 @@ Deno.test("queries: search(text) matches names and doc lines, std included", asy
     ["std.fs.append_text", true],
     ["std.fs.create_directory", true],
     ["std.fs.create_text", true],
+    ["std.fs.describe", true],
     ["std.fs.kind", true],
     ["std.fs.read_text", true],
     ["std.fs.remove", true],

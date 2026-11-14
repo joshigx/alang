@@ -562,6 +562,7 @@ This is everything std holds today. Type parameters (`T`, `U`, `V`, `A`, `K`) ar
 | `std.fs.kind(path: String): Result<std.fs.Kind, std.fs.Error>` | fs.read | Whether a path exists as a file or as a directory; `Err(NotFound)` if nothing is there. |
 | `std.fs.create_directory(path: String): Result<Unit, std.fs.Error>` | fs.write | Creates a directory and its missing parents; `Ok` if it already exists, `Err(AlreadyExists)` if a file is there, or a link whose target is missing is there or on the way. |
 | `std.fs.remove(path: String): Result<Unit, std.fs.Error>` | fs.write | Removes a file or an empty directory. |
+| `std.fs.describe(error: std.fs.Error): String` | none | The error as a short text for a message, starting in lower case and without a final period: `no such file or directory`, `permission denied`, `is a directory`, `already exists`, or the host's message that `Other` carries. |
 | `std.http.serve(host: String, port: Int, handler: (std.http.Request) -> std.http.Response with effects): Result<Unit, std.http.ServeError>` | net | Answers requests with the handler, one at a time, until the program gets SIGINT or SIGTERM; then `Ok(Unit)`. `Err` if it cannot listen. The handler may have effects; the caller declares them. |
 | `std.log.print_line(text: String): Unit` | log | Writes a line to the log, which is the standard error stream. |
 | `std.random.int(low: Int, high: Int): Int` | random | A random integer from `low` to `high`, both included; traps if `low > high`. Not for secrets. |
@@ -655,7 +656,7 @@ The std types, written in alang:
 
 ```
 type std.fs.Error
-  doc: "Why a file or directory operation failed. Other carries the host's message, which differs between runtimes: show it, do not compare it."
+  doc: "Why a file or directory operation failed; `std.fs.describe` gives it as text. Other carries the host's message, which differs between runtimes: show it, do not compare it."
   variant:
     NotFound
     PermissionDenied
