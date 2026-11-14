@@ -52,7 +52,7 @@ set +e
 env -u CLAUDECODE PATH="$work/bin:$PATH" timeout 2400 claude -p "$(cat "$base/prompt.md")" \
   --model "$model" \
   --append-system-prompt "$(cat "$work/CLAUDE.md")" \
-  --restricted --tools "Bash,Read,Write,Edit,Glob,Grep" \
+  --restricted --tools "Bash,Read,Write,Edit,Glob,Grep,TaskStop" \
   --mcp-config "$base/mcp.json" --strict-mcp-config \
   --permission-mode dontAsk --permission-prompts none \
   --allowedTools "mcp__alang__*" "Bash(alang *)" "Bash(cat *)" "Bash(ls *)" "Bash(printf *)" \
@@ -60,6 +60,8 @@ env -u CLAUDECODE PATH="$work/bin:$PATH" timeout 2400 claude -p "$(cat "$base/pr
   --session-id "$session" --output-format json </dev/null >"$base/result.json" 2>"$base/stderr.txt"
 code=$?
 set -e
+# A program the session left running (a server started in the background) ends with the round.
+pkill -f "$wt/src/cli.ts" 2>/dev/null || true
 # --restricted ignores project instructions, so CLAUDE.md goes in through --append-system-prompt;
 # check that it reached the model.
 transcript=$HOME/.claude/projects/$(printf %s "$work" | sed 's|[/._]|-|g')/$session.jsonl
