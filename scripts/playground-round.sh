@@ -30,6 +30,8 @@ Write and change alang only through the alang MCP tools. Call the `card` tool fi
 To run the program, run `alang db run` in this directory (`alang db run <module>.main` if there are several `main` functions). It prints the program's output; diagnostics come as JSON on stderr.
 
 Arguments for the program go after `--`: `alang db run <module>.main -- in.txt out.txt`.
+
+Shell commands allowed in this session: `alang ...`, `cat`, `ls`, `printf`, `echo`, `mkdir` and `cd`, one command per call or several joined with `;`. Others (`rm`, shell functions, scripts) are refused; use the file tools instead.
 EOF
 cat >"$work/bin/alang" <<EOF
 #!/bin/sh
@@ -49,6 +51,7 @@ start=$(date +%s)
 set +e
 env -u CLAUDECODE PATH="$work/bin:$PATH" timeout 2400 claude -p "$(cat "$base/prompt.md")" \
   --model "$model" \
+  --append-system-prompt "$(cat "$work/CLAUDE.md")" \
   --restricted --tools "Bash,Read,Write,Edit,Glob,Grep" \
   --mcp-config "$base/mcp.json" --strict-mcp-config \
   --permission-mode dontAsk --permission-prompts none \
@@ -57,4 +60,13 @@ env -u CLAUDECODE PATH="$work/bin:$PATH" timeout 2400 claude -p "$(cat "$base/pr
   --session-id "$session" --output-format json </dev/null >"$base/result.json" 2>"$base/stderr.txt"
 code=$?
 set -e
-echo "exit=$code seconds=$(($(date +%s) - start)) session=$session" | tee "$base/done.txt"
+# --restricted ignores project instructions, so CLAUDE.md goes in through --append-system-prompt;
+# check that it reached the model.
+transcript=$HOME/.claude/projects/$(printf %s "$work" | sed 's|[/._]|-|g')/$session.jsonl
+if grep -q "the card and the tools are meant to be enough" "$transcript" 2>/dev/null; then
+  instructions=sent
+else
+  instructions=MISSING
+fi
+echo "exit=$code seconds=$(($(date +%s) - start)) session=$session instructions=$instructions" |
+  tee "$base/done.txt"
