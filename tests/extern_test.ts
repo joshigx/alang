@@ -454,6 +454,8 @@ Deno.test("extern: every value that does not fit traps at the call, naming its p
     true,
     peek.message,
   );
+  // Without Deno's advice to run again with a flag; the way out is `effects`.
+  assertEquals(peek.message.includes("run again") || peek.message.includes("--allow-"), false, peek.message);
   assertEquals(
     peek.message.endsWith(
       "An `extern fn` may do only what its `effects` declare, and a program only what `main` declares (2.5).",

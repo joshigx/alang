@@ -673,11 +673,14 @@ function foreignTrap(definition: string, target: string, e: unknown): Trap {
   }
   const text = typeof message === "string" ? withoutPeriod(message) : "";
   if (name === "NotCapable" || code === "ERR_ACCESS_DENIED") {
+    // Deno's advice to run again with a flag is not alang's way out; the
+    // extern's `effects` are.
+    const refusal = text.replace(/, run again with the --allow-[a-z-]+ flag$/, "");
     return new Trap(
       "effect",
       definition,
       target,
-      `\`${target}\` was refused by the host: ${text}. An \`extern fn\` may do only what its \`effects\` declare, and a program only what \`main\` declares (2.5).`,
+      `\`${target}\` was refused by the host: ${refusal}. An \`extern fn\` may do only what its \`effects\` declare, and a program only what \`main\` declares (2.5).`,
     );
   }
   const shown = e instanceof Error ? `${String(name)}: ${text}` : withoutPeriod(typeof e === "string" ? e : String(e));
